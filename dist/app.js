@@ -18,14 +18,14 @@ const ACTIVE_DEFAULT_STATES = [
 ];
 const DEFAULT_MAPPING = {
   New: "todo",
-  Proposed: "todo",
-  "To Do": "todo",
-  Open: "todo",
-  Approved: "todo",
+  Proposed: "hidden",
+  "To Do": "hidden",
+  Open: "hidden",
+  Approved: "hidden",
   Active: "active",
-  Committed: "active",
-  "In Progress": "active",
-  Doing: "active",
+  Committed: "hidden",
+  "In Progress": "hidden",
+  Doing: "hidden",
   "PR under review": "active",
   "Ready for release to accept": "active",
   "Rework ACC": "active",
@@ -34,7 +34,7 @@ const DEFAULT_MAPPING = {
   Resolved: "done",
   Closed: "done",
   Done: "done",
-  Completed: "done",
+  Completed: "hidden",
   Removed: "hidden"
 };
 
