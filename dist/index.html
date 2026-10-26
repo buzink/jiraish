@@ -117,7 +117,7 @@
             <input id="patInput" name="pat" type="password" placeholder="Plak hier je PAT" required autocomplete="off" />
             <button id="togglePat" type="button" aria-label="Toon of verberg PAT">Tonen</button>
           </div>
-          <span class="field-help">Benodigd: leesrechten voor Work Items en Project &amp; Team.</span>
+          <span class="field-help">Benodigd: lezen en schrijven voor Work Items, plus leesrechten voor Project &amp; Team.</span>
         </label>
         <div class="privacy-note"><strong>Privé op dit apparaat.</strong> Je PAT wordt nooit naar onze servers gestuurd; alleen rechtstreeks naar Azure DevOps.</div>
         <p id="connectionError" class="form-error" role="alert"></p>
@@ -164,7 +164,13 @@
         <div class="work-item-content">
           <main class="work-item-main">
             <div class="issue-badges">
-              <span id="workItemState" class="issue-status">Onbekend</span>
+              <div id="workItemStateControl" class="issue-state-control">
+                <button id="workItemState" class="issue-status" type="button" aria-haspopup="listbox" aria-expanded="false" title="State wijzigen">Onbekend</button>
+                <div id="workItemStateMenu" class="issue-state-menu" hidden>
+                  <div class="issue-state-menu-title">State wijzigen</div>
+                  <div id="workItemStateOptions" class="issue-state-options" role="listbox"></div>
+                </div>
+              </div>
               <span id="workItemReason" class="issue-reason"></span>
             </div>
 

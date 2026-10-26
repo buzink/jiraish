@@ -60,6 +60,7 @@ const state = {
   commentsCache: new Map(),
   historyCache: new Map(),
   richImageCache: new Map(),
+  workItemTypeStatesCache: new Map(),
   commentsErrors: new Map(),
   historyErrors: new Map(),
   selectedItemId: null,
@@ -131,7 +132,10 @@ const els = {
   workItemType: document.querySelector("#workItemType"),
   workItemKey: document.querySelector("#workItemKey"),
   workItemTitle: document.querySelector("#workItemTitle"),
+  workItemStateControl: document.querySelector("#workItemStateControl"),
   workItemState: document.querySelector("#workItemState"),
+  workItemStateMenu: document.querySelector("#workItemStateMenu"),
+  workItemStateOptions: document.querySelector("#workItemStateOptions"),
   workItemReason: document.querySelector("#workItemReason"),
   workItemDescription: document.querySelector("#workItemDescription"),
   workItemAssignee: document.querySelector("#workItemAssignee"),
@@ -270,6 +274,7 @@ async function loadBoard({ openSettings = false } = {}) {
     state.detailsCache.clear();
     state.commentsCache.clear();
     state.historyCache.clear();
+    state.workItemTypeStatesCache.clear();
     state.commentsErrors.clear();
     state.historyErrors.clear();
     await loadParentDetails(state.stories);
@@ -482,6 +487,7 @@ function createCard(item) {
 
 async function showWorkItem(item) {
   state.selectedItemId = item.id;
+  closeWorkItemStateMenu();
   const hasCachedDetail = state.detailsCache.has(item.id);
   const hasCachedComments = state.commentsCache.has(item.id);
   const hasCachedHistory = state.historyCache.has(item.id);
@@ -645,6 +651,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemKey.textContent = `WISH-${item.id}`;
   els.workItemTitle.textContent = item.title;
   els.workItemState.textContent = item.state;
+  els.workItemState.setAttribute("aria-label", `State ${item.state}. Klik om te wijzigen.`);
   els.workItemReason.textContent = detail?.reason || "";
   els.workItemReason.hidden = !detail?.reason;
   setRichContent(els.workItemDescription, detail?.descriptionHtml, loading ? "Beschrijving wordt geladen…" : "Geen beschrijving toegevoegd.");
@@ -661,6 +668,111 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemLoadStatus.textContent = error || (loading ? "Extra gegevens laden…" : "");
   els.workItemLoadStatus.classList.toggle("is-error", Boolean(error));
   els.openInAzure.href = `${webBase}/_workitems/edit/${item.id}`;
+}
+
+async function toggleWorkItemStateMenu() {
+  if (!els.workItemStateMenu.hidden) {
+    closeWorkItemStateMenu();
+    return;
+  }
+  const item = state.stories.find(story => story.id === state.selectedItemId);
+  if (!item) return;
+  els.workItemStateMenu.hidden = false;
+  els.workItemState.setAttribute("aria-expanded", "true");
+  const loading = document.createElement("div");
+  loading.className = "issue-state-menu-message";
+  loading.textContent = "States laden…";
+  els.workItemStateOptions.replaceChildren(loading);
+  try {
+    let pending = state.workItemTypeStatesCache.get(item.type);
+    if (!pending) {
+      pending = azure(`/_apis/wit/workitemtypes/${encodeURIComponent(item.type)}/states?api-version=7.1`)
+        .then(result => result.value || []);
+      state.workItemTypeStatesCache.set(item.type, pending);
+      pending.catch(() => state.workItemTypeStatesCache.delete(item.type));
+    }
+    const options = await pending;
+    if (state.selectedItemId === item.id && !els.workItemStateMenu.hidden) renderWorkItemStateOptions(item, options);
+  } catch (error) {
+    console.error(error);
+    const message = document.createElement("div");
+    message.className = "issue-state-menu-message is-error";
+    message.textContent = "States konden niet worden geladen.";
+    els.workItemStateOptions.replaceChildren(message);
+  }
+}
+
+function renderWorkItemStateOptions(item, options) {
+  const states = options.length ? options : [{ name: item.state, color: "0052cc" }];
+  els.workItemStateOptions.replaceChildren(...states.map(option => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "issue-state-option";
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(option.name === item.state));
+    button.disabled = option.name === item.state;
+    const dot = document.createElement("span");
+    dot.className = "issue-state-dot";
+    dot.style.backgroundColor = /^[0-9a-f]{6}$/i.test(option.color || "") ? `#${option.color}` : "#6b778c";
+    const label = document.createElement("span");
+    label.textContent = option.name;
+    const check = document.createElement("span");
+    check.className = "issue-state-check";
+    check.textContent = option.name === item.state ? "✓" : "";
+    button.append(dot, label, check);
+    if (!button.disabled) button.addEventListener("click", () => changeWorkItemState(item, option.name));
+    return button;
+  }));
+}
+
+function closeWorkItemStateMenu() {
+  els.workItemStateMenu.hidden = true;
+  els.workItemState.setAttribute("aria-expanded", "false");
+}
+
+async function changeWorkItemState(item, nextState) {
+  if (!nextState || nextState === item.state) return closeWorkItemStateMenu();
+  closeWorkItemStateMenu();
+  els.workItemState.disabled = true;
+  els.workItemState.classList.add("is-saving");
+  els.workItemLoadStatus.textContent = `State wijzigen naar ${nextState}…`;
+  els.workItemLoadStatus.classList.remove("is-error");
+  try {
+    const result = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: "/fields/System.State", value: nextState }])
+    });
+    const fields = result.fields || {};
+    item.state = fields["System.State"] || nextState;
+    state.knownStates.add(item.state);
+    if (!state.mapping[item.state]) addSmartMappings();
+    const detail = state.detailsCache.get(item.id);
+    if (detail) {
+      detail.reason = fields["System.Reason"] || detail.reason;
+      detail.changedDate = fields["System.ChangedDate"] || detail.changedDate;
+    }
+    state.historyCache.delete(item.id);
+    state.historyErrors.delete(item.id);
+    pruneFilters();
+    render();
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDetail(item, detail || null, false);
+      els.workItemLoadStatus.textContent = `State gewijzigd naar ${item.state}.`;
+      renderHistory([], true);
+      renderCombinedActivity();
+      loadWorkItemHistory(item);
+    }
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.auth
+      ? "State kon niet worden gewijzigd. De PAT heeft ‘Work Items: Read & write’ nodig."
+      : error.message || "State kon niet worden gewijzigd.";
+    els.workItemLoadStatus.classList.add("is-error");
+  } finally {
+    els.workItemState.disabled = false;
+    els.workItemState.classList.remove("is-saving");
+  }
 }
 
 function renderDetailTags(tags) {
@@ -1099,7 +1211,15 @@ els.settingsForm.addEventListener("submit", event => {
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
 document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", () => els.workItemDialog.close()));
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
-els.workItemDialog.addEventListener("close", () => { state.selectedItemId = null; });
+els.workItemState.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemStateMenu(); });
+els.workItemStateMenu.addEventListener("click", event => event.stopPropagation());
+els.workItemDialog.addEventListener("cancel", event => {
+  if (!els.workItemStateMenu.hidden) {
+    event.preventDefault();
+    closeWorkItemStateMenu();
+  }
+});
+els.workItemDialog.addEventListener("close", () => { closeWorkItemStateMenu(); state.selectedItemId = null; });
 els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) els.workItemDialog.close(); });
 els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connectionDialog.close(); });
 els.togglePat.addEventListener("click", () => {
@@ -1120,6 +1240,7 @@ els.clearFilters.addEventListener("click", () => {
 });
 
 document.addEventListener("click", event => {
+  if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();
   document.querySelectorAll(".filter-menu[open]").forEach(menu => {
     if (!menu.contains(event.target)) menu.removeAttribute("open");
   });
