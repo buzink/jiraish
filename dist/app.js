@@ -72,7 +72,6 @@ const els = {
   status: document.querySelector("#statusRegion"),
   refresh: document.querySelector("#refreshButton"),
   settings: document.querySelector("#settingsButton"),
-  configure: document.querySelector("#configureButton"),
   search: document.querySelector("#searchInput"),
   filterControls: document.querySelector("#filterControls"),
   activeFilters: document.querySelector("#activeFilters"),
@@ -520,7 +519,6 @@ els.togglePat.addEventListener("click", () => {
 });
 els.changeConnection.addEventListener("click", () => showConnection());
 els.settings.addEventListener("click", showSettings);
-els.configure.addEventListener("click", showSettings);
 els.refresh.addEventListener("click", () => loadBoard());
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
 els.clearFilters.addEventListener("click", () => {
