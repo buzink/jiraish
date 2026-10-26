@@ -59,6 +59,8 @@ const state = {
   detailsCache: new Map(),
   commentsCache: new Map(),
   historyCache: new Map(),
+  commentsErrors: new Map(),
+  historyErrors: new Map(),
   selectedItemId: null,
   loading: false
 };
@@ -132,8 +134,11 @@ const els = {
   workItemChanged: document.querySelector("#workItemChanged"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
+  workItemAllPanel: document.querySelector("#workItemAllPanel"),
   workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
+  workItemActivityStatus: document.querySelector("#workItemActivityStatus"),
+  workItemActivity: document.querySelector("#workItemActivity"),
   workItemCommentsStatus: document.querySelector("#workItemCommentsStatus"),
   workItemComments: document.querySelector("#workItemComments"),
   workItemHistoryStatus: document.querySelector("#workItemHistoryStatus"),
@@ -254,6 +259,8 @@ async function loadBoard({ openSettings = false } = {}) {
     state.detailsCache.clear();
     state.commentsCache.clear();
     state.historyCache.clear();
+    state.commentsErrors.clear();
+    state.historyErrors.clear();
     await loadParentDetails(state.stories);
     state.stories.forEach(item => state.knownStates.add(item.state));
     addSmartMappings();
@@ -470,10 +477,13 @@ async function showWorkItem(item) {
   const cachedDetail = state.detailsCache.get(item.id) || null;
   const cachedComments = state.commentsCache.get(item.id) || [];
   const cachedHistory = state.historyCache.get(item.id) || [];
+  if (!hasCachedComments) state.commentsErrors.delete(item.id);
+  if (!hasCachedHistory) state.historyErrors.delete(item.id);
   renderWorkItemDetail(item, cachedDetail, !hasCachedDetail);
   renderComments(cachedComments, !hasCachedComments);
   renderHistory(cachedHistory, !hasCachedHistory);
-  setActivityTab("all");
+  renderCombinedActivity();
+  setActivityTab("comments");
   if (!els.workItemDialog.open) els.workItemDialog.showModal();
 
   if (!hasCachedDetail) {
@@ -504,10 +514,18 @@ async function loadWorkItemComments(item) {
     const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&api-version=7.1-preview.4`);
     const comments = normalizeComments(result);
     state.commentsCache.set(item.id, comments);
-    if (isSelectedWorkItem(item.id)) renderComments(comments, false);
+    state.commentsErrors.delete(item.id);
+    if (isSelectedWorkItem(item.id)) {
+      renderComments(comments, false);
+      renderCombinedActivity();
+    }
   } catch (error) {
     console.error(error);
-    if (isSelectedWorkItem(item.id)) renderComments([], false, "Comments konden niet worden geladen.");
+    state.commentsErrors.set(item.id, "Comments konden niet worden geladen.");
+    if (isSelectedWorkItem(item.id)) {
+      renderComments([], false, state.commentsErrors.get(item.id));
+      renderCombinedActivity();
+    }
   }
 }
 
@@ -516,10 +534,18 @@ async function loadWorkItemHistory(item) {
     const result = await azure(`/_apis/wit/workItems/${item.id}/updates?api-version=7.1`);
     const history = normalizeHistory(result);
     state.historyCache.set(item.id, history);
-    if (isSelectedWorkItem(item.id)) renderHistory(history, false);
+    state.historyErrors.delete(item.id);
+    if (isSelectedWorkItem(item.id)) {
+      renderHistory(history, false);
+      renderCombinedActivity();
+    }
   } catch (error) {
     console.error(error);
-    if (isSelectedWorkItem(item.id)) renderHistory([], false, "Historie kon niet worden geladen.");
+    state.historyErrors.set(item.id, "Historie kon niet worden geladen.");
+    if (isSelectedWorkItem(item.id)) {
+      renderHistory([], false, state.historyErrors.get(item.id));
+      renderCombinedActivity();
+    }
   }
 }
 
@@ -576,7 +602,8 @@ function normalizeHistory(result) {
       created: update.rev === 1,
       changes
     };
-  }).sort((a, b) => new Date(b.date) - new Date(a.date));
+  }).filter(entry => entry.created || entry.changes.length)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
 function formatHistoryValue(value) {
@@ -739,6 +766,30 @@ function createHistoryChange(change) {
   return row;
 }
 
+function renderCombinedActivity() {
+  const itemId = state.selectedItemId;
+  if (itemId === null) return;
+  const comments = state.commentsCache.get(itemId) || [];
+  const history = state.historyCache.get(itemId) || [];
+  const loading = (!state.commentsCache.has(itemId) && !state.commentsErrors.has(itemId))
+    || (!state.historyCache.has(itemId) && !state.historyErrors.has(itemId));
+  const errors = [state.commentsErrors.get(itemId), state.historyErrors.get(itemId)].filter(Boolean);
+  const activity = [
+    ...comments.map(comment => ({ kind: "comment", date: comment.createdDate, value: comment })),
+    ...history.map(entry => ({ kind: "history", date: entry.date, value: entry }))
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  els.workItemActivityStatus.classList.toggle("is-error", Boolean(errors.length));
+  els.workItemActivityStatus.textContent = errors.length
+    ? errors.join(" ")
+    : loading
+      ? "Activiteit laden…"
+      : !activity.length ? "Nog geen activiteit." : "";
+  els.workItemActivity.replaceChildren(...activity.map(item =>
+    item.kind === "comment" ? createComment(item.value) : createHistoryEntry(item.value)
+  ));
+}
+
 function initialsFor(name) {
   return name.split(/\s+/).filter(Boolean).map(part => part[0]).join("").slice(0, 2).toUpperCase() || "?";
 }
@@ -749,8 +800,9 @@ function setActivityTab(tab) {
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", String(active));
   });
-  els.workItemCommentsPanel.hidden = tab === "history";
-  els.workItemHistoryPanel.hidden = tab === "comments";
+  els.workItemAllPanel.hidden = tab !== "all";
+  els.workItemCommentsPanel.hidden = tab !== "comments";
+  els.workItemHistoryPanel.hidden = tab !== "history";
 }
 
 function htmlToText(value) {

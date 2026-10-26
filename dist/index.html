@@ -178,9 +178,13 @@
                 <h3 id="activityHeading">Activiteit</h3>
               </div>
               <div class="activity-tabs" role="tablist" aria-label="Activiteitstypen">
-                <button class="is-active" type="button" role="tab" aria-selected="true" data-activity-tab="all">Alles</button>
-                <button type="button" role="tab" aria-selected="false" data-activity-tab="comments">Comments <span id="workItemCommentCount" class="comment-count">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="all">Alles</button>
+                <button class="is-active" type="button" role="tab" aria-selected="true" data-activity-tab="comments">Comments <span id="workItemCommentCount" class="comment-count">0</span></button>
                 <button type="button" role="tab" aria-selected="false" data-activity-tab="history">Historie <span id="workItemHistoryCount" class="comment-count">0</span></button>
+              </div>
+              <div id="workItemAllPanel" class="activity-panel" role="tabpanel" hidden>
+                <div id="workItemActivityStatus" class="comments-status" aria-live="polite"></div>
+                <div id="workItemActivity" class="activity-list"></div>
               </div>
               <div id="workItemCommentsPanel" class="activity-panel" role="tabpanel">
                 <h4 class="activity-panel-title">Comments</h4>
