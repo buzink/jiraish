@@ -58,6 +58,7 @@ const state = {
   },
   detailsCache: new Map(),
   commentsCache: new Map(),
+  historyCache: new Map(),
   selectedItemId: null,
   loading: false
 };
@@ -70,6 +71,22 @@ const FILTER_DEFINITIONS = [
   { key: "tag", label: "Tags", values: item => item.tags },
   { key: "feature", label: "Feature", value: item => item.featureLabel || "Geen parent" }
 ];
+
+const HISTORY_FIELDS = {
+  "System.Title": "Titel",
+  "System.State": "State",
+  "System.Reason": "Reden",
+  "System.AssignedTo": "Assigned to",
+  "System.WorkItemType": "Type",
+  "System.AreaPath": "Area",
+  "System.IterationPath": "Sprint",
+  "System.Tags": "Tags",
+  "System.Description": "Beschrijving",
+  "System.Parent": "Parent",
+  "Microsoft.VSTS.Common.Priority": "Priority",
+  "Microsoft.VSTS.Scheduling.StoryPoints": "Story points",
+  "Microsoft.VSTS.Scheduling.Effort": "Effort"
+};
 
 const els = {
   board: document.querySelector("#board"),
@@ -114,10 +131,13 @@ const els = {
   workItemTags: document.querySelector("#workItemTags"),
   workItemChanged: document.querySelector("#workItemChanged"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
+  workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
   workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
   workItemCommentsStatus: document.querySelector("#workItemCommentsStatus"),
   workItemComments: document.querySelector("#workItemComments"),
+  workItemHistoryStatus: document.querySelector("#workItemHistoryStatus"),
+  workItemHistory: document.querySelector("#workItemHistory"),
   workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
   openInAzure: document.querySelector("#openInAzure")
 };
@@ -233,6 +253,7 @@ async function loadBoard({ openSettings = false } = {}) {
     state.stories = items.map(normalizeWorkItem);
     state.detailsCache.clear();
     state.commentsCache.clear();
+    state.historyCache.clear();
     await loadParentDetails(state.stories);
     state.stories.forEach(item => state.knownStates.add(item.state));
     addSmartMappings();
@@ -445,10 +466,13 @@ async function showWorkItem(item) {
   state.selectedItemId = item.id;
   const hasCachedDetail = state.detailsCache.has(item.id);
   const hasCachedComments = state.commentsCache.has(item.id);
+  const hasCachedHistory = state.historyCache.has(item.id);
   const cachedDetail = state.detailsCache.get(item.id) || null;
   const cachedComments = state.commentsCache.get(item.id) || [];
+  const cachedHistory = state.historyCache.get(item.id) || [];
   renderWorkItemDetail(item, cachedDetail, !hasCachedDetail);
   renderComments(cachedComments, !hasCachedComments);
+  renderHistory(cachedHistory, !hasCachedHistory);
   setActivityTab("all");
   if (!els.workItemDialog.open) els.workItemDialog.showModal();
 
@@ -457,6 +481,9 @@ async function showWorkItem(item) {
   }
   if (!hasCachedComments) {
     loadWorkItemComments(item);
+  }
+  if (!hasCachedHistory) {
+    loadWorkItemHistory(item);
   }
 }
 
@@ -481,6 +508,18 @@ async function loadWorkItemComments(item) {
   } catch (error) {
     console.error(error);
     if (isSelectedWorkItem(item.id)) renderComments([], false, "Comments konden niet worden geladen.");
+  }
+}
+
+async function loadWorkItemHistory(item) {
+  try {
+    const result = await azure(`/_apis/wit/workItems/${item.id}/updates?api-version=7.1`);
+    const history = normalizeHistory(result);
+    state.historyCache.set(item.id, history);
+    if (isSelectedWorkItem(item.id)) renderHistory(history, false);
+  } catch (error) {
+    console.error(error);
+    if (isSelectedWorkItem(item.id)) renderHistory([], false, "Historie kon niet worden geladen.");
   }
 }
 
@@ -515,6 +554,41 @@ function normalizeComments(result) {
     createdDate: comment.createdDate || "",
     modifiedDate: comment.modifiedDate || ""
   }));
+}
+
+function normalizeHistory(result) {
+  return (result.value || []).map(update => {
+    const changes = Object.entries(update.fields || {}).flatMap(([field, change]) => {
+      const label = HISTORY_FIELDS[field] || (field.startsWith("Custom.") ? humanizeField(field.slice(7)) : "");
+      if (!label) return [];
+      return [{
+        label,
+        compact: field === "System.Description",
+        oldValue: formatHistoryValue(change.oldValue),
+        newValue: formatHistoryValue(change.newValue)
+      }];
+    });
+    return {
+      id: update.id,
+      revision: update.rev,
+      author: update.revisedBy?.displayName || update.revisedBy?.uniqueName || "Onbekende gebruiker",
+      date: update.revisedDate || "",
+      created: update.rev === 1,
+      changes
+    };
+  }).sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+function formatHistoryValue(value) {
+  if (value === undefined || value === null || value === "") return "—";
+  if (typeof value === "object") return value.displayName || value.uniqueName || "Bijgewerkt";
+  const rawText = String(value).trim();
+  const text = /<[a-z][\s\S]*>/i.test(rawText) ? htmlToText(rawText) : rawText;
+  return text.length > 90 ? `${text.slice(0, 87)}…` : text;
+}
+
+function humanizeField(value) {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[._-]+/g, " ");
 }
 
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
@@ -591,6 +665,80 @@ function createComment(comment) {
   return article;
 }
 
+function renderHistory(history, loading = false, error = "") {
+  els.workItemHistoryCount.textContent = String(history.length);
+  els.workItemHistoryStatus.classList.toggle("is-error", Boolean(error));
+  if (loading) {
+    els.workItemHistoryStatus.textContent = "Historie laden…";
+    els.workItemHistory.replaceChildren(...Array.from({ length: 2 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "comment-skeleton";
+      return skeleton;
+    }));
+    return;
+  }
+  els.workItemHistoryStatus.textContent = error || (!history.length ? "Nog geen historie." : "");
+  els.workItemHistory.replaceChildren(...history.map(createHistoryEntry));
+}
+
+function createHistoryEntry(entry) {
+  const article = document.createElement("article");
+  article.className = "history-entry";
+  const marker = document.createElement("span");
+  marker.className = "history-marker";
+  marker.textContent = initialsFor(entry.author);
+  const body = document.createElement("div");
+  body.className = "history-body";
+  const header = document.createElement("header");
+  const author = document.createElement("strong");
+  author.textContent = entry.author;
+  const time = document.createElement("time");
+  time.dateTime = entry.date;
+  time.textContent = entry.date ? formatDateTime(entry.date) : "";
+  const revision = document.createElement("span");
+  revision.className = "revision-label";
+  revision.textContent = `rev ${entry.revision}`;
+  header.append(author, time, revision);
+  body.append(header);
+
+  if (entry.created) {
+    const created = document.createElement("p");
+    created.className = "history-summary";
+    created.textContent = "heeft dit item aangemaakt.";
+    body.append(created);
+  } else if (entry.changes.length) {
+    const list = document.createElement("ul");
+    entry.changes.forEach(change => list.append(createHistoryChange(change)));
+    body.append(list);
+  } else {
+    const updated = document.createElement("p");
+    updated.className = "history-summary";
+    updated.textContent = "heeft dit item bijgewerkt.";
+    body.append(updated);
+  }
+  article.append(marker, body);
+  return article;
+}
+
+function createHistoryChange(change) {
+  const row = document.createElement("li");
+  const label = document.createElement("strong");
+  label.textContent = change.label;
+  row.append(label);
+  if (change.compact) {
+    row.append(document.createTextNode(" bijgewerkt"));
+    return row;
+  }
+  const oldValue = document.createElement("span");
+  oldValue.className = "history-old";
+  oldValue.textContent = change.oldValue;
+  const newValue = document.createElement("span");
+  newValue.className = "history-new";
+  newValue.textContent = change.newValue;
+  row.append(document.createTextNode(" "), oldValue, document.createTextNode(" → "), newValue);
+  return row;
+}
+
 function initialsFor(name) {
   return name.split(/\s+/).filter(Boolean).map(part => part[0]).join("").slice(0, 2).toUpperCase() || "?";
 }
@@ -601,9 +749,8 @@ function setActivityTab(tab) {
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", String(active));
   });
-  const showHistory = tab === "history";
-  els.workItemCommentsPanel.hidden = showHistory;
-  els.workItemHistoryPanel.hidden = !showHistory;
+  els.workItemCommentsPanel.hidden = tab === "history";
+  els.workItemHistoryPanel.hidden = tab === "comments";
 }
 
 function htmlToText(value) {
