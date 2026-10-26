@@ -59,6 +59,7 @@ const state = {
   detailsCache: new Map(),
   commentsCache: new Map(),
   historyCache: new Map(),
+  richImageCache: new Map(),
   commentsErrors: new Map(),
   historyErrors: new Map(),
   selectedItemId: null,
@@ -844,6 +845,7 @@ function setRichContent(element, value, fallback) {
     return;
   }
   element.replaceChildren(sanitizeRichHtml(value));
+  hydrateRichTextImages(element);
 }
 
 function sanitizeRichHtml(value) {
@@ -882,7 +884,14 @@ function copySafeRichTextAttributes(source, target, tag) {
   }
   if (tag === "img") {
     const src = safeRichTextUrl(source.getAttribute("src"), true);
-    if (src) target.src = src;
+    if (src && isConfiguredAzureUrl(src)) {
+      target.src = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+      target.dataset.authSrc = src;
+      target.classList.add("is-loading");
+      target.setAttribute("aria-busy", "true");
+    } else if (src) {
+      target.src = src;
+    }
     target.alt = source.getAttribute("alt") || "";
     target.loading = "lazy";
   }
@@ -906,6 +915,56 @@ function safeRichTextUrl(value, image) {
     const protocols = image ? ["https:", "http:"] : ["https:", "http:", "mailto:"];
     return protocols.includes(url.protocol) ? url.href : "";
   } catch { return ""; }
+}
+
+function isConfiguredAzureUrl(value) {
+  try {
+    const url = new URL(value);
+    const { organization } = parseAzureUrl(state.orgUrl);
+    const expectedOrganization = organization.toLowerCase();
+    if (url.hostname === "dev.azure.com") {
+      const pathOrganization = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] || "").toLowerCase();
+      return pathOrganization === expectedOrganization;
+    }
+    return url.hostname.toLowerCase() === `${expectedOrganization}.visualstudio.com`;
+  } catch { return false; }
+}
+
+function hydrateRichTextImages(element) {
+  element.querySelectorAll("img[data-auth-src]").forEach(async image => {
+    const source = image.dataset.authSrc;
+    try {
+      let pending = state.richImageCache.get(source);
+      if (!pending) {
+        pending = fetchAzureImage(source);
+        state.richImageCache.set(source, pending);
+        pending.catch(() => state.richImageCache.delete(source));
+      }
+      image.src = await pending;
+      image.classList.remove("is-loading");
+      image.removeAttribute("aria-busy");
+    } catch {
+      image.classList.remove("is-loading");
+      image.classList.add("is-broken");
+      image.removeAttribute("aria-busy");
+      image.title = "Afbeelding kon niet worden geladen.";
+    }
+  });
+}
+
+async function fetchAzureImage(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "image/*",
+      Authorization: `Basic ${btoa(`:${state.pat}`)}`
+    }
+  });
+  if (!response.ok) throw new Error(`Afbeelding laden mislukt (${response.status}).`);
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/") && blob.type !== "application/octet-stream") {
+    throw new Error("Bijlage is geen afbeelding.");
+  }
+  return URL.createObjectURL(blob);
 }
 
 function emptyNode() {

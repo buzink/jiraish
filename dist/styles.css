@@ -207,6 +207,9 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .rich-content pre code { padding: 0; background: transparent; }
 .rich-content a { color: var(--blue-600); text-decoration: underline; overflow-wrap: anywhere; }
 .rich-content img { display: block; max-width: 100%; height: auto; margin: 10px 0; border-radius: 4px; }
+.rich-content img.is-loading { width: 160px; min-height: 80px; background: linear-gradient(100deg, var(--board-bg) 30%, var(--surface) 50%, var(--board-bg) 70%); background-size: 250% 100%; animation: image-loading 1.2s ease-in-out infinite; }
+.rich-content img.is-broken { display: none; }
+@keyframes image-loading { to { background-position-x: -250%; } }
 .rich-content table { width: 100%; margin: 10px 0; border-collapse: collapse; font-size: 12px; }
 .rich-content th, .rich-content td { padding: 7px 9px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
 .rich-content th { background: var(--board-bg); }
