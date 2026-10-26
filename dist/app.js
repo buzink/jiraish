@@ -2,10 +2,19 @@ const STORAGE = {
   pat: "wish-board.azure-pat",
   url: "wish-board.azure-url",
   team: "wish-board.team-id",
-  mapping: "wish-board.state-mapping"
+  mapping: "wish-board.state-mapping",
+  mappingVersion: "wish-board.state-mapping-version"
 };
 
 const DEFAULT_URL = "https://dev.azure.com/UvA-WISH/WISH/";
+const DEFAULT_MAPPING_VERSION = 1;
+const ACTIVE_DEFAULT_STATES = [
+  "PR under review",
+  "Ready for release to accept",
+  "Rework ACC",
+  "Test on acc",
+  "Test on dev"
+];
 const DEFAULT_MAPPING = {
   New: "todo",
   Proposed: "todo",
@@ -16,6 +25,11 @@ const DEFAULT_MAPPING = {
   Committed: "active",
   "In Progress": "active",
   Doing: "active",
+  "PR under review": "active",
+  "Ready for release to accept": "active",
+  "Rework ACC": "active",
+  "Test on acc": "active",
+  "Test on dev": "active",
   Resolved: "done",
   Closed: "done",
   Done: "done",
@@ -31,7 +45,7 @@ const state = {
   iteration: null,
   stories: [],
   knownStates: new Set(Object.keys(DEFAULT_MAPPING)),
-  mapping: readJson(STORAGE.mapping, { ...DEFAULT_MAPPING }),
+  mapping: readMapping(),
   search: "",
   filters: {
     type: new Set(),
@@ -83,6 +97,17 @@ const els = {
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; }
   catch { return fallback; }
+}
+
+function readMapping() {
+  const mapping = { ...DEFAULT_MAPPING, ...readJson(STORAGE.mapping, {}) };
+  const storedVersion = Number(localStorage.getItem(STORAGE.mappingVersion) || 0);
+  if (storedVersion < DEFAULT_MAPPING_VERSION) {
+    ACTIVE_DEFAULT_STATES.forEach(itemState => { mapping[itemState] = "active"; });
+    localStorage.setItem(STORAGE.mapping, JSON.stringify(mapping));
+    localStorage.setItem(STORAGE.mappingVersion, String(DEFAULT_MAPPING_VERSION));
+  }
+  return mapping;
 }
 
 function parseAzureUrl(input) {
