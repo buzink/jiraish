@@ -56,6 +56,8 @@ const state = {
     tag: new Set(),
     feature: new Set()
   },
+  detailsCache: new Map(),
+  selectedItemId: null,
   loading: false
 };
 
@@ -92,7 +94,26 @@ const els = {
   settingsForm: document.querySelector("#settingsForm"),
   teamSelect: document.querySelector("#teamSelect"),
   stateMappings: document.querySelector("#stateMappings"),
-  changeConnection: document.querySelector("#changeConnection")
+  changeConnection: document.querySelector("#changeConnection"),
+  workItemDialog: document.querySelector("#workItemDialog"),
+  workItemLoading: document.querySelector("#workItemLoading"),
+  workItemType: document.querySelector("#workItemType"),
+  workItemKey: document.querySelector("#workItemKey"),
+  workItemTitle: document.querySelector("#workItemTitle"),
+  workItemState: document.querySelector("#workItemState"),
+  workItemReason: document.querySelector("#workItemReason"),
+  workItemDescription: document.querySelector("#workItemDescription"),
+  workItemAssignee: document.querySelector("#workItemAssignee"),
+  workItemReporter: document.querySelector("#workItemReporter"),
+  workItemPriority: document.querySelector("#workItemPriority"),
+  workItemPoints: document.querySelector("#workItemPoints"),
+  workItemArea: document.querySelector("#workItemArea"),
+  workItemIteration: document.querySelector("#workItemIteration"),
+  workItemParent: document.querySelector("#workItemParent"),
+  workItemTags: document.querySelector("#workItemTags"),
+  workItemChanged: document.querySelector("#workItemChanged"),
+  workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
+  openInAzure: document.querySelector("#openInAzure")
 };
 
 function readJson(key, fallback) {
@@ -204,6 +225,7 @@ async function loadBoard({ openSettings = false } = {}) {
       items.push(...(result.value || []));
     }
     state.stories = items.map(normalizeWorkItem);
+    state.detailsCache.clear();
     await loadParentDetails(state.stories);
     state.stories.forEach(item => state.knownStates.add(item.state));
     addSmartMappings();
@@ -391,13 +413,11 @@ function pruneFilters() {
 }
 
 function createCard(item) {
-  const { webBase } = parseAzureUrl(state.orgUrl);
-  const card = document.createElement("a");
+  const card = document.createElement("button");
+  card.type = "button";
   card.className = "story-card";
-  card.href = `${webBase}/_workitems/edit/${item.id}`;
-  card.target = "_blank";
-  card.rel = "noopener noreferrer";
-  card.setAttribute("aria-label", `${item.type} ${item.id}: ${item.title}. Open in Azure DevOps`);
+  card.setAttribute("aria-label", `${item.type} ${item.id}: ${item.title}. Bekijk details`);
+  card.addEventListener("click", () => showWorkItem(item));
   const initials = item.assignee ? item.assignee.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase() : "?";
   const isBug = item.type.toLowerCase() === "bug";
   card.innerHTML = `
@@ -412,6 +432,85 @@ function createCard(item) {
       <span class="assignee ${item.assignee ? "" : "unassigned"}" title="${escapeHtml(item.assignee || "Niet toegewezen")}">${initials}</span>
     </div>`;
   return card;
+}
+
+async function showWorkItem(item) {
+  state.selectedItemId = item.id;
+  const cached = state.detailsCache.get(item.id) || null;
+  renderWorkItemDetail(item, cached, !cached);
+  if (!els.workItemDialog.open) els.workItemDialog.showModal();
+  if (cached) return;
+
+  try {
+    const result = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
+    const detail = normalizeWorkItemDetail(result);
+    state.detailsCache.set(item.id, detail);
+    if (state.selectedItemId === item.id && els.workItemDialog.open) renderWorkItemDetail(item, detail, false);
+  } catch (error) {
+    console.error(error);
+    if (state.selectedItemId === item.id && els.workItemDialog.open) {
+      renderWorkItemDetail(item, null, false, "Extra gegevens konden niet worden geladen.");
+    }
+  }
+}
+
+function normalizeWorkItemDetail(item) {
+  const fields = item.fields || {};
+  const assigned = fields["System.AssignedTo"];
+  const reporter = fields["System.CreatedBy"];
+  return {
+    description: htmlToText(fields["System.Description"] || ""),
+    assignee: assigned?.displayName || assigned?.uniqueName || "",
+    reporter: reporter?.displayName || reporter?.uniqueName || "",
+    priority: fields["Microsoft.VSTS.Common.Priority"] ?? null,
+    points: fields["Microsoft.VSTS.Scheduling.StoryPoints"] ?? fields["Microsoft.VSTS.Scheduling.Effort"] ?? null,
+    area: fields["System.AreaPath"] || "",
+    iteration: fields["System.IterationPath"] || "",
+    reason: fields["System.Reason"] || "",
+    tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
+    changedDate: fields["System.ChangedDate"] || ""
+  };
+}
+
+function renderWorkItemDetail(item, detail, loading = false, error = "") {
+  const { webBase } = parseAzureUrl(state.orgUrl);
+  els.workItemType.textContent = item.type;
+  els.workItemKey.textContent = `WISH-${item.id}`;
+  els.workItemTitle.textContent = item.title;
+  els.workItemState.textContent = item.state;
+  els.workItemReason.textContent = detail?.reason || "";
+  els.workItemReason.hidden = !detail?.reason;
+  els.workItemDescription.textContent = detail?.description || (loading ? "Beschrijving wordt geladen…" : "Geen beschrijving toegevoegd.");
+  els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Niet toegewezen";
+  els.workItemReporter.textContent = detail?.reporter || "—";
+  els.workItemPriority.textContent = detail?.priority ?? "—";
+  els.workItemPoints.textContent = detail?.points ?? item.points ?? "—";
+  els.workItemArea.textContent = detail?.area || item.area || "—";
+  els.workItemIteration.textContent = detail?.iteration || state.iteration?.name || "—";
+  els.workItemParent.textContent = item.featureLabel || "Geen parent";
+  renderDetailTags(detail?.tags || item.tags);
+  els.workItemChanged.textContent = detail?.changedDate ? formatDateTime(detail.changedDate) : "—";
+  els.workItemLoading.classList.toggle("is-active", loading);
+  els.workItemLoadStatus.textContent = error || (loading ? "Extra gegevens laden…" : "");
+  els.workItemLoadStatus.classList.toggle("is-error", Boolean(error));
+  els.openInAzure.href = `${webBase}/_workitems/edit/${item.id}`;
+}
+
+function renderDetailTags(tags) {
+  if (!tags?.length) {
+    els.workItemTags.textContent = "—";
+    return;
+  }
+  els.workItemTags.replaceChildren(...tags.map(tag => {
+    const chip = document.createElement("span");
+    chip.textContent = tag;
+    return chip;
+  }));
+}
+
+function htmlToText(value) {
+  const parsed = new DOMParser().parseFromString(value, "text/html");
+  return (parsed.body.innerText || parsed.body.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function emptyNode() {
@@ -495,6 +594,7 @@ function showNotice(message, type = "info", actionLabel = "", action = null) {
 
 function clearNotice() { els.status.replaceChildren(); }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short" }).format(new Date(value)) : ""; }
+function formatDateTime(value) { return value ? new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : ""; }
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 
 els.connectionForm.addEventListener("submit", event => {
@@ -523,6 +623,9 @@ els.settingsForm.addEventListener("submit", event => {
 });
 
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
+document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", () => els.workItemDialog.close()));
+els.workItemDialog.addEventListener("close", () => { state.selectedItemId = null; });
+els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) els.workItemDialog.close(); });
 els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connectionDialog.close(); });
 els.togglePat.addEventListener("click", () => {
   const show = els.pat.type === "password";

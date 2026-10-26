@@ -150,6 +150,67 @@
       </form>
     </dialog>
 
+    <dialog id="workItemDialog" class="dialog work-item-dialog" aria-labelledby="workItemTitle">
+      <div class="work-item-shell">
+        <div id="workItemLoading" class="work-item-loading" aria-hidden="true"><span></span></div>
+        <header class="work-item-header">
+          <div>
+            <div class="issue-breadcrumb"><span id="workItemType">Work item</span><span aria-hidden="true">/</span><span id="workItemKey">WISH-0</span></div>
+            <h2 id="workItemTitle">Work item</h2>
+          </div>
+          <button class="close-button" type="button" data-close-work-item aria-label="Sluiten">×</button>
+        </header>
+
+        <div class="work-item-content">
+          <main class="work-item-main">
+            <div class="issue-badges">
+              <span id="workItemState" class="issue-status">Onbekend</span>
+              <span id="workItemReason" class="issue-reason"></span>
+            </div>
+
+            <section class="issue-section" aria-labelledby="descriptionHeading">
+              <h3 id="descriptionHeading">Beschrijving</h3>
+              <p id="workItemDescription" class="issue-description">Geen beschrijving toegevoegd.</p>
+            </section>
+
+            <section class="issue-section activity-section" aria-labelledby="activityHeading">
+              <div class="section-heading-row">
+                <h3 id="activityHeading">Activiteit</h3>
+                <span class="future-badge">Basisweergave</span>
+              </div>
+              <div class="activity-tabs" aria-label="Activiteitstypen">
+                <span class="is-active">Alles</span><span>Comments</span><span>Historie</span>
+              </div>
+              <div class="activity-placeholder">Activiteit kan hier later worden toegevoegd.</div>
+            </section>
+          </main>
+
+          <aside class="work-item-details" aria-labelledby="detailsHeading">
+            <h3 id="detailsHeading">Details</h3>
+            <dl>
+              <div><dt>Assigned to</dt><dd id="workItemAssignee">Niet toegewezen</dd></div>
+              <div><dt>Reporter</dt><dd id="workItemReporter">—</dd></div>
+              <div><dt>Priority</dt><dd id="workItemPriority">—</dd></div>
+              <div><dt>Story points</dt><dd id="workItemPoints">—</dd></div>
+              <div><dt>Area</dt><dd id="workItemArea">—</dd></div>
+              <div><dt>Sprint</dt><dd id="workItemIteration">—</dd></div>
+              <div><dt>Feature / parent</dt><dd id="workItemParent">Geen parent</dd></div>
+              <div><dt>Tags</dt><dd id="workItemTags" class="issue-tags">—</dd></div>
+              <div><dt>Laatst gewijzigd</dt><dd id="workItemChanged">—</dd></div>
+            </dl>
+          </aside>
+        </div>
+
+        <footer class="work-item-footer">
+          <span id="workItemLoadStatus" class="work-item-load-status" aria-live="polite"></span>
+          <a id="openInAzure" class="secondary-button external-link" href="#" target="_blank" rel="noopener noreferrer">
+            Open in Azure DevOps
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 13v6H5V6h6"/></svg>
+          </a>
+        </footer>
+      </div>
+    </dialog>
+
     <template id="emptyTemplate">
       <div class="empty-column"><div class="empty-icon">✓</div><p>Geen stories in deze kolom</p></div>
     </template>
