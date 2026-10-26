@@ -90,6 +90,16 @@ const HISTORY_FIELDS = {
   "Microsoft.VSTS.Scheduling.Effort": "Effort"
 };
 
+const RICH_TEXT_TAGS = new Set([
+  "a", "b", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3", "h4", "h5", "h6",
+  "hr", "i", "img", "li", "ol", "p", "pre", "s", "span", "strike", "strong", "table", "tbody",
+  "td", "th", "thead", "tr", "u", "ul"
+]);
+const RICH_TEXT_STYLES = new Set([
+  "background-color", "color", "font-style", "font-weight", "height", "margin-left", "max-width",
+  "text-align", "text-decoration", "vertical-align", "width"
+]);
+
 const els = {
   board: document.querySelector("#board"),
   status: document.querySelector("#statusRegion"),
@@ -511,7 +521,7 @@ async function loadWorkItemDetail(item) {
 
 async function loadWorkItemComments(item) {
   try {
-    const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&api-version=7.1-preview.4`);
+    const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&$expand=renderedText&api-version=7.1-preview.4`);
     const comments = normalizeComments(result);
     state.commentsCache.set(item.id, comments);
     state.commentsErrors.delete(item.id);
@@ -558,7 +568,7 @@ function normalizeWorkItemDetail(item) {
   const assigned = fields["System.AssignedTo"];
   const reporter = fields["System.CreatedBy"];
   return {
-    description: htmlToText(fields["System.Description"] || ""),
+    descriptionHtml: fields["System.Description"] || "",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
     reporter: reporter?.displayName || reporter?.uniqueName || "",
     priority: fields["Microsoft.VSTS.Common.Priority"] ?? null,
@@ -576,7 +586,7 @@ function normalizeComments(result) {
   return comments.filter(comment => !comment.isDeleted).map(comment => ({
     id: comment.commentId ?? comment.id,
     author: comment.createdBy?.displayName || comment.createdBy?.uniqueName || "Onbekende gebruiker",
-    text: htmlToText(comment.text || ""),
+    html: comment.renderedText || comment.text || "",
     createdDate: comment.createdDate || "",
     modifiedDate: comment.modifiedDate || ""
   }));
@@ -636,7 +646,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemState.textContent = item.state;
   els.workItemReason.textContent = detail?.reason || "";
   els.workItemReason.hidden = !detail?.reason;
-  els.workItemDescription.textContent = detail?.description || (loading ? "Beschrijving wordt geladen…" : "Geen beschrijving toegevoegd.");
+  setRichContent(els.workItemDescription, detail?.descriptionHtml, loading ? "Beschrijving wordt geladen…" : "Geen beschrijving toegevoegd.");
   els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Niet toegewezen";
   els.workItemReporter.textContent = detail?.reporter || "—";
   els.workItemPriority.textContent = detail?.priority ?? "—";
@@ -695,9 +705,10 @@ function createComment(comment) {
   time.dateTime = comment.createdDate;
   time.textContent = comment.createdDate ? formatDateTime(comment.createdDate) : "";
   header.append(author, time);
-  const text = document.createElement("p");
-  text.textContent = comment.text || "Lege comment";
-  body.append(header, text);
+  const content = document.createElement("div");
+  content.className = "comment-content rich-content";
+  setRichContent(content, comment.html, "Lege comment");
+  body.append(header, content);
   article.append(avatar, body);
   return article;
 }
@@ -818,6 +829,83 @@ function setActivityTab(tab) {
 function htmlToText(value) {
   const parsed = new DOMParser().parseFromString(value, "text/html");
   return (parsed.body.innerText || parsed.body.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function setRichContent(element, value, fallback) {
+  if (!value) {
+    element.textContent = fallback;
+    return;
+  }
+  if (!/<[a-z][\s\S]*>/i.test(value)) {
+    const plain = document.createElement("span");
+    plain.className = "plain-rich-text";
+    plain.textContent = value;
+    element.replaceChildren(plain);
+    return;
+  }
+  element.replaceChildren(sanitizeRichHtml(value));
+}
+
+function sanitizeRichHtml(value) {
+  const parsed = new DOMParser().parseFromString(value, "text/html");
+  const fragment = document.createDocumentFragment();
+  parsed.body.childNodes.forEach(node => appendSafeNode(fragment, node));
+  return fragment;
+}
+
+function appendSafeNode(parent, source) {
+  if (source.nodeType === Node.TEXT_NODE) {
+    parent.append(document.createTextNode(source.textContent || ""));
+    return;
+  }
+  if (source.nodeType !== Node.ELEMENT_NODE) return;
+  const tag = source.tagName.toLowerCase();
+  if (!RICH_TEXT_TAGS.has(tag)) {
+    source.childNodes.forEach(child => appendSafeNode(parent, child));
+    return;
+  }
+
+  const target = document.createElement(tag);
+  copySafeRichTextAttributes(source, target, tag);
+  source.childNodes.forEach(child => appendSafeNode(target, child));
+  parent.append(target);
+}
+
+function copySafeRichTextAttributes(source, target, tag) {
+  if (tag === "a") {
+    const href = safeRichTextUrl(source.getAttribute("href"), false);
+    if (href) {
+      target.href = href;
+      target.target = "_blank";
+      target.rel = "noopener noreferrer";
+    }
+  }
+  if (tag === "img") {
+    const src = safeRichTextUrl(source.getAttribute("src"), true);
+    if (src) target.src = src;
+    target.alt = source.getAttribute("alt") || "";
+    target.loading = "lazy";
+  }
+  if (source.hasAttribute("title")) target.title = source.getAttribute("title").slice(0, 300);
+  for (const attribute of ["colspan", "rowspan"]) {
+    const value = Number(source.getAttribute(attribute));
+    if (Number.isInteger(value) && value > 0 && value <= 20) target.setAttribute(attribute, String(value));
+  }
+  for (const property of RICH_TEXT_STYLES) {
+    const value = source.style.getPropertyValue(property);
+    if (value && !/url\s*\(|expression\s*\(/i.test(value)) target.style.setProperty(property, value);
+  }
+}
+
+function safeRichTextUrl(value, image) {
+  if (!value) return "";
+  if (image && /^data:image\/(png|gif|jpe?g|webp);base64,/i.test(value)) return value;
+  try {
+    const { webBase } = parseAzureUrl(state.orgUrl);
+    const url = new URL(value, `${webBase}/`);
+    const protocols = image ? ["https:", "http:"] : ["https:", "http:", "mailto:"];
+    return protocols.includes(url.protocol) ? url.href : "";
+  } catch { return ""; }
 }
 
 function emptyNode() {

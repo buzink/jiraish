@@ -171,7 +171,7 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .issue-reason { color: var(--muted); font-size: 12px; }
 .issue-section + .issue-section { margin-top: 36px; }
 .issue-section h3, .work-item-details h3 { margin: 0 0 14px; color: var(--navy); font-size: 14px; }
-.issue-description { min-height: 72px; margin: 0; color: var(--text); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+.issue-description { min-height: 72px; margin: 0; color: var(--text); font-size: 14px; line-height: 1.65; }
 .section-heading-row { display: flex; align-items: center; gap: 10px; }
 .activity-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
 .activity-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 11px; border: 0; color: var(--muted); background: transparent; font-size: 12px; font-weight: 600; }
@@ -195,7 +195,22 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .comment-body header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
 .comment-body strong { color: var(--navy); font-size: 12px; }
 .comment-body time { color: var(--muted); font-size: 10px; }
-.comment-body p { margin: 7px 0 0; color: var(--text); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.comment-content { margin-top: 7px; color: var(--text); font-size: 13px; line-height: 1.55; }
+.rich-content > :first-child { margin-top: 0; }
+.rich-content > :last-child { margin-bottom: 0; }
+.rich-content p { margin: 0 0 10px; }
+.rich-content ul, .rich-content ol { margin: 8px 0; padding-left: 24px; }
+.rich-content li + li { margin-top: 3px; }
+.rich-content blockquote { margin: 10px 0; padding: 7px 12px; border-left: 3px solid #4c9aff; color: var(--muted); background: var(--board-bg); }
+.rich-content pre { max-width: 100%; overflow: auto; margin: 10px 0; padding: 11px 12px; border-radius: 4px; background: var(--board-bg); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.rich-content code { padding: 1px 4px; border-radius: 3px; background: var(--board-bg); font: .9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.rich-content pre code { padding: 0; background: transparent; }
+.rich-content a { color: var(--blue-600); text-decoration: underline; overflow-wrap: anywhere; }
+.rich-content img { display: block; max-width: 100%; height: auto; margin: 10px 0; border-radius: 4px; }
+.rich-content table { width: 100%; margin: 10px 0; border-collapse: collapse; font-size: 12px; }
+.rich-content th, .rich-content td { padding: 7px 9px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rich-content th { background: var(--board-bg); }
+.plain-rich-text { white-space: pre-wrap; }
 .comment-skeleton { height: 70px; border-radius: 4px; background: linear-gradient(90deg, #f4f5f7 25%, #ebecf0 37%, #f4f5f7 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
 .history-list { display: grid; gap: 0; }
 .comments-status:not(:empty) + .history-list { margin-top: 12px; }
