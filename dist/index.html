@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0747a6" />
+    <meta name="description" content="Jira-achtig sprintboard voor Azure DevOps" />
+    <title>WISH Sprint Board</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#board">Ga naar het sprintboard</a>
+
+    <header class="topbar">
+      <div class="brand" aria-label="WISH Sprint Board">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
+        <span>WISH</span>
+      </div>
+      <nav aria-label="Hoofdnavigatie">
+        <button class="nav-item is-active" type="button">Sprint board</button>
+      </nav>
+      <div class="topbar-actions">
+        <button id="refreshButton" class="icon-button" type="button" aria-label="Vernieuwen" title="Vernieuwen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+        </button>
+        <button id="settingsButton" class="icon-button" type="button" aria-label="Instellingen" title="Instellingen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3V9.6h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.37.35.71.6 1 .3.3.7.44 1.1.4h.09v4h-.09a1.7 1.7 0 0 0-1.7.6Z"/></svg>
+        </button>
+        <div class="avatar" aria-label="WISH">W</div>
+      </div>
+    </header>
+
+    <main>
+      <section class="page-heading" aria-labelledby="pageTitle">
+        <div>
+          <div class="eyebrow">PROJECT / WISH</div>
+          <div class="title-row">
+            <h1 id="pageTitle">Huidige sprint</h1>
+            <span id="sprintBadge" class="sprint-badge">Nog niet geladen</span>
+          </div>
+          <p id="sprintMeta" class="sprint-meta">Verbind Azure DevOps om het sprintboard te laden.</p>
+        </div>
+        <div class="heading-actions">
+          <label class="search-field">
+            <span class="sr-only">Zoek stories</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+            <input id="searchInput" type="search" placeholder="Zoek op titel of ID" autocomplete="off" />
+          </label>
+          <button id="configureButton" class="secondary-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M10 14v6"/></svg>
+            Kolommen instellen
+          </button>
+        </div>
+      </section>
+
+      <section id="statusRegion" class="status-region" aria-live="polite"></section>
+
+      <section id="board" class="board" aria-label="Sprint kanbanboard">
+        <article class="column" data-column="todo">
+          <header class="column-header">
+            <div><span class="column-dot todo-dot"></span><h2>To do</h2><span class="count" data-count="todo">0</span></div>
+            <p data-states="todo">Geen states ingesteld</p>
+          </header>
+          <div class="card-list" data-list="todo"></div>
+        </article>
+        <article class="column" data-column="active">
+          <header class="column-header">
+            <div><span class="column-dot active-dot"></span><h2>Active</h2><span class="count" data-count="active">0</span></div>
+            <p data-states="active">Geen states ingesteld</p>
+          </header>
+          <div class="card-list" data-list="active"></div>
+        </article>
+        <article class="column" data-column="done">
+          <header class="column-header">
+            <div><span class="column-dot done-dot"></span><h2>Done</h2><span class="count" data-count="done">0</span></div>
+            <p data-states="done">Geen states ingesteld</p>
+          </header>
+          <div class="card-list" data-list="done"></div>
+        </article>
+      </section>
+    </main>
+
+    <dialog id="connectionDialog" class="dialog connection-dialog">
+      <form id="connectionForm" method="dialog">
+        <div class="dialog-heading">
+          <div class="dialog-icon">AZ</div>
+          <div><h2>Verbind met Azure DevOps</h2><p>De PAT blijft uitsluitend in de lokale opslag van deze browser.</p></div>
+        </div>
+        <label>
+          Azure DevOps URL
+          <input id="orgUrlInput" name="orgUrl" type="url" value="https://dev.azure.com/UvA-WISH/WISH/" required />
+        </label>
+        <label>
+          Personal Access Token
+          <div class="password-field">
+            <input id="patInput" name="pat" type="password" placeholder="Plak hier je PAT" required autocomplete="off" />
+            <button id="togglePat" type="button" aria-label="Toon of verberg PAT">Tonen</button>
+          </div>
+          <span class="field-help">Benodigd: leesrechten voor Work Items en Project &amp; Team.</span>
+        </label>
+        <div class="privacy-note"><strong>Privé op dit apparaat.</strong> Je PAT wordt nooit naar onze servers gestuurd; alleen rechtstreeks naar Azure DevOps.</div>
+        <p id="connectionError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="cancelConnection" class="text-button" type="button">Annuleren</button>
+          <button class="primary-button" value="connect" type="submit">Verbinden</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settingsDialog" class="dialog settings-dialog">
+      <form id="settingsForm" method="dialog">
+        <div class="dialog-heading compact">
+          <div><h2>Board instellen</h2><p>Kies een team en bepaal in welke kolom iedere Azure DevOps-state verschijnt.</p></div>
+          <button class="close-button" type="button" data-close-settings aria-label="Sluiten">×</button>
+        </div>
+        <label>
+          Azure DevOps-team
+          <select id="teamSelect" name="team"></select>
+        </label>
+        <div class="mapping-heading"><span>Azure DevOps-state</span><span>Kolom</span></div>
+        <div id="stateMappings" class="state-mappings"></div>
+        <div class="settings-footer">
+          <button id="changeConnection" class="text-button danger" type="button">Verbinding wijzigen</button>
+          <div class="dialog-actions inline">
+            <button class="secondary-button" type="button" data-close-settings>Annuleren</button>
+            <button class="primary-button" value="save" type="submit">Opslaan</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <template id="emptyTemplate">
+      <div class="empty-column"><div class="empty-icon">✓</div><p>Geen stories in deze kolom</p></div>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
