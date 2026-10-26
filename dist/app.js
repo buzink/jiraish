@@ -57,6 +57,7 @@ const state = {
     feature: new Set()
   },
   detailsCache: new Map(),
+  commentsCache: new Map(),
   selectedItemId: null,
   loading: false
 };
@@ -112,6 +113,11 @@ const els = {
   workItemParent: document.querySelector("#workItemParent"),
   workItemTags: document.querySelector("#workItemTags"),
   workItemChanged: document.querySelector("#workItemChanged"),
+  workItemCommentCount: document.querySelector("#workItemCommentCount"),
+  workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
+  workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
+  workItemCommentsStatus: document.querySelector("#workItemCommentsStatus"),
+  workItemComments: document.querySelector("#workItemComments"),
   workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
   openInAzure: document.querySelector("#openInAzure")
 };
@@ -226,6 +232,7 @@ async function loadBoard({ openSettings = false } = {}) {
     }
     state.stories = items.map(normalizeWorkItem);
     state.detailsCache.clear();
+    state.commentsCache.clear();
     await loadParentDetails(state.stories);
     state.stories.forEach(item => state.knownStates.add(item.state));
     addSmartMappings();
@@ -436,22 +443,49 @@ function createCard(item) {
 
 async function showWorkItem(item) {
   state.selectedItemId = item.id;
-  const cached = state.detailsCache.get(item.id) || null;
-  renderWorkItemDetail(item, cached, !cached);
+  const hasCachedDetail = state.detailsCache.has(item.id);
+  const hasCachedComments = state.commentsCache.has(item.id);
+  const cachedDetail = state.detailsCache.get(item.id) || null;
+  const cachedComments = state.commentsCache.get(item.id) || [];
+  renderWorkItemDetail(item, cachedDetail, !hasCachedDetail);
+  renderComments(cachedComments, !hasCachedComments);
+  setActivityTab("all");
   if (!els.workItemDialog.open) els.workItemDialog.showModal();
-  if (cached) return;
 
+  if (!hasCachedDetail) {
+    loadWorkItemDetail(item);
+  }
+  if (!hasCachedComments) {
+    loadWorkItemComments(item);
+  }
+}
+
+async function loadWorkItemDetail(item) {
   try {
     const result = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
     const detail = normalizeWorkItemDetail(result);
     state.detailsCache.set(item.id, detail);
-    if (state.selectedItemId === item.id && els.workItemDialog.open) renderWorkItemDetail(item, detail, false);
+    if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, detail, false);
   } catch (error) {
     console.error(error);
-    if (state.selectedItemId === item.id && els.workItemDialog.open) {
-      renderWorkItemDetail(item, null, false, "Extra gegevens konden niet worden geladen.");
-    }
+    if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, null, false, "Extra gegevens konden niet worden geladen.");
   }
+}
+
+async function loadWorkItemComments(item) {
+  try {
+    const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&api-version=7.1-preview.4`);
+    const comments = normalizeComments(result);
+    state.commentsCache.set(item.id, comments);
+    if (isSelectedWorkItem(item.id)) renderComments(comments, false);
+  } catch (error) {
+    console.error(error);
+    if (isSelectedWorkItem(item.id)) renderComments([], false, "Comments konden niet worden geladen.");
+  }
+}
+
+function isSelectedWorkItem(itemId) {
+  return state.selectedItemId === itemId && els.workItemDialog.open;
 }
 
 function normalizeWorkItemDetail(item) {
@@ -470,6 +504,17 @@ function normalizeWorkItemDetail(item) {
     tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
     changedDate: fields["System.ChangedDate"] || ""
   };
+}
+
+function normalizeComments(result) {
+  const comments = result.comments || result.value || [];
+  return comments.filter(comment => !comment.isDeleted).map(comment => ({
+    id: comment.commentId ?? comment.id,
+    author: comment.createdBy?.displayName || comment.createdBy?.uniqueName || "Onbekende gebruiker",
+    text: htmlToText(comment.text || ""),
+    createdDate: comment.createdDate || "",
+    modifiedDate: comment.modifiedDate || ""
+  }));
 }
 
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
@@ -506,6 +551,59 @@ function renderDetailTags(tags) {
     chip.textContent = tag;
     return chip;
   }));
+}
+
+function renderComments(comments, loading = false, error = "") {
+  els.workItemCommentCount.textContent = String(comments.length);
+  els.workItemCommentsStatus.classList.toggle("is-error", Boolean(error));
+  if (loading) {
+    els.workItemCommentsStatus.textContent = "Comments laden…";
+    els.workItemComments.replaceChildren(...Array.from({ length: 2 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "comment-skeleton";
+      return skeleton;
+    }));
+    return;
+  }
+  els.workItemCommentsStatus.textContent = error || (!comments.length ? "Nog geen comments." : "");
+  els.workItemComments.replaceChildren(...comments.map(createComment));
+}
+
+function createComment(comment) {
+  const article = document.createElement("article");
+  article.className = "comment";
+  const avatar = document.createElement("span");
+  avatar.className = "comment-avatar";
+  avatar.textContent = initialsFor(comment.author);
+  const body = document.createElement("div");
+  body.className = "comment-body";
+  const header = document.createElement("header");
+  const author = document.createElement("strong");
+  author.textContent = comment.author;
+  const time = document.createElement("time");
+  time.dateTime = comment.createdDate;
+  time.textContent = comment.createdDate ? formatDateTime(comment.createdDate) : "";
+  header.append(author, time);
+  const text = document.createElement("p");
+  text.textContent = comment.text || "Lege comment";
+  body.append(header, text);
+  article.append(avatar, body);
+  return article;
+}
+
+function initialsFor(name) {
+  return name.split(/\s+/).filter(Boolean).map(part => part[0]).join("").slice(0, 2).toUpperCase() || "?";
+}
+
+function setActivityTab(tab) {
+  document.querySelectorAll("[data-activity-tab]").forEach(button => {
+    const active = button.dataset.activityTab === tab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  const showHistory = tab === "history";
+  els.workItemCommentsPanel.hidden = showHistory;
+  els.workItemHistoryPanel.hidden = !showHistory;
 }
 
 function htmlToText(value) {
@@ -624,6 +722,7 @@ els.settingsForm.addEventListener("submit", event => {
 
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
 document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", () => els.workItemDialog.close()));
+document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
 els.workItemDialog.addEventListener("close", () => { state.selectedItemId = null; });
 els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) els.workItemDialog.close(); });
 els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connectionDialog.close(); });

@@ -176,12 +176,19 @@
             <section class="issue-section activity-section" aria-labelledby="activityHeading">
               <div class="section-heading-row">
                 <h3 id="activityHeading">Activiteit</h3>
-                <span class="future-badge">Basisweergave</span>
               </div>
-              <div class="activity-tabs" aria-label="Activiteitstypen">
-                <span class="is-active">Alles</span><span>Comments</span><span>Historie</span>
+              <div class="activity-tabs" role="tablist" aria-label="Activiteitstypen">
+                <button class="is-active" type="button" role="tab" aria-selected="true" data-activity-tab="all">Alles</button>
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="comments">Comments <span id="workItemCommentCount" class="comment-count">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="history">Historie</button>
               </div>
-              <div class="activity-placeholder">Activiteit kan hier later worden toegevoegd.</div>
+              <div id="workItemCommentsPanel" class="activity-panel" role="tabpanel">
+                <div id="workItemCommentsStatus" class="comments-status" aria-live="polite"></div>
+                <div id="workItemComments" class="comment-list"></div>
+              </div>
+              <div id="workItemHistoryPanel" class="activity-panel" role="tabpanel" hidden>
+                <div class="activity-placeholder">Historie kan hier later worden toegevoegd.</div>
+              </div>
             </section>
           </main>
 

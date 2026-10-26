@@ -173,10 +173,24 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .issue-section h3, .work-item-details h3 { margin: 0 0 14px; color: var(--navy); font-size: 14px; }
 .issue-description { min-height: 72px; margin: 0; color: var(--text); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
 .section-heading-row { display: flex; align-items: center; gap: 10px; }
-.future-badge { margin-top: -14px; padding: 2px 6px; border-radius: 3px; color: var(--muted); background: var(--board-bg); font-size: 10px; font-weight: 700; }
 .activity-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
-.activity-tabs span { padding: 8px 11px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.activity-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 11px; border: 0; color: var(--muted); background: transparent; font-size: 12px; font-weight: 600; }
+.activity-tabs button:hover { color: var(--navy); background: var(--board-bg); }
 .activity-tabs .is-active { margin-bottom: -1px; border-bottom: 2px solid var(--blue-600); color: var(--blue-700); }
+.comment-count { min-width: 18px; padding: 1px 5px; border-radius: 9px; color: #42526e; background: #dfe1e6; font-size: 10px; text-align: center; }
+.activity-panel { padding-top: 16px; }
+.comments-status { color: var(--muted); font-size: 12px; }
+.comments-status.is-error { color: #de350b; }
+.comment-list { display: grid; gap: 16px; }
+.comments-status:not(:empty) + .comment-list { margin-top: 12px; }
+.comment { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 11px; }
+.comment-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: white; background: #6554c0; font-size: 10px; font-weight: 800; }
+.comment-body { min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.comment-body header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.comment-body strong { color: var(--navy); font-size: 12px; }
+.comment-body time { color: var(--muted); font-size: 10px; }
+.comment-body p { margin: 7px 0 0; color: var(--text); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.comment-skeleton { height: 70px; border-radius: 4px; background: linear-gradient(90deg, #f4f5f7 25%, #ebecf0 37%, #f4f5f7 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
 .activity-placeholder { margin-top: 14px; padding: 18px; border-radius: 4px; color: var(--muted); background: var(--board-bg); font-size: 12px; text-align: center; }
 .work-item-details { padding: 25px 26px 34px; border-left: 1px solid var(--line); background: #fafbfc; }
 .work-item-details dl { margin: 0; }
@@ -258,7 +272,11 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 [data-theme="dark"] .work-item-shell, [data-theme="dark"] .work-item-footer { background: #282e33; }
 [data-theme="dark"] .work-item-details { border-color: #38414a; background: #22272b; }
 [data-theme="dark"] .issue-status { color: #85b8ff; background: #1c3b5c; }
-[data-theme="dark"] .future-badge, [data-theme="dark"] .activity-placeholder { background: #22272b; }
+[data-theme="dark"] .activity-placeholder { background: #22272b; }
+[data-theme="dark"] .comment-count { color: #b6c2cf; background: #38414a; }
+[data-theme="dark"] .comments-status.is-error { color: #ff7452; }
+[data-theme="dark"] .comment-body { background: #22272b; }
+[data-theme="dark"] .comment-skeleton { background: linear-gradient(90deg, #282e33 25%, #38414a 37%, #282e33 63%); background-size: 400% 100%; }
 [data-theme="dark"] .issue-tags span { color: #b6c2cf; background: #38414a; }
 [data-theme="dark"] .work-item-load-status.is-error { color: #ff7452; }
 
