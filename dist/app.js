@@ -58,6 +58,7 @@ const state = {
   },
   detailsCache: new Map(),
   commentsCache: new Map(),
+  commentsRequestTokens: new Map(),
   historyCache: new Map(),
   richImageCache: new Map(),
   workItemTypeStatesCache: new Map(),
@@ -156,6 +157,12 @@ const els = {
   workItemActivity: document.querySelector("#workItemActivity"),
   workItemCommentsStatus: document.querySelector("#workItemCommentsStatus"),
   workItemComments: document.querySelector("#workItemComments"),
+  commentComposerPrompt: document.querySelector("#commentComposerPrompt"),
+  commentComposerForm: document.querySelector("#commentComposerForm"),
+  commentComposerInput: document.querySelector("#commentComposerInput"),
+  commentComposerCancel: document.querySelector("#commentComposerCancel"),
+  commentComposerSubmit: document.querySelector("#commentComposerSubmit"),
+  commentComposerStatus: document.querySelector("#commentComposerStatus"),
   workItemHistoryStatus: document.querySelector("#workItemHistoryStatus"),
   workItemHistory: document.querySelector("#workItemHistory"),
   workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
@@ -273,6 +280,7 @@ async function loadBoard({ openSettings = false } = {}) {
     state.stories = items.map(normalizeWorkItem);
     state.detailsCache.clear();
     state.commentsCache.clear();
+    state.commentsRequestTokens.clear();
     state.historyCache.clear();
     state.workItemTypeStatesCache.clear();
     state.commentsErrors.clear();
@@ -488,6 +496,7 @@ function createCard(item) {
 async function showWorkItem(item) {
   state.selectedItemId = item.id;
   closeWorkItemStateMenu();
+  resetCommentComposer();
   const hasCachedDetail = state.detailsCache.has(item.id);
   const hasCachedComments = state.commentsCache.has(item.id);
   const hasCachedHistory = state.historyCache.has(item.id);
@@ -527,8 +536,11 @@ async function loadWorkItemDetail(item) {
 }
 
 async function loadWorkItemComments(item) {
+  const requestToken = (state.commentsRequestTokens.get(item.id) || 0) + 1;
+  state.commentsRequestTokens.set(item.id, requestToken);
   try {
     const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&$expand=renderedText&api-version=7.1-preview.4`);
+    if (state.commentsRequestTokens.get(item.id) !== requestToken) return;
     const comments = normalizeComments(result);
     state.commentsCache.set(item.id, comments);
     state.commentsErrors.delete(item.id);
@@ -537,6 +549,7 @@ async function loadWorkItemComments(item) {
       renderCombinedActivity();
     }
   } catch (error) {
+    if (state.commentsRequestTokens.get(item.id) !== requestToken) return;
     console.error(error);
     state.commentsErrors.set(item.id, "Comments konden niet worden geladen.");
     if (isSelectedWorkItem(item.id)) {
@@ -590,13 +603,17 @@ function normalizeWorkItemDetail(item) {
 
 function normalizeComments(result) {
   const comments = result.comments || result.value || [];
-  return comments.filter(comment => !comment.isDeleted).map(comment => ({
+  return comments.filter(comment => !comment.isDeleted).map(normalizeComment);
+}
+
+function normalizeComment(comment) {
+  return {
     id: comment.commentId ?? comment.id,
     author: comment.createdBy?.displayName || comment.createdBy?.uniqueName || "Onbekende gebruiker",
     html: comment.renderedText || comment.text || "",
     createdDate: comment.createdDate || "",
     modifiedDate: comment.modifiedDate || ""
-  }));
+  };
 }
 
 function normalizeHistory(result) {
@@ -801,6 +818,71 @@ function renderComments(comments, loading = false, error = "") {
   }
   els.workItemCommentsStatus.textContent = error || (!comments.length ? "Nog geen comments." : "");
   els.workItemComments.replaceChildren(...comments.map(createComment));
+}
+
+function setCommentComposerExpanded(expanded) {
+  els.commentComposerPrompt.hidden = expanded;
+  els.commentComposerForm.hidden = !expanded;
+  if (expanded) requestAnimationFrame(() => els.commentComposerInput.focus());
+}
+
+function resetCommentComposer() {
+  els.commentComposerInput.value = "";
+  els.commentComposerStatus.textContent = "";
+  els.commentComposerStatus.classList.remove("is-error");
+  els.commentComposerInput.disabled = false;
+  els.commentComposerCancel.disabled = false;
+  els.commentComposerSubmit.disabled = false;
+  els.commentComposerSubmit.textContent = "Opslaan";
+  setCommentComposerExpanded(false);
+}
+
+function setCommentComposerBusy(busy) {
+  els.commentComposerInput.disabled = busy;
+  els.commentComposerCancel.disabled = busy;
+  els.commentComposerSubmit.disabled = busy;
+  els.commentComposerSubmit.textContent = busy ? "Opslaan…" : "Opslaan";
+}
+
+async function submitWorkItemComment(event) {
+  event.preventDefault();
+  const item = state.stories.find(story => story.id === state.selectedItemId);
+  const text = els.commentComposerInput.value.trim();
+  if (!item || !text) return;
+  setCommentComposerBusy(true);
+  els.commentComposerStatus.textContent = "Comment plaatsen…";
+  els.commentComposerStatus.classList.remove("is-error");
+  try {
+    const result = await azure(`/_apis/wit/workItems/${item.id}/comments?api-version=7.1-preview.4`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+    const comment = normalizeComment(result);
+    const existing = state.commentsCache.get(item.id) || [];
+    const comments = [comment, ...existing.filter(entry => entry.id !== comment.id)]
+      .sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
+    state.commentsCache.set(item.id, comments);
+    state.commentsErrors.delete(item.id);
+    if (isSelectedWorkItem(item.id)) {
+      renderComments(comments, false);
+      renderCombinedActivity();
+      resetCommentComposer();
+      els.workItemLoadStatus.textContent = "Comment geplaatst.";
+      els.workItemLoadStatus.classList.remove("is-error");
+    }
+    loadWorkItemComments(item);
+  } catch (error) {
+    console.error(error);
+    if (isSelectedWorkItem(item.id)) {
+      els.commentComposerStatus.textContent = error.auth
+        ? "Comment kon niet worden geplaatst. De PAT heeft ‘Work Items: Read & write’ nodig."
+        : error.message || "Comment kon niet worden geplaatst.";
+      els.commentComposerStatus.classList.add("is-error");
+    }
+  } finally {
+    if (isSelectedWorkItem(item.id) && !els.commentComposerForm.hidden) setCommentComposerBusy(false);
+  }
 }
 
 function createComment(comment) {
@@ -1213,13 +1295,26 @@ document.querySelectorAll("[data-close-work-item]").forEach(button => button.add
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
 els.workItemState.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemStateMenu(); });
 els.workItemStateMenu.addEventListener("click", event => event.stopPropagation());
+els.commentComposerPrompt.addEventListener("click", () => setCommentComposerExpanded(true));
+els.commentComposerCancel.addEventListener("click", resetCommentComposer);
+els.commentComposerForm.addEventListener("submit", submitWorkItemComment);
+els.commentComposerInput.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    resetCommentComposer();
+  } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    els.commentComposerForm.requestSubmit();
+  }
+});
 els.workItemDialog.addEventListener("cancel", event => {
   if (!els.workItemStateMenu.hidden) {
     event.preventDefault();
     closeWorkItemStateMenu();
   }
 });
-els.workItemDialog.addEventListener("close", () => { closeWorkItemStateMenu(); state.selectedItemId = null; });
+els.workItemDialog.addEventListener("close", () => { closeWorkItemStateMenu(); resetCommentComposer(); state.selectedItemId = null; });
 els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) els.workItemDialog.close(); });
 els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connectionDialog.close(); });
 els.togglePat.addEventListener("click", () => {

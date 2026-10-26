@@ -194,6 +194,22 @@
               </div>
               <div id="workItemCommentsPanel" class="activity-panel" role="tabpanel">
                 <h4 class="activity-panel-title">Comments</h4>
+                <div class="comment-composer">
+                  <button id="commentComposerPrompt" class="comment-composer-prompt" type="button">
+                    <span class="comment-composer-avatar" aria-hidden="true">+</span>
+                    <span>Comment toevoegen…</span>
+                  </button>
+                  <form id="commentComposerForm" class="comment-composer-form" hidden>
+                    <label class="sr-only" for="commentComposerInput">Comment</label>
+                    <textarea id="commentComposerInput" rows="4" placeholder="Schrijf een comment…" required></textarea>
+                    <div class="comment-composer-footer">
+                      <span class="comment-composer-hint">Ctrl + Enter om op te slaan</span>
+                      <button id="commentComposerCancel" class="text-button" type="button">Annuleren</button>
+                      <button id="commentComposerSubmit" class="primary-button" type="submit">Opslaan</button>
+                    </div>
+                    <p id="commentComposerStatus" class="comment-composer-status" role="alert"></p>
+                  </form>
+                </div>
                 <div id="workItemCommentsStatus" class="comments-status" aria-live="polite"></div>
                 <div id="workItemComments" class="comment-list"></div>
               </div>
