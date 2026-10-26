@@ -598,12 +598,22 @@ function normalizeHistory(result) {
       id: update.id,
       revision: update.rev,
       author: update.revisedBy?.displayName || update.revisedBy?.uniqueName || "Onbekende gebruiker",
-      date: update.revisedDate || "",
+      date: historyDateFor(update),
       created: update.rev === 1,
       changes
     };
   }).filter(entry => entry.created || entry.changes.length)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+function historyDateFor(update) {
+  const changedDate = update.fields?.["System.ChangedDate"]?.newValue;
+  for (const value of [changedDate, update.revisedDate]) {
+    if (!value) continue;
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime()) && date.getUTCFullYear() < 9000) return value;
+  }
+  return "";
 }
 
 function formatHistoryValue(value) {
