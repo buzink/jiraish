@@ -60,6 +60,32 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .text-button:hover { text-decoration: underline; }
 .text-button.danger { color: #de350b; }
 
+.filter-panel { margin: -4px 0 20px; border: 1px solid var(--line); border-radius: 5px; background: #fafbfc; }
+.filter-toolbar { min-height: 52px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+.filter-toolbar-label { display: inline-flex; align-items: center; gap: 6px; margin-right: 2px; color: #42526e; font-size: 12px; font-weight: 700; }
+.filter-toolbar-label svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.filter-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-menu { position: relative; }
+.filter-menu summary { height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid #c1c7d0; border-radius: 3px; color: #42526e; background: white; font-size: 12px; font-weight: 600; cursor: pointer; list-style: none; user-select: none; }
+.filter-menu summary::-webkit-details-marker { display: none; }
+.filter-menu summary:hover, .filter-menu[open] summary { border-color: #4c9aff; color: var(--blue-700); background: #f4f8ff; }
+.filter-menu summary b { min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: 9px; color: white; background: var(--blue-600); font-size: 10px; }
+.filter-menu summary svg { width: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.filter-dropdown { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: max-content; min-width: 220px; max-width: 340px; max-height: 290px; overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 4px; background: white; box-shadow: 0 8px 20px rgba(9, 30, 66, .22); }
+.filter-dropdown label { display: flex; align-items: flex-start; gap: 9px; padding: 8px 9px; border-radius: 3px; color: #42526e; font-size: 12px; line-height: 1.35; cursor: pointer; }
+.filter-dropdown label:hover { background: #f4f5f7; }
+.filter-dropdown input { width: 15px; height: 15px; margin: 1px 0 0; accent-color: var(--blue-600); flex: 0 0 auto; }
+.filter-dropdown span { overflow-wrap: anywhere; }
+.filter-empty { margin: 0; padding: 12px 9px; color: var(--muted); font-size: 12px; }
+.clear-filters { min-height: 30px; margin-left: 2px; padding: 0 7px; border: 0; color: var(--blue-600); background: transparent; font-size: 12px; font-weight: 600; }
+.clear-filters:hover { text-decoration: underline; }
+.filter-result-count { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.active-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+.filter-chip { min-height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 0; border-radius: 3px; color: #0747a6; background: #deebff; font-size: 11px; }
+.filter-chip:hover { background: #b3d4ff; }
+.filter-chip span { color: #42526e; }
+.filter-chip b { margin-left: 2px; font-size: 15px; line-height: 1; }
+
 .status-region { min-height: 0; }
 .notice { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding: 11px 14px; border-left: 4px solid #4c9aff; border-radius: 3px; background: #deebff; color: #0747a6; font-size: 13px; }
 .notice.error { border-color: #ff5630; color: #bf2600; background: #ffebe6; }
@@ -131,6 +157,7 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
   .page-heading { align-items: stretch; flex-direction: column; }
   .heading-actions { flex-wrap: wrap; }
   .search-field { flex: 1 1 200px; }
+  .filter-result-count { width: 100%; margin-left: 0; }
   .board { grid-template-columns: 1fr; }
   .column { min-height: 240px; }
 }
@@ -138,6 +165,10 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
   .topbar { padding: 0 14px; gap: 18px; }
   .topbar nav { display: none; }
   .secondary-button { flex: 1; justify-content: center; }
+  .filter-toolbar-label { width: 100%; }
+  .filter-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .filter-menu summary { justify-content: space-between; }
+  .filter-dropdown { position: fixed; top: 20%; right: 16px; left: 16px; width: auto; max-width: none; max-height: 60vh; }
   .mapping-heading, .mapping-row { grid-template-columns: 1fr 145px; }
   .settings-footer { align-items: stretch; flex-direction: column-reverse; }
   .dialog-actions.inline { display: grid; grid-template-columns: 1fr 1fr; }

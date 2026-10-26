@@ -33,8 +33,25 @@ const state = {
   knownStates: new Set(Object.keys(DEFAULT_MAPPING)),
   mapping: readJson(STORAGE.mapping, { ...DEFAULT_MAPPING }),
   search: "",
+  filters: {
+    type: new Set(),
+    assignee: new Set(),
+    itemState: new Set(),
+    area: new Set(),
+    tag: new Set(),
+    feature: new Set()
+  },
   loading: false
 };
+
+const FILTER_DEFINITIONS = [
+  { key: "type", label: "Types", value: item => item.type },
+  { key: "assignee", label: "Assigned to", value: item => item.assignee || "Niet toegewezen" },
+  { key: "itemState", label: "States", value: item => item.state },
+  { key: "area", label: "Area", value: item => item.area || "Geen area" },
+  { key: "tag", label: "Tags", values: item => item.tags },
+  { key: "feature", label: "Feature", value: item => item.featureLabel || "Geen parent" }
+];
 
 const els = {
   board: document.querySelector("#board"),
@@ -43,6 +60,10 @@ const els = {
   settings: document.querySelector("#settingsButton"),
   configure: document.querySelector("#configureButton"),
   search: document.querySelector("#searchInput"),
+  filterControls: document.querySelector("#filterControls"),
+  activeFilters: document.querySelector("#activeFilters"),
+  clearFilters: document.querySelector("#clearFilters"),
+  filterResultCount: document.querySelector("#filterResultCount"),
   sprintBadge: document.querySelector("#sprintBadge"),
   sprintMeta: document.querySelector("#sprintMeta"),
   connectionDialog: document.querySelector("#connectionDialog"),
@@ -141,16 +162,16 @@ async function loadBoard({ openSettings = false } = {}) {
       const fields = [
         "System.Id", "System.Title", "System.State", "System.WorkItemType",
         "System.AssignedTo", "Microsoft.VSTS.Scheduling.StoryPoints",
-        "Microsoft.VSTS.Scheduling.Effort", "System.Tags"
+        "Microsoft.VSTS.Scheduling.Effort", "System.Tags", "System.AreaPath", "System.Parent"
       ].join(",");
       const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields)}&api-version=7.1`);
       items.push(...(result.value || []));
     }
-    state.stories = items
-      .map(normalizeWorkItem)
-      .filter(item => ["user story", "product backlog item", "bug", "requirement"].includes(item.type.toLowerCase()));
+    state.stories = items.map(normalizeWorkItem);
+    await loadParentDetails(state.stories);
     state.stories.forEach(item => state.knownStates.add(item.state));
     addSmartMappings();
+    pruneFilters();
     render();
     if (openSettings) showSettings();
   } catch (error) {
@@ -172,8 +193,34 @@ function normalizeWorkItem(item) {
     state: fields["System.State"] || "Onbekend",
     type: fields["System.WorkItemType"] || "Work item",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
+    area: fields["System.AreaPath"] || "",
+    tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
+    parentId: fields["System.Parent"] || null,
+    featureLabel: "",
     points: fields["Microsoft.VSTS.Scheduling.StoryPoints"] ?? fields["Microsoft.VSTS.Scheduling.Effort"] ?? null
   };
+}
+
+async function loadParentDetails(items) {
+  const parentIds = [...new Set(items.map(item => item.parentId).filter(Boolean))];
+  if (!parentIds.length) return;
+  const parents = new Map();
+  for (let index = 0; index < parentIds.length; index += 200) {
+    const chunk = parentIds.slice(index, index + 200);
+    const fields = "System.Id,System.Title,System.WorkItemType";
+    const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields)}&errorPolicy=Omit&api-version=7.1`);
+    for (const parent of result.value || []) {
+      const parentFields = parent.fields || {};
+      parents.set(parent.id, {
+        title: parentFields["System.Title"] || `Work item ${parent.id}`,
+        type: parentFields["System.WorkItemType"] || "Work item"
+      });
+    }
+  }
+  for (const item of items) {
+    const parent = parents.get(item.parentId);
+    if (parent) item.featureLabel = `${parent.title} (#${item.parentId})`;
+  }
 }
 
 function addSmartMappings() {
@@ -200,16 +247,110 @@ function render() {
   }
 
   const query = state.search.trim().toLowerCase();
+  const visibleStories = state.stories.filter(item => matchesFilters(item, query));
+  renderFilters();
   for (const column of ["todo", "active", "done"]) {
     const list = document.querySelector(`[data-list="${column}"]`);
-    const stories = state.stories.filter(item =>
-      state.mapping[item.state] === column &&
-      (!query || item.title.toLowerCase().includes(query) || String(item.id).includes(query))
-    );
+    const stories = visibleStories.filter(item => state.mapping[item.state] === column);
     document.querySelector(`[data-count="${column}"]`).textContent = stories.length;
     const mappedStates = [...state.knownStates].filter(itemState => state.mapping[itemState] === column);
     document.querySelector(`[data-states="${column}"]`).textContent = mappedStates.join(", ") || "Geen states ingesteld";
     list.replaceChildren(...(stories.length ? stories.map(createCard) : [emptyNode()]));
+  }
+}
+
+function matchesFilters(item, query = "") {
+  if (query && !item.title.toLowerCase().includes(query) && !String(item.id).includes(query)) return false;
+  return FILTER_DEFINITIONS.every(definition => {
+    const selected = state.filters[definition.key];
+    if (!selected.size) return true;
+    const values = definition.values
+      ? definition.values(item)
+      : [definition.value(item)];
+    return values.some(value => selected.has(value));
+  });
+}
+
+function getFilterOptions(definition) {
+  const values = new Set();
+  for (const item of state.stories) {
+    if (state.mapping[item.state] === "hidden") continue;
+    const itemValues = definition.values ? definition.values(item) : [definition.value(item)];
+    itemValues.forEach(value => { if (value) values.add(value); });
+  }
+  if (definition.key === "tag" && state.filters.tag.size && !values.size) return [...state.filters.tag];
+  return [...values].sort((a, b) => a.localeCompare(b, "nl", { numeric: true, sensitivity: "base" }));
+}
+
+function renderFilters() {
+  els.filterControls.replaceChildren(...FILTER_DEFINITIONS.map(createFilterMenu));
+  const chips = [];
+  for (const definition of FILTER_DEFINITIONS) {
+    for (const value of state.filters[definition.key]) chips.push(createFilterChip(definition, value));
+  }
+  els.activeFilters.replaceChildren(...chips);
+  els.activeFilters.hidden = !chips.length;
+  els.clearFilters.hidden = !chips.length;
+  const totalOnBoard = state.stories.filter(item => state.mapping[item.state] !== "hidden").length;
+  const visibleOnBoard = state.stories.filter(item => state.mapping[item.state] !== "hidden" && matchesFilters(item, state.search.trim().toLowerCase())).length;
+  els.filterResultCount.textContent = chips.length || state.search ? `${visibleOnBoard} van ${totalOnBoard}` : `${totalOnBoard} items`;
+}
+
+function createFilterMenu(definition) {
+  const details = document.createElement("details");
+  details.className = "filter-menu";
+  const summary = document.createElement("summary");
+  const selectedCount = state.filters[definition.key].size;
+  summary.innerHTML = `<span>${escapeHtml(definition.label)}</span>${selectedCount ? `<b>${selectedCount}</b>` : ""}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`;
+  const dropdown = document.createElement("div");
+  dropdown.className = "filter-dropdown";
+  dropdown.addEventListener("click", event => event.stopPropagation());
+  const options = getFilterOptions(definition);
+  if (!options.length) {
+    const empty = document.createElement("p");
+    empty.className = "filter-empty";
+    empty.textContent = "Geen opties beschikbaar";
+    dropdown.append(empty);
+  } else {
+    for (const option of options) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = state.filters[definition.key].has(option);
+      input.addEventListener("change", () => {
+        if (input.checked) state.filters[definition.key].add(option);
+        else state.filters[definition.key].delete(option);
+        render();
+        const reopened = [...els.filterControls.querySelectorAll(".filter-menu")][FILTER_DEFINITIONS.indexOf(definition)];
+        if (reopened) reopened.open = true;
+      });
+      const text = document.createElement("span");
+      text.textContent = option;
+      label.append(input, text);
+      dropdown.append(label);
+    }
+  }
+  details.append(summary, dropdown);
+  return details;
+}
+
+function createFilterChip(definition, value) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "filter-chip";
+  chip.setAttribute("aria-label", `Verwijder filter ${definition.label}: ${value}`);
+  chip.innerHTML = `<span>${escapeHtml(definition.label)}:</span> ${escapeHtml(value)} <b aria-hidden="true">×</b>`;
+  chip.addEventListener("click", () => {
+    state.filters[definition.key].delete(value);
+    render();
+  });
+  return chip;
+}
+
+function pruneFilters() {
+  for (const definition of FILTER_DEFINITIONS) {
+    const available = new Set(getFilterOptions(definition));
+    for (const value of state.filters[definition.key]) if (!available.has(value)) state.filters[definition.key].delete(value);
   }
 }
 
@@ -357,5 +498,15 @@ els.settings.addEventListener("click", showSettings);
 els.configure.addEventListener("click", showSettings);
 els.refresh.addEventListener("click", () => loadBoard());
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
+els.clearFilters.addEventListener("click", () => {
+  Object.values(state.filters).forEach(values => values.clear());
+  render();
+});
+
+document.addEventListener("click", event => {
+  document.querySelectorAll(".filter-menu[open]").forEach(menu => {
+    if (!menu.contains(event.target)) menu.removeAttribute("open");
+  });
+});
 
 if (state.pat) loadBoard(); else { renderEmptyBoard(); showConnection(); }

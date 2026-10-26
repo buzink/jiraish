@@ -53,6 +53,19 @@
         </div>
       </section>
 
+      <section class="filter-panel" aria-label="Backlogfilters">
+        <div class="filter-toolbar">
+          <div class="filter-toolbar-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.2V18l-3 1.5v-7.3L4 5Z"/></svg>
+            Filters
+          </div>
+          <div id="filterControls" class="filter-controls"></div>
+          <button id="clearFilters" class="clear-filters" type="button" hidden>Alles wissen</button>
+          <span id="filterResultCount" class="filter-result-count" aria-live="polite"></span>
+        </div>
+        <div id="activeFilters" class="active-filters" aria-label="Actieve filters" hidden></div>
+      </section>
+
       <section id="statusRegion" class="status-region" aria-live="polite"></section>
 
       <section id="board" class="board" aria-label="Sprint kanbanboard">
