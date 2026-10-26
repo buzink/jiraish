@@ -911,10 +911,30 @@ function safeRichTextUrl(value, image) {
   if (image && /^data:image\/(png|gif|jpe?g|webp);base64,/i.test(value)) return value;
   try {
     const { webBase } = parseAzureUrl(state.orgUrl);
-    const url = new URL(value, `${webBase}/`);
+    let url = new URL(value, `${webBase}/`);
+    if (image) url = normalizeAzureImageUrl(url);
     const protocols = image ? ["https:", "http:"] : ["https:", "http:", "mailto:"];
     return protocols.includes(url.protocol) ? url.href : "";
   } catch { return ""; }
+}
+
+function normalizeAzureImageUrl(url) {
+  if (url.hostname !== "dev.azure.com") return url;
+  const segments = url.pathname.split("/").filter(Boolean);
+  const attachmentId = segments.length === 1 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segments[0])
+    ? segments[0]
+    : "";
+  if (attachmentId) {
+    const { base } = parseAzureUrl(state.orgUrl);
+    const attachmentUrl = new URL(`${base}/_apis/wit/attachments/${attachmentId}`);
+    url.searchParams.forEach((value, key) => attachmentUrl.searchParams.append(key, value));
+    if (!attachmentUrl.searchParams.has("api-version")) attachmentUrl.searchParams.set("api-version", "7.1");
+    return attachmentUrl;
+  }
+  if (url.pathname.toLowerCase().includes("/_apis/wit/attachments/") && !url.searchParams.has("api-version")) {
+    url.searchParams.set("api-version", "7.1");
+  }
+  return url;
 }
 
 function isConfiguredAzureUrl(value) {
