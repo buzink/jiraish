@@ -3,7 +3,8 @@ const STORAGE = {
   url: "wish-board.azure-url",
   team: "wish-board.team-id",
   mapping: "wish-board.state-mapping",
-  mappingVersion: "wish-board.state-mapping-version"
+  mappingVersion: "wish-board.state-mapping-version",
+  theme: "wish-board.theme"
 };
 
 const DEFAULT_URL = "https://dev.azure.com/UvA-WISH/WISH/";
@@ -70,6 +71,7 @@ const FILTER_DEFINITIONS = [
 const els = {
   board: document.querySelector("#board"),
   status: document.querySelector("#statusRegion"),
+  theme: document.querySelector("#themeButton"),
   refresh: document.querySelector("#refreshButton"),
   settings: document.querySelector("#settingsButton"),
   search: document.querySelector("#searchInput"),
@@ -107,6 +109,16 @@ function readMapping() {
     localStorage.setItem(STORAGE.mappingVersion, String(DEFAULT_MAPPING_VERSION));
   }
   return mapping;
+}
+
+function applyTheme(theme, persist = false) {
+  document.documentElement.dataset.theme = theme;
+  if (persist) localStorage.setItem(STORAGE.theme, theme);
+  const isDark = theme === "dark";
+  els.theme.setAttribute("aria-pressed", String(isDark));
+  els.theme.setAttribute("aria-label", isDark ? "Schakel naar lichte modus" : "Schakel naar donkere modus");
+  els.theme.title = isDark ? "Lichte modus" : "Donkere modus";
+  document.querySelector('meta[name="theme-color"]').content = isDark ? "#0c1524" : "#0747a6";
 }
 
 function parseAzureUrl(input) {
@@ -518,6 +530,9 @@ els.togglePat.addEventListener("click", () => {
   els.togglePat.textContent = show ? "Verbergen" : "Tonen";
 });
 els.changeConnection.addEventListener("click", () => showConnection());
+els.theme.addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
+});
 els.settings.addEventListener("click", showSettings);
 els.refresh.addEventListener("click", () => loadBoard());
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
@@ -532,4 +547,10 @@ document.addEventListener("click", event => {
   });
 });
 
+const systemTheme = matchMedia("(prefers-color-scheme: dark)");
+systemTheme.addEventListener?.("change", event => {
+  if (!localStorage.getItem(STORAGE.theme)) applyTheme(event.matches ? "dark" : "light");
+});
+
+applyTheme(document.documentElement.dataset.theme || "light");
 if (state.pat) loadBoard(); else { renderEmptyBoard(); showConnection(); }
