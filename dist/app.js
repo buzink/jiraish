@@ -1038,7 +1038,7 @@ async function loadForYouMentions(user) {
       const comments = normalizeComments(result);
       state.commentsCache.set(item.id, comments);
       mentions.push(...comments
-        .filter(comment => !commentIsByUser(comment, user) && commentMentionsUser(comment, user))
+        .filter(comment => commentMentionsUser(comment, user))
         .map(comment => ({ item, mention: { ...comment, kind: "Comment" } })));
     } catch (error) {
       console.warn(`Comments for work item ${item.id} could not be checked for mentions.`, error);
@@ -1113,10 +1113,6 @@ function identityMatches(identity, user) {
   return identityNames.some(name => userNames.includes(name));
 }
 
-function commentIsByUser(comment, user) {
-  return identityMatches({ id: comment.authorId, uniqueName: comment.authorUniqueName, displayName: comment.author }, user);
-}
-
 function commentMentionsUser(comment, user) {
   return htmlMentionsUser(comment.html, user);
 }
@@ -1174,8 +1170,8 @@ function renderForYouIdentity() {
     ? "Open work items assigned to you."
     : `Open work items assigned to ${displayName}.`;
   els.forYouMentionsDescription.textContent = isSelf
-    ? "Recent comments where someone mentioned you."
-    : `Recent comments where someone mentioned ${displayName}.`;
+    ? "Recent mentions of you in comments and descriptions."
+    : `Recent mentions of ${displayName} in comments and descriptions.`;
   els.forYouActivityDescription.textContent = isSelf
     ? "Your latest changes across work items."
     : `${displayName}'s latest changes across work items.`;
