@@ -1,55 +1,55 @@
 # Jiraish
 
-Jiraish is een compacte, Jira-achtige sprint- en backlogweergave voor Azure DevOps. De app draait volledig als statische website en communiceert rechtstreeks vanuit de browser met de Azure DevOps REST API.
+Jiraish is a compact, Jira-style sprint and backlog interface for Azure DevOps. The app runs entirely as a static website and communicates directly with the Azure DevOps REST API from the browser.
 
-## Functionaliteit
+## Features
 
-- Sprintboard met kolommen voor To do, Active en Done
-- Backlogtabellen per sprint in Azure DevOps-backlogvolgorde
-- Filters voor type, assignee, priority, sprint, state, area, tags en feature
-- Work-items bekijken en direct aanpassen
-- Bewerken van titel, beschrijving, status, assignee, priority, story points, area, sprint en tags
-- Licht en donker thema
-- Responsive weergave voor desktop en mobiel
-- Dynamische branding op basis van het gekozen Azure DevOps-team
+- Sprint board with To do, Active, and Done columns
+- Backlog tables grouped by sprint while preserving the Azure DevOps backlog order
+- Filters for type, assignee, priority, sprint, state, area, tags, and feature
+- View and edit work items directly
+- Edit titles, descriptions, states, assignees, priorities, story points, areas, sprints, and tags
+- Light and dark themes
+- Responsive layout for desktop and mobile
+- Dynamic branding based on the selected Azure DevOps team
 
-## Lokaal gebruiken
+## Run locally
 
-Er is geen buildstap nodig. Serveer de map `dist` met een eenvoudige webserver:
+No build step is required. Serve the `dist` directory with a simple web server:
 
 ```bash
 python3 -m http.server 8080 --directory dist
 ```
 
-Open daarna `http://localhost:8080`.
+Then open `http://localhost:8080`.
 
-## Azure DevOps instellen
+## Configure Azure DevOps
 
-Open Jiraish en vul een Azure DevOps-URL en een Personal Access Token in. Jiraish accepteert een organisatie-, project- of team-URL:
+Open Jiraish and enter an Azure DevOps URL and a Personal Access Token. Jiraish accepts organization, project, and team URLs:
 
 ```text
-https://dev.azure.com/organisatie/
-https://dev.azure.com/organisatie/project/
-https://dev.azure.com/organisatie/project/team/
+https://dev.azure.com/organization/
+https://dev.azure.com/organization/project/
+https://dev.azure.com/organization/project/team/
 ```
 
-Bij een team-URL wordt dat team bij de eerste keer openen als standaard gekozen. Zonder team gebruikt Jiraish het eerder gekozen team of, als dat niet beschikbaar is, het eerste team. Bij een URL met alleen de organisatie gebruikt Jiraish het eerder gekozen project of het eerste beschikbare project.
+When a team URL is used, that team is selected by default on first launch. Without a team in the URL, Jiraish uses the previously selected team or the first available team. With an organization-only URL, Jiraish uses the previously selected project or the first available project.
 
-De PAT heeft minimaal leesrechten op projecten, teams, iteraties en work-items nodig. Voor het aanpassen van work-items zijn ook schrijfrechten voor work-items vereist.
+The PAT needs at least read access to projects, teams, iterations, and work items. Editing work items also requires write access to Work Items.
 
-De URL en PAT worden uitsluitend in de lokale browseropslag bewaard. Publiceer of commit nooit een PAT.
+The URL and PAT are stored only in the browser's local storage. Never publish or commit a PAT.
 
 ## GitHub Pages
 
-De workflow in `.github/workflows/deploy-pages.yml` publiceert de inhoud van `dist` bij iedere push naar `main`. Voor een repository met de naam `jiraish` wordt de standaard projectsite:
+The workflow in `.github/workflows/deploy-pages.yml` publishes the contents of `dist` on every push to `main`. For a repository named `jiraish`, the default project site is:
 
 ```text
-https://<github-gebruiker>.github.io/jiraish/
+https://<github-user>.github.io/jiraish/
 ```
 
-GitHub Pages moet in de repository-instellingen als publicatiebron **GitHub Actions** gebruiken.
+GitHub Pages must use **GitHub Actions** as its publishing source in the repository settings.
 
-## Projectstructuur
+## Project structure
 
 ```text
 dist/
@@ -59,6 +59,6 @@ dist/
 .github/workflows/deploy-pages.yml
 ```
 
-## Beveiliging
+## Security
 
-Jiraish is een client-side toepassing. Iedereen met toegang tot het browserprofiel kan mogelijk de lokaal opgeslagen PAT uitlezen. Gebruik daarom een PAT met minimale rechten en een korte geldigheidsduur.
+Jiraish is a client-side application. Anyone with access to the browser profile may be able to read the locally stored PAT. Use a PAT with the minimum required permissions and a short lifetime.

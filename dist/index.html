@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0747a6" />
-    <meta name="description" content="Jira-achtig sprintboard voor Azure DevOps" />
+    <meta name="description" content="Jira-style sprint board for Azure DevOps" />
     <title>Jiraish</title>
     <script>
       try {
@@ -17,26 +17,26 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <a class="skip-link" href="#board">Ga naar het sprintboard</a>
+    <a class="skip-link" href="#board">Skip to the sprint board</a>
 
     <header class="topbar">
       <div id="appBrand" class="brand" aria-label="Jiraish">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
         <span id="brandName">Jiraish</span>
       </div>
-      <nav aria-label="Hoofdnavigatie">
+      <nav aria-label="Main navigation">
         <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint board</button>
         <button id="backlogNav" class="nav-item" type="button">Backlog</button>
       </nav>
       <div class="topbar-actions">
-        <button id="themeButton" class="icon-button theme-button" type="button" aria-label="Schakel naar donkere modus" title="Donkere modus">
+        <button id="themeButton" class="icon-button theme-button" type="button" aria-label="Switch to dark mode" title="Dark mode">
           <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 15.4A8.5 8.5 0 0 1 8.6 3.5 8.5 8.5 0 1 0 20.5 15.4Z"/></svg>
           <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
         </button>
-        <button id="refreshButton" class="icon-button" type="button" aria-label="Vernieuwen" title="Vernieuwen">
+        <button id="refreshButton" class="icon-button" type="button" aria-label="Refresh" title="Refresh">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
         </button>
-        <button id="headerAvatar" class="avatar" type="button" aria-label="Instellingen openen" title="Instellingen">J</button>
+        <button id="headerAvatar" class="avatar" type="button" aria-label="Open settings" title="Settings">J</button>
       </div>
     </header>
 
@@ -46,25 +46,25 @@
           <div class="eyebrow" data-project-team>PROJECT</div>
           <div class="title-row">
             <div id="sprintTitleControl" class="sprint-title-control">
-              <h1 id="pageTitle"><button id="sprintTitle" class="sprint-title-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Andere sprint kiezen">Nog niet geladen</button></h1>
+              <h1 id="pageTitle"><button id="sprintTitle" class="sprint-title-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Choose another sprint">Not loaded yet</button></h1>
               <div id="sprintMenu" class="sprint-menu" hidden>
                 <label class="sprint-menu-search">
-                  <span class="sr-only">Sprint zoeken</span>
+                  <span class="sr-only">Search sprints</span>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
-                  <input id="sprintMenuSearch" type="search" placeholder="Sprint zoeken…" autocomplete="off">
+                  <input id="sprintMenuSearch" type="search" placeholder="Search sprints…" autocomplete="off">
                 </label>
                 <div id="sprintMenuOptions" class="sprint-menu-options" role="listbox"></div>
               </div>
             </div>
-            <span id="sprintBadge" class="sprint-badge">Huidige sprint</span>
+            <span id="sprintBadge" class="sprint-badge">Current sprint</span>
           </div>
-          <p id="sprintMeta" class="sprint-meta">Verbind Azure DevOps om het sprintboard te laden.</p>
+          <p id="sprintMeta" class="sprint-meta">Connect Azure DevOps to load the sprint board.</p>
         </div>
         <div class="heading-actions">
           <label class="search-field">
-            <span class="sr-only">Zoek stories</span>
+            <span class="sr-only">Search stories</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-            <input id="searchInput" type="search" placeholder="Zoek op titel of ID" autocomplete="off" />
+            <input id="searchInput" type="search" placeholder="Search by title or ID" autocomplete="off" />
           </label>
         </div>
       </section>
@@ -73,44 +73,44 @@
         <div>
           <div class="eyebrow" data-project-team>PROJECT</div>
           <h1 id="backlogTitle">Backlog</h1>
-          <p id="backlogMeta" class="sprint-meta">Azure DevOps-backlog laden…</p>
+          <p id="backlogMeta" class="sprint-meta">Loading Azure DevOps backlog…</p>
         </div>
       </section>
 
-      <section class="filter-panel" aria-label="Backlogfilters">
+      <section class="filter-panel" aria-label="Backlog filters">
         <div class="filter-toolbar">
           <div class="filter-toolbar-label">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.2V18l-3 1.5v-7.3L4 5Z"/></svg>
             Filters
           </div>
           <div id="filterControls" class="filter-controls"></div>
-          <button id="clearFilters" class="clear-filters" type="button" hidden>Alles wissen</button>
+          <button id="clearFilters" class="clear-filters" type="button" hidden>Clear all</button>
           <span id="filterResultCount" class="filter-result-count" aria-live="polite"></span>
         </div>
-        <div id="activeFilters" class="active-filters" aria-label="Actieve filters" hidden></div>
+        <div id="activeFilters" class="active-filters" aria-label="Active filters" hidden></div>
       </section>
 
       <section id="statusRegion" class="status-region" aria-live="polite"></section>
 
-      <section id="board" class="board" aria-label="Sprint kanbanboard" data-board-view>
+      <section id="board" class="board" aria-label="Sprint Kanban board" data-board-view>
         <article class="column" data-column="todo">
           <header class="column-header">
             <div><span class="column-dot todo-dot"></span><h2>To do</h2><span class="count" data-count="todo">0</span></div>
-            <p data-states="todo">Geen states ingesteld</p>
+            <p data-states="todo">No states configured</p>
           </header>
           <div class="card-list" data-list="todo"></div>
         </article>
         <article class="column" data-column="active">
           <header class="column-header">
             <div><span class="column-dot active-dot"></span><h2>Active</h2><span class="count" data-count="active">0</span></div>
-            <p data-states="active">Geen states ingesteld</p>
+            <p data-states="active">No states configured</p>
           </header>
           <div class="card-list" data-list="active"></div>
         </article>
         <article class="column" data-column="done">
           <header class="column-header">
             <div><span class="column-dot done-dot"></span><h2>Done</h2><span class="count" data-count="done">0</span></div>
-            <p data-states="done">Geen states ingesteld</p>
+            <p data-states="done">No states configured</p>
           </header>
           <div class="card-list" data-list="done"></div>
         </article>
@@ -125,26 +125,26 @@
       <form id="connectionForm" method="dialog">
         <div class="dialog-heading">
           <div class="dialog-icon">AZ</div>
-          <div><h2>Verbind met Azure DevOps</h2><p>De PAT blijft uitsluitend in de lokale opslag van deze browser.</p></div>
+          <div><h2>Connect to Azure DevOps</h2><p>The PAT is stored only in this browser's local storage.</p></div>
         </div>
         <label>
           Azure DevOps URL
-          <input id="orgUrlInput" name="orgUrl" type="url" value="https://dev.azure.com/organisatie/project/" required />
-          <span class="field-help">Organisatie-, project- of team-URL; bijvoorbeeld https://dev.azure.com/organisatie/project/team/</span>
+          <input id="orgUrlInput" name="orgUrl" type="url" value="https://dev.azure.com/organization/project/" required />
+          <span class="field-help">Organization, project, or team URL; for example https://dev.azure.com/organization/project/team/</span>
         </label>
         <label>
           Personal Access Token
           <div class="password-field">
-            <input id="patInput" name="pat" type="password" placeholder="Plak hier je PAT" required autocomplete="off" />
-            <button id="togglePat" type="button" aria-label="Toon of verberg PAT">Tonen</button>
+            <input id="patInput" name="pat" type="password" placeholder="Paste your PAT here" required autocomplete="off" />
+            <button id="togglePat" type="button" aria-label="Show or hide PAT">Show</button>
           </div>
-          <span class="field-help">Benodigd: lezen en schrijven voor Work Items, plus leesrechten voor Project &amp; Team.</span>
+          <span class="field-help">Required: read and write access for Work Items, plus read access for Project &amp; Team.</span>
         </label>
-        <div class="privacy-note"><strong>Privé op dit apparaat.</strong> Je PAT wordt nooit naar onze servers gestuurd; alleen rechtstreeks naar Azure DevOps.</div>
+        <div class="privacy-note"><strong>Private on this device.</strong> Your PAT is never sent to our servers; it is only sent directly to Azure DevOps.</div>
         <p id="connectionError" class="form-error" role="alert"></p>
         <div class="dialog-actions">
-          <button id="cancelConnection" class="text-button" type="button">Annuleren</button>
-          <button class="primary-button" value="connect" type="submit">Verbinden</button>
+          <button id="cancelConnection" class="text-button" type="button">Cancel</button>
+          <button class="primary-button" value="connect" type="submit">Connect</button>
         </div>
       </form>
     </dialog>
@@ -152,20 +152,20 @@
     <dialog id="settingsDialog" class="dialog settings-dialog">
       <form id="settingsForm" method="dialog">
         <div class="dialog-heading compact">
-          <div><h2>Board instellen</h2><p>Kies een team en bepaal in welke kolom iedere Azure DevOps-state verschijnt.</p></div>
-          <button class="close-button" type="button" data-close-settings aria-label="Sluiten">×</button>
+          <div><h2>Configure board</h2><p>Choose a team and select which column each Azure DevOps state appears in.</p></div>
+          <button class="close-button" type="button" data-close-settings aria-label="Close">×</button>
         </div>
         <label>
-          Azure DevOps-team
+          Azure DevOps team
           <select id="teamSelect" name="team"></select>
         </label>
-        <div class="mapping-heading"><span>Azure DevOps-state</span><span>Kolom</span></div>
+        <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
         <div id="stateMappings" class="state-mappings"></div>
         <div class="settings-footer">
-          <button id="changeConnection" class="text-button danger" type="button">Verbinding wijzigen</button>
+          <button id="changeConnection" class="text-button danger" type="button">Change connection</button>
           <div class="dialog-actions inline">
-            <button class="secondary-button" type="button" data-close-settings>Annuleren</button>
-            <button class="primary-button" value="save" type="submit">Opslaan</button>
+            <button class="secondary-button" type="button" data-close-settings>Cancel</button>
+            <button class="primary-button" value="save" type="submit">Save</button>
           </div>
         </div>
       </form>
@@ -177,28 +177,28 @@
         <header class="work-item-header">
           <div class="work-item-title-block">
             <div class="issue-breadcrumb"><span id="workItemType">Work item</span><span aria-hidden="true">/</span><span id="workItemKey">#0</span></div>
-            <h2 id="workItemTitle" class="work-item-title-display" role="button" tabindex="0" aria-label="Titel bewerken">Work item</h2>
+            <h2 id="workItemTitle" class="work-item-title-display" role="button" tabindex="0" aria-label="Edit title">Work item</h2>
             <form id="workItemTitleForm" class="work-item-title-form" hidden>
-              <label class="sr-only" for="workItemTitleInput">Titel</label>
+              <label class="sr-only" for="workItemTitleInput">Title</label>
               <input id="workItemTitleInput" type="text" maxlength="255" required>
               <div class="work-item-title-actions">
-                <span>Enter om op te slaan</span>
-                <button id="workItemTitleCancel" class="text-button" type="button">Annuleren</button>
-                <button id="workItemTitleSubmit" class="primary-button" type="submit">Opslaan</button>
+                <span>Press Enter to save</span>
+                <button id="workItemTitleCancel" class="text-button" type="button">Cancel</button>
+                <button id="workItemTitleSubmit" class="primary-button" type="submit">Save</button>
               </div>
               <p id="workItemTitleStatus" class="work-item-title-status" role="alert"></p>
             </form>
           </div>
-          <button class="close-button" type="button" data-close-work-item aria-label="Sluiten">×</button>
+          <button class="close-button" type="button" data-close-work-item aria-label="Close">×</button>
         </header>
 
         <div class="work-item-content">
           <main class="work-item-main">
             <div class="issue-badges">
               <div id="workItemStateControl" class="issue-state-control">
-                <button id="workItemState" class="issue-status" type="button" aria-haspopup="listbox" aria-expanded="false" title="State wijzigen">Onbekend</button>
+                <button id="workItemState" class="issue-status" type="button" aria-haspopup="listbox" aria-expanded="false" title="Change state">Unknown</button>
                 <div id="workItemStateMenu" class="issue-state-menu" hidden>
-                  <div class="issue-state-menu-title">State wijzigen</div>
+                  <div class="issue-state-menu-title">Change state</div>
                   <div id="workItemStateOptions" class="issue-state-options" role="listbox"></div>
                 </div>
               </div>
@@ -207,25 +207,25 @@
 
             <section class="issue-section" aria-labelledby="descriptionHeading">
               <div class="section-heading-row description-heading-row">
-                <h3 id="descriptionHeading">Beschrijving</h3>
-                <button id="descriptionEditButton" class="description-edit-button" type="button" title="Beschrijving bewerken">
+                <h3 id="descriptionHeading">Description</h3>
+                <button id="descriptionEditButton" class="description-edit-button" type="button" title="Edit description">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"></path><path d="m14.5 6.5 3 3"></path></svg>
-                  <span>Bewerken</span>
+                  <span>Edit</span>
                 </button>
               </div>
-              <div id="workItemDescription" class="issue-description rich-content">Geen beschrijving toegevoegd.</div>
+              <div id="workItemDescription" class="issue-description rich-content">No description added.</div>
               <form id="descriptionEditorForm" class="description-editor" hidden>
-                <div class="description-toolbar" role="toolbar" aria-label="Tekstopmaak">
-                  <button type="button" data-description-command="bold" aria-label="Vet" title="Vet"><strong>B</strong></button>
-                  <button type="button" data-description-command="italic" aria-label="Cursief" title="Cursief"><em>I</em></button>
-                  <button type="button" data-description-command="insertUnorderedList" aria-label="Opsomming" title="Opsomming">• Lijst</button>
-                  <button type="button" data-description-command="insertOrderedList" aria-label="Genummerde lijst" title="Genummerde lijst">1. Lijst</button>
+                <div class="description-toolbar" role="toolbar" aria-label="Text formatting">
+                  <button type="button" data-description-command="bold" aria-label="Bold" title="Bold"><strong>B</strong></button>
+                  <button type="button" data-description-command="italic" aria-label="Italic" title="Italic"><em>I</em></button>
+                  <button type="button" data-description-command="insertUnorderedList" aria-label="Bulleted list" title="Bulleted list">• List</button>
+                  <button type="button" data-description-command="insertOrderedList" aria-label="Numbered list" title="Numbered list">1. List</button>
                 </div>
-                <div id="descriptionEditor" class="description-editor-content rich-content" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Voeg een beschrijving toe…"></div>
+                <div id="descriptionEditor" class="description-editor-content rich-content" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Add a description…"></div>
                 <div class="description-editor-footer">
-                  <span>Ctrl + Enter om op te slaan</span>
-                  <button id="descriptionEditorCancel" class="text-button" type="button">Annuleren</button>
-                  <button id="descriptionEditorSubmit" class="primary-button" type="submit">Opslaan</button>
+                  <span>Ctrl + Enter to save</span>
+                  <button id="descriptionEditorCancel" class="text-button" type="button">Cancel</button>
+                  <button id="descriptionEditorSubmit" class="primary-button" type="submit">Save</button>
                 </div>
                 <p id="descriptionEditorStatus" class="description-editor-status" role="alert"></p>
               </form>
@@ -233,12 +233,12 @@
 
             <section class="issue-section activity-section" aria-labelledby="activityHeading">
               <div class="section-heading-row">
-                <h3 id="activityHeading">Activiteit</h3>
+                <h3 id="activityHeading">Activity</h3>
               </div>
-              <div class="activity-tabs" role="tablist" aria-label="Activiteitstypen">
-                <button type="button" role="tab" aria-selected="false" data-activity-tab="all">Alles</button>
+              <div class="activity-tabs" role="tablist" aria-label="Activity types">
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="all">All</button>
                 <button class="is-active" type="button" role="tab" aria-selected="true" data-activity-tab="comments">Comments <span id="workItemCommentCount" class="comment-count">0</span></button>
-                <button type="button" role="tab" aria-selected="false" data-activity-tab="history">Historie <span id="workItemHistoryCount" class="comment-count">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="history">History <span id="workItemHistoryCount" class="comment-count">0</span></button>
               </div>
               <div id="workItemAllPanel" class="activity-panel" role="tabpanel" hidden>
                 <div id="workItemActivityStatus" class="comments-status" aria-live="polite"></div>
@@ -249,15 +249,15 @@
                 <div class="comment-composer">
                   <button id="commentComposerPrompt" class="comment-composer-prompt" type="button">
                     <span class="comment-composer-avatar" aria-hidden="true">+</span>
-                    <span>Comment toevoegen…</span>
+                    <span>Add a comment…</span>
                   </button>
                   <form id="commentComposerForm" class="comment-composer-form" hidden>
                     <label class="sr-only" for="commentComposerInput">Comment</label>
-                    <textarea id="commentComposerInput" rows="4" placeholder="Schrijf een comment…" required></textarea>
+                    <textarea id="commentComposerInput" rows="4" placeholder="Write a comment…" required></textarea>
                     <div class="comment-composer-footer">
-                      <span class="comment-composer-hint">Ctrl + Enter om op te slaan</span>
-                      <button id="commentComposerCancel" class="text-button" type="button">Annuleren</button>
-                      <button id="commentComposerSubmit" class="primary-button" type="submit">Opslaan</button>
+                      <span class="comment-composer-hint">Ctrl + Enter to save</span>
+                      <button id="commentComposerCancel" class="text-button" type="button">Cancel</button>
+                      <button id="commentComposerSubmit" class="primary-button" type="submit">Save</button>
                     </div>
                     <p id="commentComposerStatus" class="comment-composer-status" role="alert"></p>
                   </form>
@@ -266,7 +266,7 @@
                 <div id="workItemComments" class="comment-list"></div>
               </div>
               <div id="workItemHistoryPanel" class="activity-panel" role="tabpanel" hidden>
-                <h4 class="activity-panel-title">Historie</h4>
+                <h4 class="activity-panel-title">History</h4>
                 <div id="workItemHistoryStatus" class="comments-status" aria-live="polite"></div>
                 <div id="workItemHistory" class="history-list"></div>
               </div>
@@ -280,12 +280,12 @@
                 <dt>Assigned to</dt>
                 <dd>
                   <div id="workItemAssigneeControl" class="issue-assignee-control">
-                    <button id="workItemAssignee" class="issue-assignee-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Assigned to wijzigen">Niet toegewezen</button>
+                    <button id="workItemAssignee" class="issue-assignee-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Change assignee">Unassigned</button>
                     <div id="workItemAssigneeMenu" class="issue-assignee-menu" hidden>
                       <label class="issue-assignee-search">
-                        <span class="sr-only">Zoek een gebruiker</span>
+                        <span class="sr-only">Search users</span>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
-                        <input id="workItemAssigneeSearch" type="search" placeholder="Zoek een gebruiker…" autocomplete="off">
+                        <input id="workItemAssigneeSearch" type="search" placeholder="Search users…" autocomplete="off">
                       </label>
                       <div id="workItemAssigneeSource" class="issue-assignee-source"></div>
                       <div id="workItemAssigneeOptions" class="issue-assignee-options" role="listbox"></div>
@@ -294,30 +294,30 @@
                 </dd>
               </div>
               <div><dt>Reporter</dt><dd id="workItemReporter">—</dd></div>
-              <div><dt>Priority</dt><dd><div id="workItemPriorityControl" class="issue-detail-field-control"><button id="workItemPriority" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Priority wijzigen">—</button><div id="workItemPriorityMenu" class="issue-detail-field-menu" hidden><div class="issue-detail-field-title">Priority wijzigen</div><div id="workItemPriorityOptions" class="issue-detail-field-options"></div></div></div></dd></div>
-              <div><dt>Story points</dt><dd><div id="workItemPointsControl" class="issue-detail-field-control"><button id="workItemPoints" class="issue-detail-field-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" title="Story points wijzigen">—</button><div id="workItemPointsMenu" class="issue-detail-field-menu" hidden><div class="issue-detail-field-title">Story points wijzigen</div><div id="workItemPointsQuick" class="issue-points-quick"></div><form id="workItemPointsForm" class="issue-points-form"><label class="sr-only" for="workItemPointsInput">Story points</label><input id="workItemPointsInput" type="number" min="0" step="0.5" inputmode="decimal" placeholder="Bijv. 5" required><button class="primary-button" type="submit">Opslaan</button></form></div></div></dd></div>
-              <div><dt>Area</dt><dd><div id="workItemAreaControl" class="issue-detail-field-control"><button id="workItemArea" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Area wijzigen">—</button><div id="workItemAreaMenu" class="issue-detail-field-menu issue-detail-search-menu" hidden><label class="issue-detail-field-search"><span class="sr-only">Area zoeken</span><input id="workItemAreaSearch" type="search" placeholder="Area zoeken…" autocomplete="off"></label><div id="workItemAreaOptions" class="issue-detail-field-options"></div></div></div></dd></div>
-              <div><dt>Sprint</dt><dd><div id="workItemIterationControl" class="issue-detail-field-control"><button id="workItemIteration" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Sprint wijzigen">—</button><div id="workItemIterationMenu" class="issue-detail-field-menu issue-detail-search-menu" hidden><label class="issue-detail-field-search"><span class="sr-only">Sprint zoeken</span><input id="workItemIterationSearch" type="search" placeholder="Sprint zoeken…" autocomplete="off"></label><div id="workItemIterationOptions" class="issue-detail-field-options"></div></div></div></dd></div>
-              <div><dt>Feature / parent</dt><dd id="workItemParent">Geen parent</dd></div>
+              <div><dt>Priority</dt><dd><div id="workItemPriorityControl" class="issue-detail-field-control"><button id="workItemPriority" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Change priority">—</button><div id="workItemPriorityMenu" class="issue-detail-field-menu" hidden><div class="issue-detail-field-title">Change priority</div><div id="workItemPriorityOptions" class="issue-detail-field-options"></div></div></div></dd></div>
+              <div><dt>Story points</dt><dd><div id="workItemPointsControl" class="issue-detail-field-control"><button id="workItemPoints" class="issue-detail-field-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" title="Change story points">—</button><div id="workItemPointsMenu" class="issue-detail-field-menu" hidden><div class="issue-detail-field-title">Change story points</div><div id="workItemPointsQuick" class="issue-points-quick"></div><form id="workItemPointsForm" class="issue-points-form"><label class="sr-only" for="workItemPointsInput">Story points</label><input id="workItemPointsInput" type="number" min="0" step="0.5" inputmode="decimal" placeholder="E.g. 5" required><button class="primary-button" type="submit">Save</button></form></div></div></dd></div>
+              <div><dt>Area</dt><dd><div id="workItemAreaControl" class="issue-detail-field-control"><button id="workItemArea" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Change area">—</button><div id="workItemAreaMenu" class="issue-detail-field-menu issue-detail-search-menu" hidden><label class="issue-detail-field-search"><span class="sr-only">Search areas</span><input id="workItemAreaSearch" type="search" placeholder="Search areas…" autocomplete="off"></label><div id="workItemAreaOptions" class="issue-detail-field-options"></div></div></div></dd></div>
+              <div><dt>Sprint</dt><dd><div id="workItemIterationControl" class="issue-detail-field-control"><button id="workItemIteration" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Change sprint">—</button><div id="workItemIterationMenu" class="issue-detail-field-menu issue-detail-search-menu" hidden><label class="issue-detail-field-search"><span class="sr-only">Search sprints</span><input id="workItemIterationSearch" type="search" placeholder="Search sprints…" autocomplete="off"></label><div id="workItemIterationOptions" class="issue-detail-field-options"></div></div></div></dd></div>
+              <div><dt>Feature / parent</dt><dd id="workItemParent">No parent</dd></div>
               <div>
                 <dt>Tags</dt>
                 <dd>
                   <div id="workItemTagsControl" class="issue-tags-control">
-                    <button id="workItemTags" class="issue-tags issue-tags-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" title="Tags wijzigen">—</button>
+                    <button id="workItemTags" class="issue-tags issue-tags-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" title="Change tags">—</button>
                     <div id="workItemTagsMenu" class="issue-tags-menu" hidden>
-                      <div class="issue-tags-menu-title">Tags wijzigen</div>
+                      <div class="issue-tags-menu-title">Change tags</div>
                       <div id="workItemTagsSelected" class="issue-tags-selected"></div>
                       <label class="issue-tags-input-wrap">
-                        <span class="sr-only">Tag zoeken of toevoegen</span>
-                        <input id="workItemTagsInput" type="text" placeholder="Tag zoeken of toevoegen…" autocomplete="off">
+                        <span class="sr-only">Search or add a tag</span>
+                        <input id="workItemTagsInput" type="text" placeholder="Search or add a tag…" autocomplete="off">
                       </label>
-                      <div id="workItemTagsHint" class="issue-tags-hint">Typ een tag en druk op Enter om toe te voegen.</div>
+                      <div id="workItemTagsHint" class="issue-tags-hint">Type a tag and press Enter to add it.</div>
                       <div id="workItemTagsOptions" class="issue-tags-options"></div>
                     </div>
                   </div>
                 </dd>
               </div>
-              <div><dt>Laatst gewijzigd</dt><dd id="workItemChanged">—</dd></div>
+              <div><dt>Last changed</dt><dd id="workItemChanged">—</dd></div>
             </dl>
           </aside>
         </div>
@@ -333,7 +333,7 @@
     </dialog>
 
     <template id="emptyTemplate">
-      <div class="empty-column"><div class="empty-icon">✓</div><p>Geen stories in deze kolom</p></div>
+      <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
     <script src="app.js" defer></script>

@@ -9,7 +9,7 @@ const STORAGE = {
   theme: "wish-board.theme"
 };
 
-const DEFAULT_URL = "https://dev.azure.com/organisatie/project/";
+const DEFAULT_URL = "https://dev.azure.com/organization/project/";
 const DEFAULT_MAPPING_VERSION = 1;
 const ACTIVE_DEFAULT_STATES = [
   "PR under review",
@@ -102,25 +102,25 @@ const state = {
 
 const FILTER_DEFINITIONS = [
   { key: "type", label: "Types", value: item => item.type },
-  { key: "assignee", label: "Assigned to", value: item => item.assignee || "Niet toegewezen" },
-  { key: "priority", label: "Prio", value: item => item.priority != null ? String(item.priority) : "Geen priority" },
+  { key: "assignee", label: "Assigned to", value: item => item.assignee || "Unassigned" },
+  { key: "priority", label: "Priority", value: item => item.priority != null ? String(item.priority) : "No priority" },
   { key: "sprint", label: "Sprint", value: item => item.iterationName },
   { key: "itemState", label: "States", value: item => item.state },
-  { key: "area", label: "Area", value: item => item.area || "Geen area" },
+  { key: "area", label: "Area", value: item => item.area || "No area" },
   { key: "tag", label: "Tags", values: item => item.tags },
-  { key: "feature", label: "Feature", value: item => item.featureLabel || "Geen parent" }
+  { key: "feature", label: "Feature", value: item => item.featureLabel || "No parent" }
 ];
 
 const HISTORY_FIELDS = {
-  "System.Title": "Titel",
+  "System.Title": "Title",
   "System.State": "State",
-  "System.Reason": "Reden",
+  "System.Reason": "Reason",
   "System.AssignedTo": "Assigned to",
   "System.WorkItemType": "Type",
   "System.AreaPath": "Area",
   "System.IterationPath": "Sprint",
   "System.Tags": "Tags",
-  "System.Description": "Beschrijving",
+  "System.Description": "Description",
   "System.Parent": "Parent",
   "Microsoft.VSTS.Common.Priority": "Priority",
   "Microsoft.VSTS.Scheduling.StoryPoints": "Story points",
@@ -277,8 +277,8 @@ function applyTheme(theme, persist = false) {
   if (persist) localStorage.setItem(STORAGE.theme, theme);
   const isDark = theme === "dark";
   els.theme.setAttribute("aria-pressed", String(isDark));
-  els.theme.setAttribute("aria-label", isDark ? "Schakel naar lichte modus" : "Schakel naar donkere modus");
-  els.theme.title = isDark ? "Lichte modus" : "Donkere modus";
+  els.theme.setAttribute("aria-label", isDark ? "Switch to light mode" : "Switch to dark mode");
+  els.theme.title = isDark ? "Light mode" : "Dark mode";
   document.querySelector('meta[name="theme-color"]').content = isDark ? "#0c1524" : "#0747a6";
 }
 
@@ -298,7 +298,7 @@ function parseAzureUrl(input) {
     pathTeam = projectTail[2] || "";
   }
   const team = url.searchParams.get("team") || url.searchParams.get("teamId") || pathTeam;
-  if (!organization) throw new Error("Gebruik minimaal een geldige Azure DevOps-organisatie-URL.");
+  if (!organization) throw new Error("Enter at least a valid Azure DevOps organization URL.");
   const orgBase = `https://dev.azure.com/${encodeURIComponent(organization)}`;
   const projectBase = project ? `${orgBase}/${encodeURIComponent(project)}` : orgBase;
   return {
@@ -329,10 +329,10 @@ function updateBranding(team = null) {
   els.brandName.textContent = displayName;
   els.appBrand.setAttribute("aria-label", `${displayName} · Jiraish`);
   els.headerAvatar.textContent = initialsFor(profileName);
-  els.headerAvatar.setAttribute("aria-label", `Instellingen openen voor ${profileName}`);
-  els.headerAvatar.title = `${profileName} · Instellingen`;
+  els.headerAvatar.setAttribute("aria-label", `Open settings for ${profileName}`);
+  els.headerAvatar.title = `${profileName} · Settings`;
   const contextLabel = project
-    ? `PROJECT / ${project}${state.teamName && state.teamName.toLocaleLowerCase("nl") !== project.toLocaleLowerCase("nl") ? ` · TEAM / ${state.teamName}` : ""}`
+    ? `PROJECT / ${project}${state.teamName && state.teamName.toLocaleLowerCase("en") !== project.toLocaleLowerCase("en") ? ` · TEAM / ${state.teamName}` : ""}`
     : "PROJECT";
   els.projectTeamLabels.forEach(label => { label.textContent = contextLabel; });
   document.title = state.teamName ? `${state.teamName} · Jiraish` : "Jiraish";
@@ -353,7 +353,7 @@ async function loadAuthenticatedUser() {
       || "";
     return displayName ? { id: identity.id || "", displayName } : null;
   } catch (error) {
-    console.warn("De gebruiker achter de PAT kon niet worden bepaald; teaminitialen worden gebruikt.", error);
+    console.warn("The user associated with the PAT could not be determined; team initials will be used.", error);
     return null;
   }
 }
@@ -370,7 +370,7 @@ function workItemKey(itemId) {
 
 async function azure(path, options = {}, scope = "project") {
   const parsed = activeAzureContext();
-  if (scope === "project" && !parsed.project) throw new Error("Er is nog geen Azure DevOps-project geselecteerd.");
+  if (scope === "project" && !parsed.project) throw new Error("No Azure DevOps project has been selected yet.");
   const apiBase = scope === "organization" ? parsed.orgBase : parsed.base;
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
@@ -381,14 +381,14 @@ async function azure(path, options = {}, scope = "project") {
     }
   });
   if (response.status === 401 || response.status === 403) {
-    const error = new Error("De PAT is ongeldig, verlopen of mist de benodigde leesrechten.");
+    const error = new Error("The PAT is invalid, expired, or does not have the required read permissions.");
     error.auth = true;
     throw error;
   }
   if (!response.ok) {
     let detail = "";
     try { detail = (await response.json())?.message || ""; } catch {}
-    throw new Error(detail || `Azure DevOps gaf fout ${response.status}.`);
+    throw new Error(detail || `Azure DevOps returned error ${response.status}.`);
   }
   return response.json();
 }
@@ -407,17 +407,17 @@ async function loadBoard({ openSettings = false } = {}) {
     if (!project) {
       const projectsResult = await azure("/_apis/projects?$top=1000&api-version=7.1", {}, "organization");
       const projects = projectsResult.value || [];
-      if (!projects.length) throw new Error("Geen Azure DevOps-projecten gevonden in deze organisatie.");
+      if (!projects.length) throw new Error("No Azure DevOps projects were found in this organization.");
       project = projects.find(value => value.name === state.projectName)?.name || projects[0].name;
     }
     state.projectName = project;
     localStorage.setItem(STORAGE.project, project);
     const teamsResult = await azure(`/_apis/projects/${encodeURIComponent(project)}/teams?api-version=7.1`, {}, "organization");
     state.teams = teamsResult.value || [];
-    if (!state.teams.length) throw new Error("Geen Azure DevOps-teams gevonden in dit project.");
-    const configuredTeam = configured.team.toLocaleLowerCase("nl");
+    if (!state.teams.length) throw new Error("No Azure DevOps teams were found in this project.");
+    const configuredTeam = configured.team.toLocaleLowerCase("en");
     const selectedTeam = state.teams.find(team => team.id === state.teamId)
-      || state.teams.find(team => configuredTeam && (team.id.toLocaleLowerCase("nl") === configuredTeam || team.name.toLocaleLowerCase("nl") === configuredTeam))
+      || state.teams.find(team => configuredTeam && (team.id.toLocaleLowerCase("en") === configuredTeam || team.name.toLocaleLowerCase("en") === configuredTeam))
       || state.teams[0];
     state.teamId = selectedTeam.id;
     updateBranding(selectedTeam);
@@ -443,7 +443,7 @@ async function loadBoard({ openSettings = false } = {}) {
     if (!state.iteration) {
       state.stories = [];
       render();
-      showNotice(`Voor team “${selectedTeam.name}” zijn geen sprints ingesteld.`, "error");
+      showNotice(`No sprints are configured for team “${selectedTeam.name}”.`, "error");
       if (state.currentView === "backlog") await loadBacklog(true);
       if (openSettings) showSettings();
       return;
@@ -457,7 +457,7 @@ async function loadBoard({ openSettings = false } = {}) {
     if (openSettings) showSettings();
   } catch (error) {
     console.error(error);
-    showNotice(error.message, "error", error.auth ? "PAT opnieuw invoeren" : "Opnieuw proberen", error.auth ? showConnection : loadBoard);
+    showNotice(error.message, "error", error.auth ? "Enter PAT again" : "Try again", error.auth ? showConnection : loadBoard);
     if (error.auth) showConnection(error.message);
     renderEmptyBoard();
   } finally {
@@ -529,11 +529,11 @@ async function loadTeamMembers(project, team) {
     const result = await azure(`/_apis/projects/${encodeURIComponent(project)}/teams/${encodeURIComponent(team.id)}/members?api-version=7.1`, {}, "organization");
     return (result.value || []).map(member => member.identity || member).map(identity => ({
       id: identity.id || "",
-      name: identity.displayName || identity.uniqueName || "Onbekende gebruiker",
+      name: identity.displayName || identity.uniqueName || "Unknown user",
       uniqueName: identity.uniqueName || identity.displayName || ""
     })).filter(member => member.uniqueName);
   } catch (error) {
-    console.warn("Teamleden konden niet worden geladen; assignees uit de sprint worden gebruikt.", error);
+    console.warn("Team members could not be loaded; assignees from the sprint will be used.", error);
     return [];
   }
 }
@@ -546,14 +546,14 @@ function normalizeWorkItem(item) {
   const iterationPath = fields["System.IterationPath"] || "";
   return {
     id: item.id,
-    title: fields["System.Title"] || "Zonder titel",
-    state: fields["System.State"] || "Onbekend",
+    title: fields["System.Title"] || "Untitled",
+    state: fields["System.State"] || "Unknown",
     type: fields["System.WorkItemType"] || "Work item",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
     assigneeUniqueName: assigned?.uniqueName || assigned?.displayName || "",
     priority: fields["Microsoft.VSTS.Common.Priority"] ?? null,
     iterationPath,
-    iterationName: iterationPath.split("\\").filter(Boolean).pop() || "Geen sprint",
+    iterationName: iterationPath.split("\\").filter(Boolean).pop() || "No sprint",
     area: fields["System.AreaPath"] || "",
     tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
     parentId: fields["System.Parent"] || null,
@@ -602,13 +602,13 @@ function render() {
   const filteredIterations = selectedSprintIterations();
   if (filteredIterations.length) {
     els.sprintTitle.textContent = filteredIterations.map(iteration => iteration.name).join(", ");
-    els.sprintTitle.setAttribute("aria-label", `Gefilterde sprints: ${els.sprintTitle.textContent}. Klik om een andere sprint te kiezen.`);
-    els.sprintBadge.textContent = "Gefilterde weergave";
-    els.sprintBadge.dataset.sprintKind = "gefilterde-weergave";
+    els.sprintTitle.setAttribute("aria-label", `Filtered sprints: ${els.sprintTitle.textContent}. Click to choose another sprint.`);
+    els.sprintBadge.textContent = "Filtered view";
+    els.sprintBadge.dataset.sprintKind = "filtered-view";
     els.sprintMeta.textContent = `${team?.name || "Team"} · ${filteredIterations.length} ${filteredIterations.length === 1 ? "sprint" : "sprints"}`;
   } else if (state.iteration) {
     els.sprintTitle.textContent = state.iteration.name;
-    els.sprintTitle.setAttribute("aria-label", `Sprint ${state.iteration.name}. Klik om een andere sprint te kiezen.`);
+    els.sprintTitle.setAttribute("aria-label", `Sprint ${state.iteration.name}. Click to choose another sprint.`);
     const label = iterationLabel(state.iteration);
     els.sprintBadge.textContent = label;
     els.sprintBadge.dataset.sprintKind = label.toLowerCase().replace(/\s+/g, "-");
@@ -616,10 +616,10 @@ function render() {
     const end = formatDate(state.iteration.attributes?.finishDate);
     els.sprintMeta.textContent = `${team?.name || "Team"}${start && end ? ` · ${start} – ${end}` : ""}`;
   } else {
-    els.sprintTitle.textContent = "Geen sprint";
-    els.sprintBadge.textContent = "Huidige sprint";
-    els.sprintBadge.dataset.sprintKind = "huidige-sprint";
-    els.sprintMeta.textContent = team ? `Team ${team.name}` : "Azure DevOps niet verbonden";
+    els.sprintTitle.textContent = "No sprint";
+    els.sprintBadge.textContent = "Current sprint";
+    els.sprintBadge.dataset.sprintKind = "current-sprint";
+    els.sprintMeta.textContent = team ? `Team ${team.name}` : "Azure DevOps is not connected";
   }
 
   const query = state.search.trim().toLowerCase();
@@ -630,7 +630,7 @@ function render() {
     const stories = visibleStories.filter(item => state.mapping[item.state] === column);
     document.querySelector(`[data-count="${column}"]`).textContent = stories.length;
     const mappedStates = [...state.knownStates].filter(itemState => state.mapping[itemState] === column);
-    document.querySelector(`[data-states="${column}"]`).textContent = mappedStates.join(", ") || "Geen states ingesteld";
+    document.querySelector(`[data-states="${column}"]`).textContent = mappedStates.join(", ") || "No states configured";
     list.replaceChildren(...(stories.length ? stories.map(createCard) : [emptyNode()]));
   }
 }
@@ -644,7 +644,7 @@ function chronologicalIterations() {
   return [...state.iterations].sort((a, b) => {
     const aDate = new Date(a.attributes?.startDate || a.attributes?.finishDate || 0).getTime();
     const bDate = new Date(b.attributes?.startDate || b.attributes?.finishDate || 0).getTime();
-    return aDate - bDate || a.name.localeCompare(b.name, "nl", { numeric: true });
+    return aDate - bDate || a.name.localeCompare(b.name, "en", { numeric: true });
   });
 }
 
@@ -653,18 +653,18 @@ function newestIterations() {
 }
 
 function iterationLabel(iteration) {
-  if (iteration.id === state.currentIterationId) return "Huidige sprint";
+  if (iteration.id === state.currentIterationId) return "Current sprint";
   const ordered = chronologicalIterations();
   const currentIndex = ordered.findIndex(value => value.id === state.currentIterationId);
-  if (currentIndex > 0 && ordered[currentIndex - 1]?.id === iteration.id) return "Vorige sprint";
-  if (currentIndex >= 0 && ordered[currentIndex + 1]?.id === iteration.id) return "Volgende sprint";
+  if (currentIndex > 0 && ordered[currentIndex - 1]?.id === iteration.id) return "Previous sprint";
+  if (currentIndex >= 0 && ordered[currentIndex + 1]?.id === iteration.id) return "Next sprint";
   const now = Date.now();
   const finish = new Date(iteration.attributes?.finishDate || 0).getTime();
   const start = new Date(iteration.attributes?.startDate || 0).getTime();
-  if (finish && finish < now) return "Afgesloten sprint";
-  if (start && start > now) return "Toekomstige sprint";
+  if (finish && finish < now) return "Closed sprint";
+  if (start && start > now) return "Future sprint";
   const iterationIndex = ordered.findIndex(value => value.id === iteration.id);
-  return currentIndex >= 0 && iterationIndex < currentIndex ? "Afgesloten sprint" : "Toekomstige sprint";
+  return currentIndex >= 0 && iterationIndex < currentIndex ? "Closed sprint" : "Future sprint";
 }
 
 function toggleSprintMenu() {
@@ -683,15 +683,15 @@ function closeSprintMenu() {
 }
 
 function renderSprintMenuOptions() {
-  const query = els.sprintMenuSearch.value.trim().toLocaleLowerCase("nl");
+  const query = els.sprintMenuSearch.value.trim().toLocaleLowerCase("en");
   const iterations = newestIterations().filter(iteration => !query
-    || iteration.name.toLocaleLowerCase("nl").includes(query)
-    || String(iteration.path || "").toLocaleLowerCase("nl").includes(query)
-    || iterationLabel(iteration).toLocaleLowerCase("nl").includes(query));
+    || iteration.name.toLocaleLowerCase("en").includes(query)
+    || String(iteration.path || "").toLocaleLowerCase("en").includes(query)
+    || iterationLabel(iteration).toLocaleLowerCase("en").includes(query));
   if (!iterations.length) {
     const empty = document.createElement("div");
     empty.className = "sprint-menu-empty";
-    empty.textContent = "Geen sprints gevonden.";
+    empty.textContent = "No sprints found.";
     els.sprintMenuOptions.replaceChildren(empty);
     return;
   }
@@ -743,7 +743,7 @@ async function selectOverviewIteration(iteration) {
     state.iteration = previous;
     state.filters.sprint = previousSprintFilter;
     render();
-    showNotice(error.message || "Sprint kon niet worden geladen.", "error", "Opnieuw proberen", () => selectOverviewIteration(iteration));
+    showNotice(error.message || "The sprint could not be loaded.", "error", "Try again", () => selectOverviewIteration(iteration));
   } finally {
     setLoading(false);
   }
@@ -779,7 +779,7 @@ async function showMainView(view) {
   if (state.filters.sprint.size) {
     setLoading(true);
     try { await applySprintFilter(); }
-    catch (error) { console.error(error); showNotice(error.message || "Sprints konden niet worden geladen.", "error"); }
+    catch (error) { console.error(error); showNotice(error.message || "The sprints could not be loaded.", "error"); }
     finally { setLoading(false); }
   }
   render();
@@ -788,12 +788,12 @@ async function showMainView(view) {
 async function loadBacklog(force = false) {
   const team = state.teams.find(value => value.id === state.teamId);
   if (!team) {
-    els.backlogMeta.textContent = "Verbind Azure DevOps om de backlog te laden.";
+    els.backlogMeta.textContent = "Connect Azure DevOps to load the backlog.";
     els.backlogContent.replaceChildren();
     return;
   }
   if (!force && state.backlogTeamId === team.id) return renderBacklog();
-  els.backlogMeta.textContent = `${team.name} · Backlog laden…`;
+  els.backlogMeta.textContent = `${team.name} · Loading backlog…`;
   renderBacklogLoading();
   els.refresh.disabled = true;
   els.refresh.classList.add("is-spinning");
@@ -803,7 +803,7 @@ async function loadBacklog(force = false) {
     const backlog = (levels.value || []).find(level => level.type === "requirement" && !level.isHidden)
       || (levels.value || []).find(level => /requirement/i.test(level.id || ""))
       || (levels.value || []).find(level => !level.isHidden && level.type !== "task");
-    if (!backlog) throw new Error("Geen requirement-backlog gevonden voor dit team.");
+    if (!backlog) throw new Error("No requirement backlog was found for this team.");
     const result = await azure(`/${teamSegment}/_apis/work/backlogs/${encodeURIComponent(backlog.id)}/workItems?api-version=7.1`);
     const ids = (result.workItems || []).map(link => link.target?.id).filter(Boolean);
     const itemsById = new Map();
@@ -824,10 +824,10 @@ async function loadBacklog(force = false) {
     renderBacklog();
   } catch (error) {
     console.error(error);
-    els.backlogMeta.textContent = `${team.name} · Backlog kon niet worden geladen`;
+    els.backlogMeta.textContent = `${team.name} · The backlog could not be loaded`;
     const message = document.createElement("div");
     message.className = "backlog-error";
-    message.textContent = error.message || "Backlog kon niet worden geladen.";
+    message.textContent = error.message || "The backlog could not be loaded.";
     els.backlogContent.replaceChildren(message);
   } finally {
     els.refresh.disabled = false;
@@ -846,19 +846,19 @@ function renderBacklogLoading() {
 function renderBacklog() {
   const team = state.teams.find(value => value.id === state.teamId);
   const visibleItems = state.backlogItems.filter(item => matchesFilters(item));
-  els.backlogMeta.textContent = `${team?.name || "Team"} · ${visibleItems.length}${visibleItems.length !== state.backlogItems.length ? ` van ${state.backlogItems.length}` : ""} items`;
+  els.backlogMeta.textContent = `${team?.name || "Team"} · ${visibleItems.length}${visibleItems.length !== state.backlogItems.length ? ` of ${state.backlogItems.length}` : ""} items`;
   renderFilters();
   const assignedIds = new Set();
   const sections = [];
   chronologicalIterations().forEach(iteration => {
-    const path = String(iteration.path || "").toLocaleLowerCase("nl");
-    const items = visibleItems.filter(item => path && item.iterationPath.toLocaleLowerCase("nl") === path);
+    const path = String(iteration.path || "").toLocaleLowerCase("en");
+    const items = visibleItems.filter(item => path && item.iterationPath.toLocaleLowerCase("en") === path);
     if (!items.length) return;
     items.forEach(item => assignedIds.add(item.id));
     sections.push(createBacklogSection(iteration.name, items, iterationLabel(iteration)));
   });
   const remaining = visibleItems.filter(item => !assignedIds.has(item.id));
-  sections.push(createBacklogSection("Overig", remaining, "Backlog"));
+  sections.push(createBacklogSection("Other", remaining, "Backlog"));
   els.backlogContent.replaceChildren(...sections);
 }
 
@@ -880,12 +880,12 @@ function createBacklogSection(title, items, label) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "backlog-empty";
-    empty.textContent = "Geen items.";
+    empty.textContent = "No items.";
     wrapper.append(empty);
   } else {
     const table = document.createElement("table");
     table.className = "backlog-table";
-    table.innerHTML = "<thead><tr><th>Type</th><th>Key</th><th>Samenvatting</th><th>State</th><th>Prio</th><th>Points</th><th>Assigned to</th></tr></thead>";
+    table.innerHTML = "<thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>State</th><th>Priority</th><th>Points</th><th>Assigned to</th></tr></thead>";
     const body = document.createElement("tbody");
     items.forEach(item => body.append(createBacklogRow(item)));
     table.append(body);
@@ -922,7 +922,7 @@ function createBacklogRow(item) {
   const points = document.createElement("td");
   points.textContent = item.points ?? "—";
   const assignee = document.createElement("td");
-  assignee.textContent = item.assignee || "Niet toegewezen";
+  assignee.textContent = item.assignee || "Unassigned";
   row.append(type, key, summary, itemState, priority, points, assignee);
   row.addEventListener("click", () => showWorkItem(item));
   row.addEventListener("keydown", event => {
@@ -958,7 +958,7 @@ function getFilterOptions(definition, items = activeFilterItems()) {
     itemValues.forEach(value => { if (value) values.add(value); });
   }
   if (definition.key === "tag" && state.filters.tag.size && !values.size) return [...state.filters.tag];
-  return [...values].sort((a, b) => a.localeCompare(b, "nl", { numeric: true, sensitivity: "base" }));
+  return [...values].sort((a, b) => a.localeCompare(b, "en", { numeric: true, sensitivity: "base" }));
 }
 
 function renderFilters() {
@@ -974,7 +974,7 @@ function renderFilters() {
   const availableItems = state.currentView === "backlog" ? items : items.filter(item => state.mapping[item.state] !== "hidden");
   const query = state.currentView === "backlog" ? "" : state.search.trim().toLowerCase();
   const visibleItems = availableItems.filter(item => matchesFilters(item, query));
-  els.filterResultCount.textContent = chips.length || query ? `${visibleItems.length} van ${availableItems.length}` : `${availableItems.length} items`;
+  els.filterResultCount.textContent = chips.length || query ? `${visibleItems.length} of ${availableItems.length}` : `${availableItems.length} items`;
 }
 
 function createFilterMenu(definition) {
@@ -990,7 +990,7 @@ function createFilterMenu(definition) {
   if (!options.length) {
     const empty = document.createElement("p");
     empty.className = "filter-empty";
-    empty.textContent = "Geen opties beschikbaar";
+    empty.textContent = "No options available";
     dropdown.append(empty);
   } else {
     for (const option of options) {
@@ -1010,7 +1010,7 @@ function createFilterMenu(definition) {
           } catch (error) {
             console.error(error);
             state.filters.sprint = previousValues;
-            showNotice(error.message || "Sprints konden niet worden geladen.", "error");
+            showNotice(error.message || "The sprints could not be loaded.", "error");
           } finally {
             setLoading(false);
           }
@@ -1033,7 +1033,7 @@ function createFilterChip(definition, value) {
   const chip = document.createElement("button");
   chip.type = "button";
   chip.className = "filter-chip";
-  chip.setAttribute("aria-label", `Verwijder filter ${definition.label}: ${value}`);
+  chip.setAttribute("aria-label", `Remove filter ${definition.label}: ${value}`);
   chip.innerHTML = `<span>${escapeHtml(definition.label)}:</span> ${escapeHtml(value)} <b aria-hidden="true">×</b>`;
   chip.addEventListener("click", async () => {
     state.filters[definition.key].delete(value);
@@ -1044,7 +1044,7 @@ function createFilterChip(definition, value) {
       catch (error) {
         console.error(error);
         state.filters.sprint.add(value);
-        showNotice(error.message || "Sprints konden niet worden geladen.", "error");
+        showNotice(error.message || "The sprints could not be loaded.", "error");
       } finally { setLoading(false); }
     }
     renderCurrentView();
@@ -1068,7 +1068,7 @@ function createCard(item) {
   const card = document.createElement("button");
   card.type = "button";
   card.className = "story-card";
-  card.setAttribute("aria-label", `${item.type} ${item.id}: ${item.title}. Bekijk details`);
+  card.setAttribute("aria-label", `${item.type} ${item.id}: ${item.title}. View details`);
   card.addEventListener("click", () => showWorkItem(item));
   const initials = item.assignee ? item.assignee.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase() : "?";
   const isBug = item.type.toLowerCase() === "bug";
@@ -1081,7 +1081,7 @@ function createCard(item) {
     <div class="card-footer">
       <span class="story-id">${escapeHtml(workItemKey(item.id))}</span>
       ${item.points !== null ? `<span class="points" title="Story points">${escapeHtml(String(item.points))}</span>` : ""}
-      <span class="assignee ${item.assignee ? "" : "unassigned"}" title="${escapeHtml(item.assignee || "Niet toegewezen")}">${initials}</span>
+      <span class="assignee ${item.assignee ? "" : "unassigned"}" title="${escapeHtml(item.assignee || "Unassigned")}">${initials}</span>
     </div>`;
   return card;
 }
@@ -1137,7 +1137,7 @@ async function loadWorkItemDetail(item) {
   } catch (error) {
     if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
     console.error(error);
-    if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, null, false, "Extra gegevens konden niet worden geladen.");
+    if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, null, false, "Additional details could not be loaded.");
   }
 }
 
@@ -1157,7 +1157,7 @@ async function loadWorkItemComments(item) {
   } catch (error) {
     if (state.commentsRequestTokens.get(item.id) !== requestToken) return;
     console.error(error);
-    state.commentsErrors.set(item.id, "Comments konden niet worden geladen.");
+    state.commentsErrors.set(item.id, "Comments could not be loaded.");
     if (isSelectedWorkItem(item.id)) {
       renderComments([], false, state.commentsErrors.get(item.id));
       renderCombinedActivity();
@@ -1177,7 +1177,7 @@ async function loadWorkItemHistory(item) {
     }
   } catch (error) {
     console.error(error);
-    state.historyErrors.set(item.id, "Historie kon niet worden geladen.");
+    state.historyErrors.set(item.id, "History could not be loaded.");
     if (isSelectedWorkItem(item.id)) {
       renderHistory([], false, state.historyErrors.get(item.id));
       renderCombinedActivity();
@@ -1220,7 +1220,7 @@ function normalizeComments(result) {
 function normalizeComment(comment) {
   return {
     id: comment.commentId ?? comment.id,
-    author: comment.createdBy?.displayName || comment.createdBy?.uniqueName || "Onbekende gebruiker",
+    author: comment.createdBy?.displayName || comment.createdBy?.uniqueName || "Unknown user",
     html: comment.renderedText || comment.text || "",
     createdDate: comment.createdDate || "",
     modifiedDate: comment.modifiedDate || ""
@@ -1242,7 +1242,7 @@ function normalizeHistory(result) {
     return {
       id: update.id,
       revision: update.rev,
-      author: update.revisedBy?.displayName || update.revisedBy?.uniqueName || "Onbekende gebruiker",
+      author: update.revisedBy?.displayName || update.revisedBy?.uniqueName || "Unknown user",
       date: historyDateFor(update),
       created: update.rev === 1,
       changes
@@ -1280,28 +1280,28 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemTitle.textContent = item.title;
   els.workItemState.textContent = item.state;
   els.workItemState.dataset.stateTone = stateTone(item.state);
-  els.workItemState.setAttribute("aria-label", `State ${item.state}. Klik om te wijzigen.`);
+  els.workItemState.setAttribute("aria-label", `State ${item.state}. Click to change.`);
   els.workItemReason.textContent = detail?.reason || "";
   els.workItemReason.hidden = !detail?.reason;
-  setRichContent(els.workItemDescription, detail?.descriptionHtml, loading ? "Beschrijving wordt geladen…" : "Geen beschrijving toegevoegd.");
+  setRichContent(els.workItemDescription, detail?.descriptionHtml, loading ? "Loading description…" : "No description added.");
   els.descriptionEditButton.disabled = loading;
-  els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Niet toegewezen";
-  els.workItemAssignee.setAttribute("aria-label", `Assigned to ${detail?.assignee || item.assignee || "Niet toegewezen"}. Klik om te wijzigen.`);
+  els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Unassigned";
+  els.workItemAssignee.setAttribute("aria-label", `Assigned to ${detail?.assignee || item.assignee || "Unassigned"}. Click to change.`);
   els.workItemReporter.textContent = detail?.reporter || "—";
   els.workItemPriority.textContent = detail?.priority ?? "—";
   els.workItemPoints.textContent = detail?.points ?? item.points ?? "—";
   els.workItemArea.textContent = detail?.area || item.area || "—";
   els.workItemIteration.textContent = detail?.iteration || state.iteration?.name || "—";
-  els.workItemPriority.setAttribute("aria-label", `Priority ${detail?.priority ?? "niet ingesteld"}. Klik om te wijzigen.`);
-  els.workItemPoints.setAttribute("aria-label", `Story points ${detail?.points ?? item.points ?? "niet ingesteld"}. Klik om te wijzigen.`);
-  els.workItemArea.setAttribute("aria-label", `Area ${detail?.area || item.area || "niet ingesteld"}. Klik om te wijzigen.`);
-  els.workItemIteration.setAttribute("aria-label", `Sprint ${detail?.iteration || state.iteration?.name || "niet ingesteld"}. Klik om te wijzigen.`);
-  els.workItemParent.textContent = item.featureLabel || "Geen parent";
+  els.workItemPriority.setAttribute("aria-label", `Priority ${detail?.priority ?? "not set"}. Click to change.`);
+  els.workItemPoints.setAttribute("aria-label", `Story points ${detail?.points ?? item.points ?? "not set"}. Click to change.`);
+  els.workItemArea.setAttribute("aria-label", `Area ${detail?.area || item.area || "not set"}. Click to change.`);
+  els.workItemIteration.setAttribute("aria-label", `Sprint ${detail?.iteration || state.iteration?.name || "not set"}. Click to change.`);
+  els.workItemParent.textContent = item.featureLabel || "No parent";
   renderDetailTags(detail?.tags || item.tags);
-  els.workItemTags.setAttribute("aria-label", `Tags: ${(detail?.tags || item.tags || []).join(", ") || "geen"}. Klik om te wijzigen.`);
+  els.workItemTags.setAttribute("aria-label", `Tags: ${(detail?.tags || item.tags || []).join(", ") || "none"}. Click to change.`);
   els.workItemChanged.textContent = detail?.changedDate ? formatDateTime(detail.changedDate) : "—";
   els.workItemLoading.classList.toggle("is-active", loading);
-  els.workItemLoadStatus.textContent = error || (loading ? "Extra gegevens laden…" : "");
+  els.workItemLoadStatus.textContent = error || (loading ? "Loading additional details…" : "");
   els.workItemLoadStatus.classList.toggle("is-error", Boolean(error));
   els.openInAzure.href = `${webBase}/_workitems/edit/${item.id}`;
 }
@@ -1321,7 +1321,7 @@ function assigneeChoices(item) {
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).sort((a, b) => a.name.localeCompare(b.name, "nl"));
+  }).sort((a, b) => a.name.localeCompare(b.name, "en"));
 }
 
 function toggleWorkItemAssigneeMenu() {
@@ -1334,7 +1334,7 @@ function toggleWorkItemAssigneeMenu() {
   els.workItemAssigneeMenu.hidden = false;
   els.workItemAssignee.setAttribute("aria-expanded", "true");
   els.workItemAssigneeSearch.value = "";
-  els.workItemAssigneeSource.textContent = state.teamMembers.length ? "Teamleden" : "Gebruikers in deze sprint";
+  els.workItemAssigneeSource.textContent = state.teamMembers.length ? "Team members" : "Users in this sprint";
   renderWorkItemAssigneeOptions(item);
   requestAnimationFrame(() => els.workItemAssigneeSearch.focus());
 }
@@ -1342,26 +1342,26 @@ function toggleWorkItemAssigneeMenu() {
 function renderWorkItemAssigneeOptions(item) {
   const detail = state.detailsCache.get(item.id);
   const currentName = detail?.assignee || item.assignee || "";
-  const query = els.workItemAssigneeSearch.value.trim().toLocaleLowerCase("nl");
+  const query = els.workItemAssigneeSearch.value.trim().toLocaleLowerCase("en");
   const choices = assigneeChoices(item).filter(choice => !query
-    || choice.name.toLocaleLowerCase("nl").includes(query)
-    || choice.uniqueName.toLocaleLowerCase("nl").includes(query));
+    || choice.name.toLocaleLowerCase("en").includes(query)
+    || choice.uniqueName.toLocaleLowerCase("en").includes(query));
   const options = [];
-  if (!query || "niet toegewezen".includes(query)) {
+  if (!query || "unassigned".includes(query)) {
     options.push(createAssigneeOption(item, null, currentName === ""));
   }
   options.push(...choices.map(choice => createAssigneeOption(item, choice, choice.name === currentName || choice.uniqueName === currentName)));
   if (!options.length) {
     const empty = document.createElement("div");
     empty.className = "issue-assignee-empty";
-    empty.textContent = "Geen gebruikers gevonden.";
+    empty.textContent = "No users found.";
     options.push(empty);
   }
   els.workItemAssigneeOptions.replaceChildren(...options);
 }
 
 function createAssigneeOption(item, choice, selected) {
-  const name = choice?.name || "Niet toegewezen";
+  const name = choice?.name || "Unassigned";
   const button = document.createElement("button");
   button.type = "button";
   button.className = "issue-assignee-option";
@@ -1400,10 +1400,10 @@ function closeWorkItemAssigneeMenu() {
 
 async function changeWorkItemAssignee(item, choice) {
   closeWorkItemAssigneeMenu();
-  const nextName = choice?.name || "Niet toegewezen";
+  const nextName = choice?.name || "Unassigned";
   els.workItemAssignee.disabled = true;
   els.workItemAssignee.classList.add("is-saving");
-  els.workItemLoadStatus.textContent = `Assigned to wijzigen naar ${nextName}…`;
+  els.workItemLoadStatus.textContent = `Changing assignee to ${nextName}…`;
   els.workItemLoadStatus.classList.remove("is-error");
   try {
     const operation = choice
@@ -1434,7 +1434,7 @@ async function changeWorkItemAssignee(item, choice) {
     render();
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemDetail(item, detail || null, false);
-      els.workItemLoadStatus.textContent = `Assigned to gewijzigd naar ${item.assignee || "Niet toegewezen"}.`;
+      els.workItemLoadStatus.textContent = `Assignee changed to ${item.assignee || "Unassigned"}.`;
       renderHistory([], true);
       renderCombinedActivity();
       loadWorkItemHistory(item);
@@ -1442,8 +1442,8 @@ async function changeWorkItemAssignee(item, choice) {
   } catch (error) {
     console.error(error);
     els.workItemLoadStatus.textContent = error.auth
-      ? "Assigned to kon niet worden gewijzigd. De PAT heeft ‘Work Items: Read & write’ nodig."
-      : error.message || "Assigned to kon niet worden gewijzigd.";
+      ? "The assignee could not be changed. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The assignee could not be changed.";
     els.workItemLoadStatus.classList.add("is-error");
   } finally {
     els.workItemAssignee.disabled = false;
@@ -1470,7 +1470,7 @@ async function toggleWorkItemStateMenu() {
   els.workItemState.setAttribute("aria-expanded", "true");
   const loading = document.createElement("div");
   loading.className = "issue-state-menu-message";
-  loading.textContent = "States laden…";
+  loading.textContent = "Loading states…";
   els.workItemStateOptions.replaceChildren(loading);
   try {
     let pending = state.workItemTypeStatesCache.get(item.type);
@@ -1486,7 +1486,7 @@ async function toggleWorkItemStateMenu() {
     console.error(error);
     const message = document.createElement("div");
     message.className = "issue-state-menu-message is-error";
-    message.textContent = "States konden niet worden geladen.";
+    message.textContent = "States could not be loaded.";
     els.workItemStateOptions.replaceChildren(message);
   }
 }
@@ -1524,7 +1524,7 @@ async function changeWorkItemState(item, nextState) {
   closeWorkItemStateMenu();
   els.workItemState.disabled = true;
   els.workItemState.classList.add("is-saving");
-  els.workItemLoadStatus.textContent = `State wijzigen naar ${nextState}…`;
+  els.workItemLoadStatus.textContent = `Changing state to ${nextState}…`;
   els.workItemLoadStatus.classList.remove("is-error");
   try {
     const result = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
@@ -1547,7 +1547,7 @@ async function changeWorkItemState(item, nextState) {
     render();
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemDetail(item, detail || null, false);
-      els.workItemLoadStatus.textContent = `State gewijzigd naar ${item.state}.`;
+      els.workItemLoadStatus.textContent = `State changed to ${item.state}.`;
       renderHistory([], true);
       renderCombinedActivity();
       loadWorkItemHistory(item);
@@ -1555,8 +1555,8 @@ async function changeWorkItemState(item, nextState) {
   } catch (error) {
     console.error(error);
     els.workItemLoadStatus.textContent = error.auth
-      ? "State kon niet worden gewijzigd. De PAT heeft ‘Work Items: Read & write’ nodig."
-      : error.message || "State kon niet worden gewijzigd.";
+      ? "The state could not be changed. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The state could not be changed.";
     els.workItemLoadStatus.classList.add("is-error");
   } finally {
     els.workItemState.disabled = false;
@@ -1582,7 +1582,7 @@ function workItemTagsFor(item) {
 
 function sprintTagChoices() {
   const tags = state.stories.flatMap(story => story.tags || []);
-  return [...new Set(tags.map(tag => tag.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "nl"));
+  return [...new Set(tags.map(tag => tag.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "en"));
 }
 
 function toggleWorkItemTagsMenu() {
@@ -1605,7 +1605,7 @@ function renderWorkItemTagsEditor(item) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "issue-tags-selected-chip";
-    button.title = `Tag ${tag} verwijderen`;
+    button.title = `Remove tag ${tag}`;
     const label = document.createElement("span");
     label.textContent = tag;
     const remove = document.createElement("span");
@@ -1619,7 +1619,7 @@ function renderWorkItemTagsEditor(item) {
   if (!selectedTags.length) {
     const empty = document.createElement("span");
     empty.className = "issue-tags-selected-empty";
-    empty.textContent = "Nog geen tags";
+    empty.textContent = "No tags yet";
     els.workItemTagsSelected.append(empty);
   }
   renderWorkItemTagOptions(item);
@@ -1627,22 +1627,22 @@ function renderWorkItemTagsEditor(item) {
 
 function renderWorkItemTagOptions(item) {
   const selectedTags = workItemTagsFor(item);
-  const selectedKeys = new Set(selectedTags.map(tag => tag.toLocaleLowerCase("nl")));
+  const selectedKeys = new Set(selectedTags.map(tag => tag.toLocaleLowerCase("en")));
   const query = els.workItemTagsInput.value.trim();
-  const queryKey = query.toLocaleLowerCase("nl");
-  const suggestions = sprintTagChoices().filter(tag => !selectedKeys.has(tag.toLocaleLowerCase("nl"))
-    && (!queryKey || tag.toLocaleLowerCase("nl").includes(queryKey)));
+  const queryKey = query.toLocaleLowerCase("en");
+  const suggestions = sprintTagChoices().filter(tag => !selectedKeys.has(tag.toLocaleLowerCase("en"))
+    && (!queryKey || tag.toLocaleLowerCase("en").includes(queryKey)));
   const options = suggestions.map(tag => createWorkItemTagOption(item, tag));
-  if (query && !selectedKeys.has(queryKey) && !suggestions.some(tag => tag.toLocaleLowerCase("nl") === queryKey)) {
+  if (query && !selectedKeys.has(queryKey) && !suggestions.some(tag => tag.toLocaleLowerCase("en") === queryKey)) {
     const add = createWorkItemTagOption(item, query);
     add.classList.add("is-create");
-    add.querySelector("span:last-child").textContent = "Nieuwe tag toevoegen";
+    add.querySelector("span:last-child").textContent = "Add new tag";
     options.unshift(add);
   }
   if (!options.length) {
     const empty = document.createElement("div");
     empty.className = "issue-tags-options-empty";
-    empty.textContent = query ? "Geen andere tags gevonden." : "Geen andere sprinttags.";
+    empty.textContent = query ? "No other tags found." : "No other sprint tags.";
     options.push(empty);
   }
   els.workItemTagsOptions.replaceChildren(...options);
@@ -1655,7 +1655,7 @@ function createWorkItemTagOption(item, tag) {
   const label = document.createElement("strong");
   label.textContent = tag;
   const meta = document.createElement("span");
-  meta.textContent = "Sprinttag toevoegen";
+  meta.textContent = "Add sprint tag";
   button.append(label, meta);
   button.addEventListener("click", () => addWorkItemTag(item, tag));
   return button;
@@ -1665,7 +1665,7 @@ function addWorkItemTag(item, rawTag) {
   const tag = String(rawTag || "").trim().replace(/;/g, "");
   if (!tag) return;
   const tags = workItemTagsFor(item);
-  if (tags.some(value => value.toLocaleLowerCase("nl") === tag.toLocaleLowerCase("nl"))) return;
+  if (tags.some(value => value.toLocaleLowerCase("en") === tag.toLocaleLowerCase("en"))) return;
   updateWorkItemTags(item, [...tags, tag]);
 }
 
@@ -1678,11 +1678,11 @@ async function updateWorkItemTags(item, nextTags) {
   const currentTags = workItemTagsFor(item);
   const savedTags = [...new Map(nextTags.map(tag => {
     const value = String(tag || "").trim();
-    return [value.toLocaleLowerCase("nl"), value];
+    return [value.toLocaleLowerCase("en"), value];
   }).filter(([, value]) => value)).values()];
   els.workItemTagsInput.disabled = true;
   els.workItemTagsMenu.classList.add("is-saving");
-  els.workItemLoadStatus.textContent = "Tags opslaan…";
+  els.workItemLoadStatus.textContent = "Saving tags…";
   els.workItemLoadStatus.classList.remove("is-error");
   try {
     await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
@@ -1706,7 +1706,7 @@ async function updateWorkItemTags(item, nextTags) {
     render();
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemDetail(item, detail || null, false);
-      els.workItemLoadStatus.textContent = "Tags opgeslagen.";
+      els.workItemLoadStatus.textContent = "Tags saved.";
       els.workItemTagsInput.value = "";
       renderWorkItemTagsEditor(item);
       renderHistory([], true);
@@ -1714,13 +1714,13 @@ async function updateWorkItemTags(item, nextTags) {
       loadWorkItemHistory(item);
     }
     if (tagSetKey(verifiedTags) !== tagSetKey(savedTags)) {
-      throw new Error("Azure DevOps heeft de tagwijziging niet overgenomen. De actuele tags zijn opnieuw geladen.");
+      throw new Error("Azure DevOps did not apply the tag change. The current tags have been reloaded.");
     }
   } catch (error) {
     console.error(error);
     els.workItemLoadStatus.textContent = error.auth
-      ? "Tags konden niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig."
-      : error.message || "Tags konden niet worden opgeslagen.";
+      ? "Tags could not be saved. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "Tags could not be saved.";
     els.workItemLoadStatus.classList.add("is-error");
   } finally {
     els.workItemTagsInput.disabled = false;
@@ -1730,7 +1730,7 @@ async function updateWorkItemTags(item, nextTags) {
 }
 
 function tagSetKey(tags) {
-  return tags.map(tag => tag.trim().toLocaleLowerCase("nl")).filter(Boolean).sort().join("\n");
+  return tags.map(tag => tag.trim().toLocaleLowerCase("en")).filter(Boolean).sort().join("\n");
 }
 
 const PRIORITY_OPTIONS = [
@@ -1802,14 +1802,14 @@ async function toggleWorkItemAreaMenu() {
   const item = selectedWorkItem();
   if (!item || !openDetailFieldMenu(els.workItemArea, els.workItemAreaMenu)) return;
   els.workItemAreaSearch.value = "";
-  renderDetailFieldLoading(els.workItemAreaOptions, "Areas laden…");
+  renderDetailFieldLoading(els.workItemAreaOptions, "Loading areas…");
   requestAnimationFrame(() => els.workItemAreaSearch.focus());
   try {
     const paths = await loadAreaPaths();
     if (!els.workItemAreaMenu.hidden && state.selectedItemId === item.id) renderAreaOptions(item, paths);
   } catch (error) {
     console.error(error);
-    renderDetailFieldError(els.workItemAreaOptions, "Areas konden niet worden geladen.");
+    renderDetailFieldError(els.workItemAreaOptions, "Areas could not be loaded.");
   }
 }
 
@@ -1817,14 +1817,14 @@ async function toggleWorkItemIterationMenu() {
   const item = selectedWorkItem();
   if (!item || !openDetailFieldMenu(els.workItemIteration, els.workItemIterationMenu)) return;
   els.workItemIterationSearch.value = "";
-  renderDetailFieldLoading(els.workItemIterationOptions, "Sprints laden…");
+  renderDetailFieldLoading(els.workItemIterationOptions, "Loading sprints…");
   requestAnimationFrame(() => els.workItemIterationSearch.focus());
   try {
     const paths = await loadTeamIterations();
     if (!els.workItemIterationMenu.hidden && state.selectedItemId === item.id) renderIterationOptions(item, paths);
   } catch (error) {
     console.error(error);
-    renderDetailFieldError(els.workItemIterationOptions, "Sprints konden niet worden geladen.");
+    renderDetailFieldError(els.workItemIterationOptions, "Sprints could not be loaded.");
   }
 }
 
@@ -1844,7 +1844,7 @@ function flattenClassificationPaths(root) {
     (node?.children || []).forEach(visit);
   };
   visit(root);
-  return [...new Set(paths)].sort((a, b) => a.localeCompare(b, "nl"));
+  return [...new Set(paths)].sort((a, b) => a.localeCompare(b, "en"));
 }
 
 async function loadTeamIterations() {
@@ -1856,7 +1856,7 @@ async function loadTeamIterations() {
         .sort((a, b) => {
           const aDate = new Date(a.attributes?.startDate || a.attributes?.finishDate || 0).getTime();
           const bDate = new Date(b.attributes?.startDate || b.attributes?.finishDate || 0).getTime();
-          return bDate - aDate || b.name.localeCompare(a.name, "nl", { numeric: true });
+          return bDate - aDate || b.name.localeCompare(a.name, "en", { numeric: true });
         })
         .map(iteration => iteration.path || iteration.name)
         .filter((path, index, paths) => path && paths.indexOf(path) === index));
@@ -1890,9 +1890,9 @@ function renderIterationOptions(item, paths) {
 }
 
 function renderSearchableDetailOptions({ item, paths, query, current, container, field, label }) {
-  const queryKey = query.trim().toLocaleLowerCase("nl");
-  const filtered = paths.filter(path => !queryKey || path.toLocaleLowerCase("nl").includes(queryKey));
-  if (!filtered.length) return renderDetailFieldError(container, `Geen ${label.toLocaleLowerCase("nl")} gevonden.`);
+  const queryKey = query.trim().toLocaleLowerCase("en");
+  const filtered = paths.filter(path => !queryKey || path.toLocaleLowerCase("en").includes(queryKey));
+  if (!filtered.length) return renderDetailFieldError(container, `No ${label.toLocaleLowerCase("en")} found.`);
   container.replaceChildren(...filtered.map(path => {
     const button = createDetailFieldOption(path, path === current);
     if (!button.disabled) button.addEventListener("click", () => updateWorkItemField(item, field, path, label));
@@ -1949,7 +1949,7 @@ async function resolvePointsField(item) {
 
 async function updateWorkItemField(item, field, value, label) {
   closeWorkItemDetailFieldMenus();
-  els.workItemLoadStatus.textContent = `${label} opslaan…`;
+  els.workItemLoadStatus.textContent = `Saving ${label.toLocaleLowerCase("en")}…`;
   els.workItemLoadStatus.classList.remove("is-error");
   try {
     await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
@@ -1976,10 +1976,10 @@ async function updateWorkItemField(item, field, value, label) {
       renderWorkItemDetail(item, detail, false);
     }
     if (!workItemFieldValueMatches(field, verifiedItem.fields?.[field], value)) {
-      throw new Error(`Azure DevOps heeft de wijziging van ${label.toLocaleLowerCase("nl")} niet overgenomen. De actuele waarde is opnieuw geladen.`);
+      throw new Error(`Azure DevOps did not apply the ${label.toLocaleLowerCase("en")} change. The current value has been reloaded.`);
     }
     if (isSelectedWorkItem(item.id)) {
-      els.workItemLoadStatus.textContent = `${label} opgeslagen.`;
+      els.workItemLoadStatus.textContent = `${label} saved.`;
       renderHistory([], true);
       renderCombinedActivity();
       loadWorkItemHistory(item);
@@ -1987,8 +1987,8 @@ async function updateWorkItemField(item, field, value, label) {
   } catch (error) {
     console.error(error);
     els.workItemLoadStatus.textContent = error.auth
-      ? `${label} kon niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig.`
-      : error.message || `${label} kon niet worden opgeslagen.`;
+      ? `${label} could not be saved. The PAT requires ‘Work Items: Read & write’.`
+      : error.message || `${label} could not be saved.`;
     els.workItemLoadStatus.classList.add("is-error");
   }
 }
@@ -1997,7 +1997,7 @@ function workItemFieldValueMatches(field, actual, expected) {
   if (["Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints", "Microsoft.VSTS.Scheduling.Effort"].includes(field)) {
     return Number(actual) === Number(expected);
   }
-  return String(actual || "").toLocaleLowerCase("nl") === String(expected || "").toLocaleLowerCase("nl");
+  return String(actual || "").toLocaleLowerCase("en") === String(expected || "").toLocaleLowerCase("en");
 }
 
 function openWorkItemTitleEditor() {
@@ -2028,7 +2028,7 @@ function setWorkItemTitleEditorBusy(busy) {
   els.workItemTitleInput.disabled = busy;
   els.workItemTitleCancel.disabled = busy;
   els.workItemTitleSubmit.disabled = busy;
-  els.workItemTitleSubmit.textContent = busy ? "Opslaan…" : "Opslaan";
+  els.workItemTitleSubmit.textContent = busy ? "Saving…" : "Save";
 }
 
 async function submitWorkItemTitle(event) {
@@ -2038,7 +2038,7 @@ async function submitWorkItemTitle(event) {
   if (!item || !nextTitle) return;
   if (nextTitle === item.title) return resetWorkItemTitleEditor();
   setWorkItemTitleEditorBusy(true);
-  els.workItemTitleStatus.textContent = "Titel opslaan…";
+  els.workItemTitleStatus.textContent = "Saving title…";
   els.workItemTitleStatus.classList.remove("is-error");
   try {
     await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
@@ -2057,12 +2057,12 @@ async function submitWorkItemTitle(event) {
     render();
     if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, detail, false);
     if (item.title !== nextTitle) {
-      throw new Error("Azure DevOps heeft de titelwijziging niet overgenomen. De actuele titel is opnieuw geladen.");
+      throw new Error("Azure DevOps did not apply the title change. The current title has been reloaded.");
     }
     resetWorkItemTitleEditor();
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemDetail(item, detail, false);
-      els.workItemLoadStatus.textContent = "Titel opgeslagen.";
+      els.workItemLoadStatus.textContent = "Title saved.";
       renderHistory([], true);
       renderCombinedActivity();
       loadWorkItemHistory(item);
@@ -2070,8 +2070,8 @@ async function submitWorkItemTitle(event) {
   } catch (error) {
     console.error(error);
     els.workItemTitleStatus.textContent = error.auth
-      ? "Titel kon niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig."
-      : error.message || "Titel kon niet worden opgeslagen.";
+      ? "The title could not be saved. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The title could not be saved.";
     els.workItemTitleStatus.classList.add("is-error");
     setWorkItemTitleEditorBusy(false);
     els.workItemTitleInput.focus();
@@ -2110,7 +2110,7 @@ function setDescriptionEditorBusy(busy) {
   els.descriptionEditor.contentEditable = String(!busy);
   els.descriptionEditorCancel.disabled = busy;
   els.descriptionEditorSubmit.disabled = busy;
-  els.descriptionEditorSubmit.textContent = busy ? "Opslaan…" : "Opslaan";
+  els.descriptionEditorSubmit.textContent = busy ? "Saving…" : "Save";
 }
 
 function applyDescriptionCommand(command) {
@@ -2144,7 +2144,7 @@ async function submitDescriptionEditor(event) {
   if (!item) return;
   const descriptionHtml = descriptionEditorHtml();
   setDescriptionEditorBusy(true);
-  els.descriptionEditorStatus.textContent = "Beschrijving opslaan…";
+  els.descriptionEditorStatus.textContent = "Saving description…";
   els.descriptionEditorStatus.classList.remove("is-error");
   try {
     await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
@@ -2161,7 +2161,7 @@ async function submitDescriptionEditor(event) {
     resetDescriptionEditor();
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemDetail(item, detail, false);
-      els.workItemLoadStatus.textContent = "Beschrijving opgeslagen.";
+      els.workItemLoadStatus.textContent = "Description saved.";
       renderHistory([], true);
       renderCombinedActivity();
       loadWorkItemHistory(item);
@@ -2169,8 +2169,8 @@ async function submitDescriptionEditor(event) {
   } catch (error) {
     console.error(error);
     els.descriptionEditorStatus.textContent = error.auth
-      ? "Beschrijving kon niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig."
-      : error.message || "Beschrijving kon niet worden opgeslagen.";
+      ? "The description could not be saved. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The description could not be saved.";
     els.descriptionEditorStatus.classList.add("is-error");
     setDescriptionEditorBusy(false);
     els.descriptionEditor.focus();
@@ -2181,7 +2181,7 @@ function renderComments(comments, loading = false, error = "") {
   els.workItemCommentCount.textContent = String(comments.length);
   els.workItemCommentsStatus.classList.toggle("is-error", Boolean(error));
   if (loading) {
-    els.workItemCommentsStatus.textContent = "Comments laden…";
+    els.workItemCommentsStatus.textContent = "Loading comments…";
     els.workItemComments.replaceChildren(...Array.from({ length: 2 }, () => {
       const skeleton = document.createElement("div");
       skeleton.className = "comment-skeleton";
@@ -2189,7 +2189,7 @@ function renderComments(comments, loading = false, error = "") {
     }));
     return;
   }
-  els.workItemCommentsStatus.textContent = error || (!comments.length ? "Nog geen comments." : "");
+  els.workItemCommentsStatus.textContent = error || (!comments.length ? "No comments yet." : "");
   els.workItemComments.replaceChildren(...comments.map(createComment));
 }
 
@@ -2206,7 +2206,7 @@ function resetCommentComposer() {
   els.commentComposerInput.disabled = false;
   els.commentComposerCancel.disabled = false;
   els.commentComposerSubmit.disabled = false;
-  els.commentComposerSubmit.textContent = "Opslaan";
+  els.commentComposerSubmit.textContent = "Save";
   setCommentComposerExpanded(false);
 }
 
@@ -2214,7 +2214,7 @@ function setCommentComposerBusy(busy) {
   els.commentComposerInput.disabled = busy;
   els.commentComposerCancel.disabled = busy;
   els.commentComposerSubmit.disabled = busy;
-  els.commentComposerSubmit.textContent = busy ? "Opslaan…" : "Opslaan";
+  els.commentComposerSubmit.textContent = busy ? "Saving…" : "Save";
 }
 
 async function submitWorkItemComment(event) {
@@ -2223,7 +2223,7 @@ async function submitWorkItemComment(event) {
   const text = els.commentComposerInput.value.trim();
   if (!item || !text) return;
   setCommentComposerBusy(true);
-  els.commentComposerStatus.textContent = "Comment plaatsen…";
+  els.commentComposerStatus.textContent = "Posting comment…";
   els.commentComposerStatus.classList.remove("is-error");
   try {
     const result = await azure(`/_apis/wit/workItems/${item.id}/comments?api-version=7.1-preview.4`, {
@@ -2241,7 +2241,7 @@ async function submitWorkItemComment(event) {
       renderComments(comments, false);
       renderCombinedActivity();
       resetCommentComposer();
-      els.workItemLoadStatus.textContent = "Comment geplaatst.";
+      els.workItemLoadStatus.textContent = "Comment posted.";
       els.workItemLoadStatus.classList.remove("is-error");
     }
     loadWorkItemComments(item);
@@ -2249,8 +2249,8 @@ async function submitWorkItemComment(event) {
     console.error(error);
     if (isSelectedWorkItem(item.id)) {
       els.commentComposerStatus.textContent = error.auth
-        ? "Comment kon niet worden geplaatst. De PAT heeft ‘Work Items: Read & write’ nodig."
-        : error.message || "Comment kon niet worden geplaatst.";
+        ? "The comment could not be posted. The PAT requires ‘Work Items: Read & write’."
+        : error.message || "The comment could not be posted.";
       els.commentComposerStatus.classList.add("is-error");
     }
   } finally {
@@ -2275,7 +2275,7 @@ function createComment(comment) {
   header.append(author, time);
   const content = document.createElement("div");
   content.className = "comment-content rich-content";
-  setRichContent(content, comment.html, "Lege comment");
+  setRichContent(content, comment.html, "Empty comment");
   body.append(header, content);
   article.append(avatar, body);
   return article;
@@ -2285,7 +2285,7 @@ function renderHistory(history, loading = false, error = "") {
   els.workItemHistoryCount.textContent = String(history.length);
   els.workItemHistoryStatus.classList.toggle("is-error", Boolean(error));
   if (loading) {
-    els.workItemHistoryStatus.textContent = "Historie laden…";
+    els.workItemHistoryStatus.textContent = "Loading history…";
     els.workItemHistory.replaceChildren(...Array.from({ length: 2 }, () => {
       const skeleton = document.createElement("div");
       skeleton.className = "comment-skeleton";
@@ -2293,7 +2293,7 @@ function renderHistory(history, loading = false, error = "") {
     }));
     return;
   }
-  els.workItemHistoryStatus.textContent = error || (!history.length ? "Nog geen historie." : "");
+  els.workItemHistoryStatus.textContent = error || (!history.length ? "No history yet." : "");
   els.workItemHistory.replaceChildren(...history.map(createHistoryEntry));
 }
 
@@ -2320,7 +2320,7 @@ function createHistoryEntry(entry) {
   if (entry.created) {
     const created = document.createElement("p");
     created.className = "history-summary";
-    created.textContent = "heeft dit item aangemaakt.";
+    created.textContent = "created this item.";
     body.append(created);
   } else if (entry.changes.length) {
     const list = document.createElement("ul");
@@ -2329,7 +2329,7 @@ function createHistoryEntry(entry) {
   } else {
     const updated = document.createElement("p");
     updated.className = "history-summary";
-    updated.textContent = "heeft dit item bijgewerkt.";
+    updated.textContent = "updated this item.";
     body.append(updated);
   }
   article.append(marker, body);
@@ -2342,7 +2342,7 @@ function createHistoryChange(change) {
   label.textContent = change.label;
   row.append(label);
   if (change.compact) {
-    row.append(document.createTextNode(" bijgewerkt"));
+    row.append(document.createTextNode(" updated"));
     return row;
   }
   const oldValue = document.createElement("span");
@@ -2372,8 +2372,8 @@ function renderCombinedActivity() {
   els.workItemActivityStatus.textContent = errors.length
     ? errors.join(" ")
     : loading
-      ? "Activiteit laden…"
-      : !activity.length ? "Nog geen activiteit." : "";
+      ? "Loading activity…"
+      : !activity.length ? "No activity yet." : "";
   els.workItemActivity.replaceChildren(...activity.map(item =>
     item.kind === "comment" ? createComment(item.value) : createHistoryEntry(item.value)
   ));
@@ -2534,7 +2534,7 @@ function hydrateRichTextImages(element) {
       image.classList.remove("is-loading");
       image.classList.add("is-broken");
       image.removeAttribute("aria-busy");
-      image.title = "Afbeelding kon niet worden geladen.";
+      image.title = "The image could not be loaded.";
     }
   });
 }
@@ -2546,10 +2546,10 @@ async function fetchAzureImage(url) {
       Authorization: `Basic ${btoa(`:${state.pat}`)}`
     }
   });
-  if (!response.ok) throw new Error(`Afbeelding laden mislukt (${response.status}).`);
+  if (!response.ok) throw new Error(`Failed to load image (${response.status}).`);
   const blob = await response.blob();
   if (!blob.type.startsWith("image/") && blob.type !== "application/octet-stream") {
-    throw new Error("Bijlage is geen afbeelding.");
+    throw new Error("The attachment is not an image.");
   }
   return URL.createObjectURL(blob);
 }
@@ -2570,7 +2570,7 @@ function renderEmptyBoard() {
   closeSprintMenu();
   render();
   if (state.currentView === "backlog") {
-    els.backlogMeta.textContent = "Verbind Azure DevOps om de backlog te laden.";
+    els.backlogMeta.textContent = "Connect Azure DevOps to load the backlog.";
     els.backlogContent.replaceChildren();
   }
 }
@@ -2584,7 +2584,7 @@ function showSettings() {
     option.selected = team.id === state.teamId;
     return option;
   }));
-  els.stateMappings.replaceChildren(...[...state.knownStates].sort((a, b) => a.localeCompare(b, "nl")).map(itemState => {
+  els.stateMappings.replaceChildren(...[...state.knownStates].sort((a, b) => a.localeCompare(b, "en")).map(itemState => {
     const row = document.createElement("div");
     row.className = "mapping-row";
     const label = document.createElement("strong");
@@ -2592,7 +2592,7 @@ function showSettings() {
     const select = document.createElement("select");
     select.name = `state-${itemState}`;
     select.dataset.state = itemState;
-    [["todo", "To do"], ["active", "Active"], ["done", "Done"], ["hidden", "Niet tonen"]].forEach(([value, text]) => {
+    [["todo", "To do"], ["active", "Active"], ["done", "Done"], ["hidden", "Hide"]].forEach(([value, text]) => {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = text;
@@ -2647,8 +2647,8 @@ function showNotice(message, type = "info", actionLabel = "", action = null) {
 }
 
 function clearNotice() { els.status.replaceChildren(); }
-function formatDate(value) { return value ? new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short" }).format(new Date(value)) : ""; }
-function formatDateTime(value) { return value ? new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : ""; }
+function formatDate(value) { return value ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(value)) : ""; }
+function formatDateTime(value) { return value ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : ""; }
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 
 els.connectionForm.addEventListener("submit", event => {
@@ -2659,7 +2659,7 @@ els.connectionForm.addEventListener("submit", event => {
     state.authenticatedUser = null;
     updateBranding();
     state.pat = els.pat.value.trim();
-    if (!state.pat) throw new Error("Vul een PAT in.");
+    if (!state.pat) throw new Error("Enter a PAT.");
     localStorage.setItem(STORAGE.url, state.orgUrl);
     localStorage.setItem(STORAGE.pat, state.pat);
     els.connectionDialog.close();
@@ -2735,11 +2735,11 @@ els.workItemPointsForm.addEventListener("submit", async event => {
   els.workItemPointsInput.disabled = true;
   try {
     const field = await resolvePointsField(item);
-    if (!field) throw new Error(`Voor work-itemtype “${item.type}” is geen Story Points- of Effort-veld gevonden.`);
+    if (!field) throw new Error(`No Story Points or Effort field was found for work item type “${item.type}”.`);
     await updateWorkItemField(item, field, value, "Story points");
   } catch (error) {
     console.error(error);
-    els.workItemLoadStatus.textContent = error.message || "Story points konden niet worden opgeslagen.";
+    els.workItemLoadStatus.textContent = error.message || "Story points could not be saved.";
     els.workItemLoadStatus.classList.add("is-error");
   } finally {
     els.workItemPointsInput.disabled = false;
@@ -2865,7 +2865,7 @@ els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connec
 els.togglePat.addEventListener("click", () => {
   const show = els.pat.type === "password";
   els.pat.type = show ? "text" : "password";
-  els.togglePat.textContent = show ? "Verbergen" : "Tonen";
+  els.togglePat.textContent = show ? "Hide" : "Show";
 });
 els.changeConnection.addEventListener("click", () => showConnection());
 els.theme.addEventListener("click", () => {
@@ -2882,7 +2882,7 @@ els.clearFilters.addEventListener("click", async () => {
   if (hadSprintFilter && state.currentView !== "backlog") {
     setLoading(true);
     try { await applySprintFilter(); }
-    catch (error) { console.error(error); showNotice(error.message || "Huidige sprint kon niet worden geladen.", "error"); }
+    catch (error) { console.error(error); showNotice(error.message || "The current sprint could not be loaded.", "error"); }
     finally { setLoading(false); }
   }
   renderCurrentView();
