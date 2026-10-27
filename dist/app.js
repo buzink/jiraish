@@ -89,6 +89,9 @@ const state = {
   forYouActivity: [],
   forYouErrors: {},
   forYouExpanded: { work: false, mentions: false, activity: false },
+  forYouSelectedUser: null,
+  forYouUserKey: "",
+  forYouRequestToken: 0,
   currentView: "board",
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
@@ -155,16 +158,27 @@ const els = {
   boardViews: [...document.querySelectorAll("[data-board-view]")],
   backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
   forYouViews: [...document.querySelectorAll("[data-for-you-view]")],
+  forYouTitle: document.querySelector("#forYouTitle"),
   forYouMeta: document.querySelector("#forYouMeta"),
+  forYouPersonControl: document.querySelector("#forYouPersonControl"),
+  forYouPerson: document.querySelector("#forYouPerson"),
+  forYouPersonName: document.querySelector("#forYouPersonName"),
+  forYouPersonMenu: document.querySelector("#forYouPersonMenu"),
+  forYouPersonSearch: document.querySelector("#forYouPersonSearch"),
+  forYouPersonOptions: document.querySelector("#forYouPersonOptions"),
+  forYouTeamName: document.querySelector("#forYouTeamName"),
   forYouWorkCount: document.querySelector("#forYouWorkCount"),
+  forYouWorkDescription: document.querySelector("#forYouWorkDescription"),
   forYouWorkStatus: document.querySelector("#forYouWorkStatus"),
   forYouWorkList: document.querySelector("#forYouWorkList"),
   forYouWorkShowAll: document.querySelector("#forYouWorkShowAll"),
   forYouMentionsCount: document.querySelector("#forYouMentionsCount"),
+  forYouMentionsDescription: document.querySelector("#forYouMentionsDescription"),
   forYouMentionsStatus: document.querySelector("#forYouMentionsStatus"),
   forYouMentionsList: document.querySelector("#forYouMentionsList"),
   forYouMentionsShowAll: document.querySelector("#forYouMentionsShowAll"),
   forYouActivityCount: document.querySelector("#forYouActivityCount"),
+  forYouActivityDescription: document.querySelector("#forYouActivityDescription"),
   forYouActivityStatus: document.querySelector("#forYouActivityStatus"),
   forYouActivityList: document.querySelector("#forYouActivityList"),
   forYouActivityShowAll: document.querySelector("#forYouActivityShowAll"),
@@ -812,6 +826,7 @@ async function applySprintFilter() {
 }
 
 async function showMainView(view) {
+  const enteringForYou = view === "for-you" && state.currentView !== "for-you";
   state.currentView = view;
   const showForYou = view === "for-you";
   const showBacklog = view === "backlog";
@@ -826,7 +841,13 @@ async function showMainView(view) {
   els.forYouNav.toggleAttribute("aria-current", showForYou);
   els.sprintBoardNav.toggleAttribute("aria-current", showBoard);
   els.backlogNav.toggleAttribute("aria-current", showBacklog);
+  if (!showForYou) closeForYouPersonMenu();
   if (showForYou) {
+    if (enteringForYou) {
+      state.forYouSelectedUser = null;
+      state.forYouUserKey = "";
+      state.forYouExpanded = { work: false, mentions: false, activity: false };
+    }
     await loadForYou();
     return;
   }
@@ -874,6 +895,19 @@ async function mapWithConcurrency(values, limit, mapper) {
   return results;
 }
 
+function forYouTargetUser() {
+  return state.forYouSelectedUser || state.authenticatedUser;
+}
+
+function forYouTargetKey(user = forYouTargetUser()) {
+  return String(user?.id || user?.uniqueName || user?.displayName || "@me").toLocaleLowerCase("en");
+}
+
+function forYouIdentityQuery(user, isSelf) {
+  if (isSelf) return "@Me";
+  return `'${wiqlText(user?.uniqueName || user?.displayName)}'`;
+}
+
 async function loadForYou(force = false) {
   if (!state.projectName) {
     state.forYouProjectName = "";
@@ -884,20 +918,25 @@ async function loadForYou(force = false) {
     renderForYou();
     return;
   }
-  if (!force && state.forYouProjectName === state.projectName) {
+  const user = forYouTargetUser();
+  const isSelf = !state.forYouSelectedUser;
+  const userKey = forYouTargetKey(user);
+  if (!force && state.forYouProjectName === state.projectName && state.forYouUserKey === userKey) {
     renderForYou();
     return;
   }
 
+  const requestToken = ++state.forYouRequestToken;
   state.forYouErrors = {};
   renderForYouLoading();
   els.refresh.disabled = true;
   els.refresh.classList.add("is-spinning");
   const sections = await Promise.allSettled([
-    loadForYouWorkItems(),
-    loadForYouMentions(),
-    loadForYouActivity()
+    loadForYouWorkItems(user, isSelf),
+    loadForYouMentions(user),
+    loadForYouActivity(user, isSelf)
   ]);
+  if (requestToken !== state.forYouRequestToken) return;
   const [work, mentions, activity] = sections;
   if (work.status === "fulfilled") state.forYouWorkItems = work.value;
   else {
@@ -918,17 +957,19 @@ async function loadForYou(force = false) {
     state.forYouErrors.activity = activity.reason?.message || "Activity could not be loaded.";
   }
   state.forYouProjectName = state.projectName;
+  state.forYouUserKey = userKey;
   renderForYou();
   els.refresh.disabled = false;
   els.refresh.classList.remove("is-spinning");
 }
 
-async function loadForYouWorkItems() {
+async function loadForYouWorkItems(user, isSelf) {
+  const identity = forYouIdentityQuery(user, isSelf);
   const ids = await queryWorkItemIds(`
     SELECT [System.Id]
     FROM WorkItems
     WHERE [System.TeamProject] = @project
-      AND [System.AssignedTo] = @Me
+      AND [System.AssignedTo] = ${identity}
     ORDER BY [System.ChangedDate] DESC
   `, 100);
   const items = await fetchWorkItems(ids);
@@ -936,9 +977,8 @@ async function loadForYouWorkItems() {
     .sort((a, b) => new Date(b.changedDate) - new Date(a.changedDate));
 }
 
-async function loadForYouMentions() {
-  const user = state.authenticatedUser;
-  if (!user?.displayName) throw new Error("The current user could not be identified for mentions.");
+async function loadForYouMentions(user) {
+  if (!user?.displayName) throw new Error("The selected user could not be identified for mentions.");
   const ids = await queryWorkItemIds(`
     SELECT [System.Id]
     FROM WorkItems
@@ -959,8 +999,8 @@ async function loadForYouMentions() {
     .slice(0, 20);
 }
 
-async function loadForYouActivity() {
-  if (!state.authenticatedUser) {
+async function loadForYouActivity(user, isSelf) {
+  if (!user) {
     const ids = await queryWorkItemIds(`
       SELECT [System.Id]
       FROM WorkItems
@@ -981,13 +1021,14 @@ async function loadForYouActivity() {
       }
     })).sort((a, b) => new Date(b.entry.date) - new Date(a.entry.date));
   }
+  const identity = forYouIdentityQuery(user, isSelf);
   let ids;
   try {
     ids = await queryWorkItemIds(`
       SELECT [System.Id]
       FROM WorkItems
       WHERE [System.TeamProject] = @project
-        AND [System.ChangedBy] EVER @Me
+        AND [System.ChangedBy] EVER ${identity}
       ORDER BY [System.ChangedDate] DESC
     `, 25);
   } catch (error) {
@@ -996,7 +1037,7 @@ async function loadForYouActivity() {
       SELECT [System.Id]
       FROM WorkItems
       WHERE [System.TeamProject] = @project
-        AND [System.ChangedBy] = @Me
+        AND [System.ChangedBy] = ${identity}
       ORDER BY [System.ChangedDate] DESC
     `, 25);
   }
@@ -1005,7 +1046,7 @@ async function loadForYouActivity() {
     const result = await azure(`/_apis/wit/workItems/${item.id}/updates?api-version=7.1`);
     const history = normalizeHistory(result);
     state.historyCache.set(item.id, history);
-    return (result.value || []).filter(update => identityMatches(update.revisedBy, state.authenticatedUser))
+    return (result.value || []).filter(update => identityMatches(update.revisedBy, user))
       .map(update => ({ item, entry: normalizeHistoryUpdate(update) }));
   });
   return activityGroups.flat()
@@ -1037,9 +1078,128 @@ function commentMentionsUser(comment, user) {
     || (sourceKey.includes("data-vss-mention") && sourceKey.includes(displayName))));
 }
 
-function renderForYouLoading() {
+function forYouUserChoices() {
+  const choices = [];
+  choices.push(state.authenticatedUser
+    ? { ...state.authenticatedUser, isSelf: true }
+    : { id: "", displayName: "You", uniqueName: "", isSelf: true });
+  const members = state.teamMembers.length
+    ? state.teamMembers
+    : [...state.stories, ...state.backlogItems].filter(item => item.assignee).map(item => ({
+      id: "",
+      name: item.assignee,
+      uniqueName: item.assigneeUniqueName || item.assignee
+    }));
+  members.forEach(member => choices.push({
+    id: member.id,
+    displayName: member.name,
+    uniqueName: member.uniqueName,
+    isSelf: identityMatches(member, state.authenticatedUser)
+  }));
+  const unique = new Map();
+  choices.forEach(choice => {
+    const key = forYouTargetKey(choice);
+    if (!unique.has(key) || choice.isSelf) unique.set(key, choice);
+  });
+  return [...unique.values()].sort((a, b) => {
+    if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+    return a.displayName.localeCompare(b.displayName, "en", { sensitivity: "base" });
+  });
+}
+
+function renderForYouIdentity() {
   const team = state.teams.find(value => value.id === state.teamId);
-  els.forYouMeta.textContent = `${team?.name || state.projectName || "Project"} · Loading your work…`;
+  const user = forYouTargetUser();
+  const isSelf = !state.forYouSelectedUser;
+  const displayName = user?.displayName || "You";
+  els.forYouTitle.textContent = isSelf ? "For you" : `For ${displayName}`;
+  els.forYouPersonName.textContent = displayName;
+  els.forYouPerson.setAttribute("aria-label", `Choose a team member. Currently ${displayName}.`);
+  els.forYouTeamName.textContent = team?.name || state.projectName || "Team";
+  els.forYouWorkDescription.textContent = isSelf
+    ? "Open work items assigned to you."
+    : `Open work items assigned to ${displayName}.`;
+  els.forYouMentionsDescription.textContent = isSelf
+    ? "Recent comments where someone mentioned you."
+    : `Recent comments where someone mentioned ${displayName}.`;
+  els.forYouActivityDescription.textContent = isSelf
+    ? "Your latest changes across work items."
+    : `${displayName}'s latest changes across work items.`;
+}
+
+function renderForYouPersonOptions() {
+  const query = els.forYouPersonSearch.value.trim().toLocaleLowerCase("en");
+  const selected = forYouTargetUser();
+  const choices = forYouUserChoices().filter(choice => !query
+    || choice.displayName.toLocaleLowerCase("en").includes(query)
+    || choice.uniqueName.toLocaleLowerCase("en").includes(query));
+  if (!choices.length) {
+    const empty = document.createElement("div");
+    empty.className = "for-you-person-empty";
+    empty.textContent = "No team members found.";
+    els.forYouPersonOptions.replaceChildren(empty);
+    return;
+  }
+  els.forYouPersonOptions.replaceChildren(...choices.map(choice => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "for-you-person-option";
+    option.setAttribute("role", "option");
+    const selectedChoice = choice.isSelf
+      ? !state.forYouSelectedUser
+      : Boolean(state.forYouSelectedUser && identityMatches(choice, selected));
+    option.setAttribute("aria-selected", String(selectedChoice));
+    option.disabled = selectedChoice;
+    const avatar = document.createElement("span");
+    avatar.className = "for-you-person-avatar";
+    avatar.textContent = initialsFor(choice.displayName);
+    const label = document.createElement("span");
+    label.className = "for-you-person-label";
+    const name = document.createElement("strong");
+    name.textContent = choice.displayName;
+    const detail = document.createElement("small");
+    detail.textContent = choice.isSelf ? "You" : choice.uniqueName;
+    label.append(name, detail);
+    const check = document.createElement("span");
+    check.className = "for-you-person-check";
+    check.textContent = selectedChoice ? "✓" : "";
+    option.append(avatar, label, check);
+    option.addEventListener("click", () => selectForYouUser(choice));
+    return option;
+  }));
+}
+
+function toggleForYouPersonMenu(force) {
+  const open = force ?? els.forYouPersonMenu.hidden;
+  els.forYouPersonMenu.hidden = !open;
+  els.forYouPerson.setAttribute("aria-expanded", String(open));
+  if (!open) {
+    els.forYouPersonSearch.value = "";
+    return;
+  }
+  renderForYouPersonOptions();
+  requestAnimationFrame(() => els.forYouPersonSearch.focus());
+}
+
+function closeForYouPersonMenu() {
+  toggleForYouPersonMenu(false);
+}
+
+async function selectForYouUser(choice) {
+  state.forYouSelectedUser = choice.isSelf ? null : {
+    id: choice.id || "",
+    displayName: choice.displayName,
+    uniqueName: choice.uniqueName || choice.displayName
+  };
+  state.forYouUserKey = "";
+  state.forYouExpanded = { work: false, mentions: false, activity: false };
+  closeForYouPersonMenu();
+  renderForYouIdentity();
+  await loadForYou(true);
+}
+
+function renderForYouLoading() {
+  renderForYouIdentity();
   for (const [count, status, list, showAll] of [
     [els.forYouWorkCount, els.forYouWorkStatus, els.forYouWorkList, els.forYouWorkShowAll],
     [els.forYouMentionsCount, els.forYouMentionsStatus, els.forYouMentionsList, els.forYouMentionsShowAll],
@@ -1058,14 +1218,16 @@ function renderForYouLoading() {
 }
 
 function renderForYou() {
-  const team = state.teams.find(value => value.id === state.teamId);
-  const userName = state.authenticatedUser?.displayName || "You";
-  els.forYouMeta.textContent = state.projectName
-    ? `${userName} · ${team?.name || state.projectName}`
-    : "Connect Azure DevOps to load your work.";
-  renderForYouSection("work", state.forYouWorkItems, createForYouWorkItem, "No open work items are assigned to you.");
-  renderForYouSection("mentions", state.forYouMentions, createForYouMention, "No recent mentions need a reply.");
-  renderForYouSection("activity", state.forYouActivity, createForYouActivity, "No recent activity was found.");
+  const user = forYouTargetUser();
+  const isSelf = !state.forYouSelectedUser;
+  const displayName = user?.displayName || "the selected user";
+  renderForYouIdentity();
+  renderForYouSection("work", state.forYouWorkItems, createForYouWorkItem,
+    isSelf ? "No open work items are assigned to you." : `No open work items are assigned to ${displayName}.`);
+  renderForYouSection("mentions", state.forYouMentions, createForYouMention,
+    isSelf ? "No recent mentions need a reply." : `No recent mentions of ${displayName} were found.`);
+  renderForYouSection("activity", state.forYouActivity, createForYouActivity,
+    isSelf ? "No recent activity was found." : `No recent activity by ${displayName} was found.`);
 }
 
 function renderForYouSection(kind, items, renderer, emptyMessage) {
@@ -2961,6 +3123,8 @@ function renderEmptyBoard() {
   state.forYouMentions = [];
   state.forYouActivity = [];
   state.forYouErrors = {};
+  state.forYouSelectedUser = null;
+  state.forYouUserKey = "";
   state.iteration = null;
   state.iterations = [];
   state.currentIterationId = "";
@@ -3057,6 +3221,8 @@ els.connectionForm.addEventListener("submit", event => {
     state.orgUrl = els.orgUrl.value.trim();
     state.authenticatedUser = null;
     state.forYouProjectName = "";
+    state.forYouSelectedUser = null;
+    state.forYouUserKey = "";
     updateBranding();
     state.pat = els.pat.value.trim();
     if (!state.pat) throw new Error("Enter a PAT.");
@@ -3274,6 +3440,19 @@ els.theme.addEventListener("click", () => {
 });
 els.headerAvatar.addEventListener("click", showSettings);
 els.forYouNav.addEventListener("click", () => showMainView("for-you"));
+els.forYouPerson.addEventListener("click", event => {
+  event.stopPropagation();
+  toggleForYouPersonMenu();
+});
+els.forYouPersonMenu.addEventListener("click", event => event.stopPropagation());
+els.forYouPersonSearch.addEventListener("input", renderForYouPersonOptions);
+els.forYouPersonSearch.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeForYouPersonMenu();
+  els.forYouPerson.focus();
+});
 els.forYouWorkShowAll.addEventListener("click", () => toggleForYouSection("work"));
 els.forYouMentionsShowAll.addEventListener("click", () => toggleForYouSection("mentions"));
 els.forYouActivityShowAll.addEventListener("click", () => toggleForYouSection("activity"));
@@ -3294,6 +3473,7 @@ els.clearFilters.addEventListener("click", async () => {
 });
 
 document.addEventListener("click", event => {
+  if (!els.forYouPersonControl.contains(event.target)) closeForYouPersonMenu();
   if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
   if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();
   if (!els.workItemAssigneeControl.contains(event.target)) closeWorkItemAssigneeMenu();

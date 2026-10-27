@@ -82,7 +82,24 @@
         <div>
           <div class="eyebrow" data-project-team>PROJECT</div>
           <h1 id="forYouTitle">For you</h1>
-          <p id="forYouMeta" class="sprint-meta">Your work and recent activity in one place.</p>
+          <div id="forYouMeta" class="sprint-meta for-you-meta">
+            <div id="forYouPersonControl" class="for-you-person-control">
+              <button id="forYouPerson" class="for-you-person-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                <span id="forYouPersonName">You</span>
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+              </button>
+              <div id="forYouPersonMenu" class="for-you-person-menu" hidden>
+                <label class="for-you-person-search">
+                  <span class="sr-only">Search team members</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+                  <input id="forYouPersonSearch" type="search" placeholder="Search team members…" autocomplete="off">
+                </label>
+                <div id="forYouPersonOptions" class="for-you-person-options" role="listbox"></div>
+              </div>
+            </div>
+            <span aria-hidden="true">·</span>
+            <span id="forYouTeamName">Team</span>
+          </div>
         </div>
       </section>
 
@@ -139,7 +156,7 @@
               </div>
               <span id="forYouWorkCount" class="count">0</span>
             </header>
-            <p class="for-you-description">Open work items assigned to you.</p>
+            <p id="forYouWorkDescription" class="for-you-description">Open work items assigned to you.</p>
             <div id="forYouWorkStatus" class="for-you-status" aria-live="polite"></div>
             <div id="forYouWorkList" class="for-you-list"></div>
             <button id="forYouWorkShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
@@ -153,7 +170,7 @@
               </div>
               <span id="forYouMentionsCount" class="count">0</span>
             </header>
-            <p class="for-you-description">Recent comments where someone mentioned you.</p>
+            <p id="forYouMentionsDescription" class="for-you-description">Recent comments where someone mentioned you.</p>
             <div id="forYouMentionsStatus" class="for-you-status" aria-live="polite"></div>
             <div id="forYouMentionsList" class="for-you-list"></div>
             <button id="forYouMentionsShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
@@ -167,7 +184,7 @@
               </div>
               <span id="forYouActivityCount" class="count">0</span>
             </header>
-            <p class="for-you-description">Your latest changes across work items.</p>
+            <p id="forYouActivityDescription" class="for-you-description">Your latest changes across work items.</p>
             <div id="forYouActivityStatus" class="for-you-status" aria-live="polite"></div>
             <div id="forYouActivityList" class="for-you-list"></div>
             <button id="forYouActivityShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
