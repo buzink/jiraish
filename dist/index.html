@@ -189,6 +189,48 @@
             <div id="forYouActivityList" class="for-you-list"></div>
             <button id="forYouActivityShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
           </section>
+
+          <section class="for-you-panel" aria-labelledby="forYouCreatedTitle">
+            <header>
+              <div>
+                <span class="for-you-icon for-you-icon-created" aria-hidden="true">＋</span>
+                <h2 id="forYouCreatedTitle">Created by anyone</h2>
+              </div>
+              <span id="forYouCreatedCount" class="count">0</span>
+            </header>
+            <p class="for-you-description">Recently created work items across the project.</p>
+            <div id="forYouCreatedStatus" class="for-you-status" aria-live="polite"></div>
+            <div id="forYouCreatedList" class="for-you-list"></div>
+            <button id="forYouCreatedShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
+          </section>
+
+          <section class="for-you-panel" aria-labelledby="forYouUpdatedTitle">
+            <header>
+              <div>
+                <span class="for-you-icon for-you-icon-updated" aria-hidden="true">↻</span>
+                <h2 id="forYouUpdatedTitle">Updated by anyone</h2>
+              </div>
+              <span id="forYouUpdatedCount" class="count">0</span>
+            </header>
+            <p class="for-you-description">Recently updated work items across the project.</p>
+            <div id="forYouUpdatedStatus" class="for-you-status" aria-live="polite"></div>
+            <div id="forYouUpdatedList" class="for-you-list"></div>
+            <button id="forYouUpdatedShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
+          </section>
+
+          <section class="for-you-panel" aria-labelledby="forYouCompletedTitle">
+            <header>
+              <div>
+                <span class="for-you-icon for-you-icon-completed" aria-hidden="true">✓</span>
+                <h2 id="forYouCompletedTitle">Completed by anyone</h2>
+              </div>
+              <span id="forYouCompletedCount" class="count">0</span>
+            </header>
+            <p class="for-you-description">Recently completed work items using the Done column states.</p>
+            <div id="forYouCompletedStatus" class="for-you-status" aria-live="polite"></div>
+            <div id="forYouCompletedList" class="for-you-list"></div>
+            <button id="forYouCompletedShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
+          </section>
         </div>
       </section>
     </main>

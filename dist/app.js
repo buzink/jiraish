@@ -87,8 +87,11 @@ const state = {
   forYouWorkItems: [],
   forYouMentions: [],
   forYouActivity: [],
+  forYouCreated: [],
+  forYouUpdated: [],
+  forYouCompleted: [],
   forYouErrors: {},
-  forYouExpanded: { work: false, mentions: false, activity: false },
+  forYouExpanded: { work: false, mentions: false, activity: false, created: false, updated: false, completed: false },
   forYouSelectedUser: null,
   forYouUserKey: "",
   forYouRequestToken: 0,
@@ -182,6 +185,18 @@ const els = {
   forYouActivityStatus: document.querySelector("#forYouActivityStatus"),
   forYouActivityList: document.querySelector("#forYouActivityList"),
   forYouActivityShowAll: document.querySelector("#forYouActivityShowAll"),
+  forYouCreatedCount: document.querySelector("#forYouCreatedCount"),
+  forYouCreatedStatus: document.querySelector("#forYouCreatedStatus"),
+  forYouCreatedList: document.querySelector("#forYouCreatedList"),
+  forYouCreatedShowAll: document.querySelector("#forYouCreatedShowAll"),
+  forYouUpdatedCount: document.querySelector("#forYouUpdatedCount"),
+  forYouUpdatedStatus: document.querySelector("#forYouUpdatedStatus"),
+  forYouUpdatedList: document.querySelector("#forYouUpdatedList"),
+  forYouUpdatedShowAll: document.querySelector("#forYouUpdatedShowAll"),
+  forYouCompletedCount: document.querySelector("#forYouCompletedCount"),
+  forYouCompletedStatus: document.querySelector("#forYouCompletedStatus"),
+  forYouCompletedList: document.querySelector("#forYouCompletedList"),
+  forYouCompletedShowAll: document.querySelector("#forYouCompletedShowAll"),
   backlogView: document.querySelector("#backlogView"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
@@ -594,6 +609,7 @@ function normalizeWorkItem(item) {
   const fields = item.fields || {};
   const assigned = fields["System.AssignedTo"];
   const changedBy = fields["System.ChangedBy"];
+  const createdBy = fields["System.CreatedBy"];
   const storyPoints = fields["Microsoft.VSTS.Scheduling.StoryPoints"];
   const effort = fields["Microsoft.VSTS.Scheduling.Effort"];
   const iterationPath = fields["System.IterationPath"] || "";
@@ -617,6 +633,8 @@ function normalizeWorkItem(item) {
     changedBy: changedBy?.displayName || changedBy?.uniqueName || "",
     changedById: changedBy?.id || "",
     changedByUniqueName: changedBy?.uniqueName || changedBy?.displayName || "",
+    createdDate: fields["System.CreatedDate"] || "",
+    createdBy: createdBy?.displayName || createdBy?.uniqueName || "",
     descriptionHtml: fields["System.Description"] || "",
     pointsField: storyPoints !== undefined ? "Microsoft.VSTS.Scheduling.StoryPoints"
       : effort !== undefined ? "Microsoft.VSTS.Scheduling.Effort" : ""
@@ -629,7 +647,7 @@ async function fetchWorkItems(ids, { includeDescription = false } = {}) {
   const fields = [
     "System.Id", "System.Title", "System.State", "System.WorkItemType", "System.AssignedTo",
     "System.IterationPath", "System.AreaPath", "System.Tags", "System.Parent", "System.ChangedDate",
-    "System.ChangedBy", "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints",
+    "System.ChangedBy", "System.CreatedDate", "System.CreatedBy", "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints",
     "Microsoft.VSTS.Scheduling.Effort"
   ];
   if (includeDescription) fields.push("System.Description");
@@ -861,7 +879,7 @@ async function showMainView(view) {
     if (enteringForYou) {
       state.forYouSelectedUser = null;
       state.forYouUserKey = "";
-      state.forYouExpanded = { work: false, mentions: false, activity: false };
+      state.forYouExpanded = { work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
     }
     await loadForYou();
     return;
@@ -929,6 +947,9 @@ async function loadForYou(force = false) {
     state.forYouWorkItems = [];
     state.forYouMentions = [];
     state.forYouActivity = [];
+    state.forYouCreated = [];
+    state.forYouUpdated = [];
+    state.forYouCompleted = [];
     state.forYouErrors = {};
     renderForYou();
     return;
@@ -949,10 +970,13 @@ async function loadForYou(force = false) {
   const sections = await Promise.allSettled([
     loadForYouWorkItems(user, isSelf),
     loadForYouMentions(user),
-    loadForYouActivity(user, isSelf)
+    loadForYouActivity(user, isSelf),
+    loadForYouCreated(),
+    loadForYouUpdated(),
+    loadForYouCompleted()
   ]);
   if (requestToken !== state.forYouRequestToken) return;
-  const [work, mentions, activity] = sections;
+  const [work, mentions, activity, created, updated, completed] = sections;
   if (work.status === "fulfilled") state.forYouWorkItems = work.value;
   else {
     console.error(work.reason);
@@ -970,6 +994,24 @@ async function loadForYou(force = false) {
     console.error(activity.reason);
     state.forYouActivity = [];
     state.forYouErrors.activity = activity.reason?.message || "Activity could not be loaded.";
+  }
+  if (created.status === "fulfilled") state.forYouCreated = created.value;
+  else {
+    console.error(created.reason);
+    state.forYouCreated = [];
+    state.forYouErrors.created = created.reason?.message || "Recently created work items could not be loaded.";
+  }
+  if (updated.status === "fulfilled") state.forYouUpdated = updated.value;
+  else {
+    console.error(updated.reason);
+    state.forYouUpdated = [];
+    state.forYouErrors.updated = updated.reason?.message || "Recently updated work items could not be loaded.";
+  }
+  if (completed.status === "fulfilled") state.forYouCompleted = completed.value;
+  else {
+    console.error(completed.reason);
+    state.forYouCompleted = [];
+    state.forYouErrors.completed = completed.reason?.message || "Recently completed work items could not be loaded.";
   }
   state.forYouProjectName = state.projectName;
   state.forYouUserKey = userKey;
@@ -1096,6 +1138,47 @@ async function loadForYouActivity(user, isSelf) {
   });
   return activityGroups.flat()
     .sort((a, b) => new Date(b.entry.date) - new Date(a.entry.date))
+    .slice(0, 20);
+}
+
+async function loadForYouCreated() {
+  const ids = await queryWorkItemIds(`
+    SELECT [System.Id]
+    FROM WorkItems
+    WHERE [System.TeamProject] = @project
+    ORDER BY [System.CreatedDate] DESC
+  `, 20);
+  const items = await fetchWorkItems(ids);
+  return items.sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate)).slice(0, 20);
+}
+
+async function loadForYouUpdated() {
+  const ids = await queryWorkItemIds(`
+    SELECT [System.Id]
+    FROM WorkItems
+    WHERE [System.TeamProject] = @project
+    ORDER BY [System.ChangedDate] DESC
+  `, 20);
+  const items = await fetchWorkItems(ids);
+  return items.sort((a, b) => new Date(b.changedDate) - new Date(a.changedDate)).slice(0, 20);
+}
+
+async function loadForYouCompleted() {
+  const doneStates = Object.entries(state.mapping)
+    .filter(([, column]) => column === "done")
+    .map(([itemState]) => itemState);
+  if (!doneStates.length) return [];
+  const stateList = doneStates.map(itemState => `'${wiqlText(itemState)}'`).join(", ");
+  const ids = await queryWorkItemIds(`
+    SELECT [System.Id]
+    FROM WorkItems
+    WHERE [System.TeamProject] = @project
+      AND [System.State] IN (${stateList})
+    ORDER BY [System.ChangedDate] DESC
+  `, 20);
+  const items = await fetchWorkItems(ids);
+  return items.filter(item => state.mapping[item.state] === "done")
+    .sort((a, b) => new Date(b.changedDate) - new Date(a.changedDate))
     .slice(0, 20);
 }
 
@@ -1237,7 +1320,7 @@ async function selectForYouUser(choice) {
     uniqueName: choice.uniqueName || choice.displayName
   };
   state.forYouUserKey = "";
-  state.forYouExpanded = { work: false, mentions: false, activity: false };
+  state.forYouExpanded = { work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
   closeForYouPersonMenu();
   renderForYouIdentity();
   await loadForYou(true);
@@ -1248,7 +1331,10 @@ function renderForYouLoading() {
   for (const [count, status, list, showAll] of [
     [els.forYouWorkCount, els.forYouWorkStatus, els.forYouWorkList, els.forYouWorkShowAll],
     [els.forYouMentionsCount, els.forYouMentionsStatus, els.forYouMentionsList, els.forYouMentionsShowAll],
-    [els.forYouActivityCount, els.forYouActivityStatus, els.forYouActivityList, els.forYouActivityShowAll]
+    [els.forYouActivityCount, els.forYouActivityStatus, els.forYouActivityList, els.forYouActivityShowAll],
+    [els.forYouCreatedCount, els.forYouCreatedStatus, els.forYouCreatedList, els.forYouCreatedShowAll],
+    [els.forYouUpdatedCount, els.forYouUpdatedStatus, els.forYouUpdatedList, els.forYouUpdatedShowAll],
+    [els.forYouCompletedCount, els.forYouCompletedStatus, els.forYouCompletedList, els.forYouCompletedShowAll]
   ]) {
     count.textContent = "—";
     status.textContent = "";
@@ -1273,6 +1359,12 @@ function renderForYou() {
     isSelf ? "No recent mentions need a reply." : `No recent mentions of ${displayName} were found.`);
   renderForYouSection("activity", state.forYouActivity, createForYouActivity,
     isSelf ? "No recent activity was found." : `No recent activity by ${displayName} was found.`);
+  renderForYouSection("created", state.forYouCreated, item => createForYouProjectActivity(item, "Created"),
+    "No recently created work items were found.");
+  renderForYouSection("updated", state.forYouUpdated, item => createForYouProjectActivity(item, "Updated"),
+    "No recently updated work items were found.");
+  renderForYouSection("completed", state.forYouCompleted, item => createForYouProjectActivity(item, "Completed"),
+    "No recently completed work items were found.");
 }
 
 function renderForYouSection(kind, items, renderer, emptyMessage) {
@@ -1367,6 +1459,25 @@ function createForYouActivity(activity) {
   meta.className = "for-you-item-meta";
   meta.textContent = `${workItemKey(activity.item.id)} · ${formatDateTime(activity.entry.date)}`;
   body.append(excerpt, meta);
+  return button;
+}
+
+function createForYouProjectActivity(item, action) {
+  const symbol = document.createElement("span");
+  symbol.className = `for-you-activity-symbol is-${action.toLocaleLowerCase("en")}`;
+  symbol.textContent = action === "Created" ? "+" : action === "Completed" ? "✓" : "↻";
+  const actor = action === "Created" ? item.createdBy : item.changedBy;
+  const date = action === "Created" ? item.createdDate : item.changedDate;
+  const { button, body } = createForYouItem(item, symbol, `${action} work item ${workItemKey(item.id)}: ${item.title}`);
+  const meta = document.createElement("span");
+  meta.className = "for-you-item-meta";
+  meta.textContent = `${actor || "Unknown user"} · ${workItemKey(item.id)} · ${formatDateTime(date)}`;
+  body.append(meta);
+  const itemState = document.createElement("span");
+  itemState.className = "card-state";
+  itemState.dataset.stateTone = stateTone(item.state);
+  itemState.textContent = item.state;
+  button.append(itemState);
   return button;
 }
 
@@ -3361,6 +3472,9 @@ function renderEmptyBoard() {
   state.forYouWorkItems = [];
   state.forYouMentions = [];
   state.forYouActivity = [];
+  state.forYouCreated = [];
+  state.forYouUpdated = [];
+  state.forYouCompleted = [];
   state.forYouErrors = {};
   state.forYouSelectedUser = null;
   state.forYouUserKey = "";
@@ -3699,6 +3813,9 @@ els.forYouPersonSearch.addEventListener("keydown", event => {
 els.forYouWorkShowAll.addEventListener("click", () => toggleForYouSection("work"));
 els.forYouMentionsShowAll.addEventListener("click", () => toggleForYouSection("mentions"));
 els.forYouActivityShowAll.addEventListener("click", () => toggleForYouSection("activity"));
+els.forYouCreatedShowAll.addEventListener("click", () => toggleForYouSection("created"));
+els.forYouUpdatedShowAll.addEventListener("click", () => toggleForYouSection("updated"));
+els.forYouCompletedShowAll.addEventListener("click", () => toggleForYouSection("completed"));
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
 els.refresh.addEventListener("click", () => loadBoard());

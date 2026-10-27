@@ -223,6 +223,9 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .for-you-icon-work { color: #216e4e; background: #dcfff1; }
 .for-you-icon-mention { color: #0055cc; background: #e9f2ff; }
 .for-you-icon-activity { color: #5e4db2; background: #f3f0ff; }
+.for-you-icon-created { color: #0055cc; background: #e9f2ff; }
+.for-you-icon-updated { color: #5e4db2; background: #f3f0ff; }
+.for-you-icon-completed { color: #216e4e; background: #dcfff1; }
 .for-you-description { margin: 0; padding: 11px 14px 7px; color: var(--muted); font-size: 11px; }
 .for-you-status { min-height: 0; padding: 0 14px; color: var(--muted); font-size: 11px; }
 .for-you-status:not(:empty) { padding-top: 8px; padding-bottom: 13px; }
@@ -240,6 +243,9 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .for-you-item .card-state { max-width: 130px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .for-you-avatar { width: 24px; height: 24px; display: grid; place-items: center; margin-top: 1px; border-radius: 50%; color: white; background: #6554c0; font-size: 8px; font-weight: 800; }
 .for-you-activity-symbol { width: 24px; height: 24px; display: grid; place-items: center; margin-top: 1px; border-radius: 50%; color: #0052cc; background: #deebff; font-size: 12px; font-weight: 800; }
+.for-you-activity-symbol.is-created { color: #0052cc; background: #deebff; }
+.for-you-activity-symbol.is-updated { color: #5e4db2; background: #eae6ff; }
+.for-you-activity-symbol.is-completed { color: #216e4e; background: #dcfff1; }
 .for-you-show-all { margin: 0 14px 13px; padding: 2px 0; border: 0; color: var(--blue-600); background: transparent; font-size: 11px; font-weight: 600; text-align: left; }
 .for-you-show-all:hover { color: var(--blue-700); text-decoration: underline; text-underline-offset: 2px; }
 .for-you-show-all:focus-visible { border-radius: 2px; outline: 2px solid #4c9aff; outline-offset: 2px; }
@@ -646,12 +652,14 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 [data-theme="dark"] .for-you-person-search input { border-color: #596773; color: #b6c2cf; background: #22272b; }
 [data-theme="dark"] .for-you-person-option:hover:not(:disabled), [data-theme="dark"] .for-you-person-option:focus-visible, [data-theme="dark"] .for-you-person-option:disabled { background: #333c43; }
 [data-theme="dark"] .for-you-panel > header { border-color: #38414a; background: #282e33; }
-[data-theme="dark"] .for-you-icon-work { color: #baf3db; background: #164b35; }
-[data-theme="dark"] .for-you-icon-mention { color: #cce0ff; background: #09326c; }
-[data-theme="dark"] .for-you-icon-activity { color: #dfd8fd; background: #352c63; }
+[data-theme="dark"] .for-you-icon-work, [data-theme="dark"] .for-you-icon-completed { color: #baf3db; background: #164b35; }
+[data-theme="dark"] .for-you-icon-mention, [data-theme="dark"] .for-you-icon-created { color: #cce0ff; background: #09326c; }
+[data-theme="dark"] .for-you-icon-activity, [data-theme="dark"] .for-you-icon-updated { color: #dfd8fd; background: #352c63; }
 [data-theme="dark"] .for-you-item + .for-you-item { border-color: #38414a; }
 [data-theme="dark"] .for-you-item:hover, [data-theme="dark"] .for-you-item:focus-visible { background: #1c3b5c; }
 [data-theme="dark"] .for-you-activity-symbol { color: #85b8ff; background: #09326c; }
+[data-theme="dark"] .for-you-activity-symbol.is-updated { color: #dfd8fd; background: #352c63; }
+[data-theme="dark"] .for-you-activity-symbol.is-completed { color: #baf3db; background: #164b35; }
 [data-theme="dark"] .for-you-skeleton { background: linear-gradient(90deg, #282e33 25%, #38414a 37%, #282e33 63%); background-size: 400% 100%; }
 [data-theme="dark"] .for-you-status.is-error { color: #ffb8a5; }
 
