@@ -4,10 +4,11 @@ const STORAGE = {
   team: "wish-board.team-id",
   mapping: "wish-board.state-mapping",
   mappingVersion: "wish-board.state-mapping-version",
+  iteration: "wish-board.iteration-id",
   theme: "wish-board.theme"
 };
 
-const DEFAULT_URL = "https://dev.azure.com/UvA-WISH/WISH/";
+const DEFAULT_URL = "https://dev.azure.com/organisatie/project/";
 const DEFAULT_MAPPING_VERSION = 1;
 const ACTIVE_DEFAULT_STATES = [
   "PR under review",
@@ -38,11 +39,30 @@ const DEFAULT_MAPPING = {
   Removed: "hidden"
 };
 
+const STATE_TONES = {
+  "active": "blue",
+  "pr under review": "sky",
+  "test on dev": "magenta",
+  "rework dev": "yellow",
+  "ready for release to accept": "red",
+  "ready to release to accept": "red",
+  "test on acc": "purple",
+  "rework acc": "orange",
+  "resolved": "blue",
+  "closed": "green"
+};
+
 const state = {
   orgUrl: localStorage.getItem(STORAGE.url) || DEFAULT_URL,
   pat: localStorage.getItem(STORAGE.pat) || "",
   teams: [],
   teamId: localStorage.getItem(STORAGE.team) || "",
+  projectName: "",
+  teamName: "",
+  authenticatedUser: null,
+  teamMembers: [],
+  iterations: [],
+  currentIterationId: "",
   iteration: null,
   stories: [],
   knownStates: new Set(Object.keys(DEFAULT_MAPPING)),
@@ -51,26 +71,39 @@ const state = {
   filters: {
     type: new Set(),
     assignee: new Set(),
+    priority: new Set(),
+    sprint: new Set(),
     itemState: new Set(),
     area: new Set(),
     tag: new Set(),
     feature: new Set()
   },
   detailsCache: new Map(),
+  iterationStoriesCache: new Map(),
+  backlogItems: [],
+  backlogTeamId: "",
+  currentView: "board",
+  detailsRequestTokens: new Map(),
   commentsCache: new Map(),
   commentsRequestTokens: new Map(),
   historyCache: new Map(),
   richImageCache: new Map(),
   workItemTypeStatesCache: new Map(),
+  workItemTypeFieldsCache: new Map(),
+  areaPathsCache: null,
+  teamIterationsCache: null,
   commentsErrors: new Map(),
   historyErrors: new Map(),
   selectedItemId: null,
+  selectedItem: null,
   loading: false
 };
 
 const FILTER_DEFINITIONS = [
   { key: "type", label: "Types", value: item => item.type },
   { key: "assignee", label: "Assigned to", value: item => item.assignee || "Niet toegewezen" },
+  { key: "priority", label: "Prio", value: item => item.priority != null ? String(item.priority) : "Geen priority" },
+  { key: "sprint", label: "Sprint", value: item => item.iterationName },
   { key: "itemState", label: "States", value: item => item.state },
   { key: "area", label: "Area", value: item => item.area || "Geen area" },
   { key: "tag", label: "Tags", values: item => item.tags },
@@ -104,17 +137,32 @@ const RICH_TEXT_STYLES = new Set([
 ]);
 
 const els = {
+  appBrand: document.querySelector("#appBrand"),
+  brandName: document.querySelector("#brandName"),
+  headerAvatar: document.querySelector("#headerAvatar"),
+  projectTeamLabels: [...document.querySelectorAll("[data-project-team]")],
+  sprintBoardNav: document.querySelector("#sprintBoardNav"),
+  backlogNav: document.querySelector("#backlogNav"),
+  boardViews: [...document.querySelectorAll("[data-board-view]")],
+  backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
+  backlogView: document.querySelector("#backlogView"),
+  backlogMeta: document.querySelector("#backlogMeta"),
+  backlogContent: document.querySelector("#backlogContent"),
   board: document.querySelector("#board"),
   status: document.querySelector("#statusRegion"),
   theme: document.querySelector("#themeButton"),
   refresh: document.querySelector("#refreshButton"),
-  settings: document.querySelector("#settingsButton"),
   search: document.querySelector("#searchInput"),
   filterControls: document.querySelector("#filterControls"),
   activeFilters: document.querySelector("#activeFilters"),
   clearFilters: document.querySelector("#clearFilters"),
   filterResultCount: document.querySelector("#filterResultCount"),
   sprintBadge: document.querySelector("#sprintBadge"),
+  sprintTitle: document.querySelector("#sprintTitle"),
+  sprintTitleControl: document.querySelector("#sprintTitleControl"),
+  sprintMenu: document.querySelector("#sprintMenu"),
+  sprintMenuSearch: document.querySelector("#sprintMenuSearch"),
+  sprintMenuOptions: document.querySelector("#sprintMenuOptions"),
   sprintMeta: document.querySelector("#sprintMeta"),
   connectionDialog: document.querySelector("#connectionDialog"),
   connectionForm: document.querySelector("#connectionForm"),
@@ -133,20 +181,58 @@ const els = {
   workItemType: document.querySelector("#workItemType"),
   workItemKey: document.querySelector("#workItemKey"),
   workItemTitle: document.querySelector("#workItemTitle"),
+  workItemTitleForm: document.querySelector("#workItemTitleForm"),
+  workItemTitleInput: document.querySelector("#workItemTitleInput"),
+  workItemTitleCancel: document.querySelector("#workItemTitleCancel"),
+  workItemTitleSubmit: document.querySelector("#workItemTitleSubmit"),
+  workItemTitleStatus: document.querySelector("#workItemTitleStatus"),
   workItemStateControl: document.querySelector("#workItemStateControl"),
   workItemState: document.querySelector("#workItemState"),
   workItemStateMenu: document.querySelector("#workItemStateMenu"),
   workItemStateOptions: document.querySelector("#workItemStateOptions"),
   workItemReason: document.querySelector("#workItemReason"),
   workItemDescription: document.querySelector("#workItemDescription"),
+  descriptionEditButton: document.querySelector("#descriptionEditButton"),
+  descriptionEditorForm: document.querySelector("#descriptionEditorForm"),
+  descriptionEditor: document.querySelector("#descriptionEditor"),
+  descriptionEditorCancel: document.querySelector("#descriptionEditorCancel"),
+  descriptionEditorSubmit: document.querySelector("#descriptionEditorSubmit"),
+  descriptionEditorStatus: document.querySelector("#descriptionEditorStatus"),
   workItemAssignee: document.querySelector("#workItemAssignee"),
+  workItemAssigneeControl: document.querySelector("#workItemAssigneeControl"),
+  workItemAssigneeMenu: document.querySelector("#workItemAssigneeMenu"),
+  workItemAssigneeSearch: document.querySelector("#workItemAssigneeSearch"),
+  workItemAssigneeSource: document.querySelector("#workItemAssigneeSource"),
+  workItemAssigneeOptions: document.querySelector("#workItemAssigneeOptions"),
   workItemReporter: document.querySelector("#workItemReporter"),
   workItemPriority: document.querySelector("#workItemPriority"),
+  workItemPriorityControl: document.querySelector("#workItemPriorityControl"),
+  workItemPriorityMenu: document.querySelector("#workItemPriorityMenu"),
+  workItemPriorityOptions: document.querySelector("#workItemPriorityOptions"),
   workItemPoints: document.querySelector("#workItemPoints"),
+  workItemPointsControl: document.querySelector("#workItemPointsControl"),
+  workItemPointsMenu: document.querySelector("#workItemPointsMenu"),
+  workItemPointsQuick: document.querySelector("#workItemPointsQuick"),
+  workItemPointsForm: document.querySelector("#workItemPointsForm"),
+  workItemPointsInput: document.querySelector("#workItemPointsInput"),
   workItemArea: document.querySelector("#workItemArea"),
+  workItemAreaControl: document.querySelector("#workItemAreaControl"),
+  workItemAreaMenu: document.querySelector("#workItemAreaMenu"),
+  workItemAreaSearch: document.querySelector("#workItemAreaSearch"),
+  workItemAreaOptions: document.querySelector("#workItemAreaOptions"),
   workItemIteration: document.querySelector("#workItemIteration"),
+  workItemIterationControl: document.querySelector("#workItemIterationControl"),
+  workItemIterationMenu: document.querySelector("#workItemIterationMenu"),
+  workItemIterationSearch: document.querySelector("#workItemIterationSearch"),
+  workItemIterationOptions: document.querySelector("#workItemIterationOptions"),
   workItemParent: document.querySelector("#workItemParent"),
   workItemTags: document.querySelector("#workItemTags"),
+  workItemTagsControl: document.querySelector("#workItemTagsControl"),
+  workItemTagsMenu: document.querySelector("#workItemTagsMenu"),
+  workItemTagsSelected: document.querySelector("#workItemTagsSelected"),
+  workItemTagsInput: document.querySelector("#workItemTagsInput"),
+  workItemTagsHint: document.querySelector("#workItemTagsHint"),
+  workItemTagsOptions: document.querySelector("#workItemTagsOptions"),
   workItemChanged: document.querySelector("#workItemChanged"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
@@ -197,7 +283,7 @@ function applyTheme(theme, persist = false) {
 
 function parseAzureUrl(input) {
   const url = new URL(input.trim());
-  const parts = url.pathname.split("/").filter(Boolean);
+  const parts = url.pathname.split("/").filter(Boolean).map(part => decodeURIComponent(part));
   const organization = url.hostname === "dev.azure.com" ? parts[0] : url.hostname.split(".")[0];
   const project = url.hostname === "dev.azure.com" ? parts[1] : parts[0];
   if (!organization || !project) throw new Error("Gebruik een URL met organisatie én project.");
@@ -208,6 +294,55 @@ function parseAzureUrl(input) {
     base: `https://dev.azure.com/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`,
     webBase: `https://dev.azure.com/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`
   };
+}
+
+function updateBranding(team = null) {
+  let project = "";
+  try { project = parseAzureUrl(state.orgUrl).project; } catch {}
+  state.projectName = project;
+  state.teamName = team?.name || "";
+  const displayName = state.teamName || "Jiraish";
+  const profileName = state.authenticatedUser?.displayName || state.teamName || displayName;
+  els.brandName.textContent = displayName;
+  els.appBrand.setAttribute("aria-label", `${displayName} · Jiraish`);
+  els.headerAvatar.textContent = initialsFor(profileName);
+  els.headerAvatar.setAttribute("aria-label", `Instellingen openen voor ${profileName}`);
+  els.headerAvatar.title = `${profileName} · Instellingen`;
+  const contextLabel = project
+    ? `PROJECT / ${project}${state.teamName && state.teamName.toLocaleLowerCase("nl") !== project.toLocaleLowerCase("nl") ? ` · TEAM / ${state.teamName}` : ""}`
+    : "PROJECT";
+  els.projectTeamLabels.forEach(label => { label.textContent = contextLabel; });
+  document.title = state.teamName ? `${state.teamName} · Jiraish` : "Jiraish";
+}
+
+async function loadAuthenticatedUser() {
+  try {
+    const connection = await azure("/_apis/connectionData?connectOptions=0&lastChangeId=-1&lastChangeId64=-1", {}, "organization");
+    const identity = connection.authenticatedUser || connection.authorizedUser;
+    if (!identity) return null;
+    const properties = identity.properties || {};
+    const displayName = identity.customDisplayName
+      || identity.providerDisplayName
+      || identity.displayName
+      || properties.DisplayName?.$value
+      || properties.Account?.$value
+      || identity.uniqueName
+      || "";
+    return displayName ? { id: identity.id || "", displayName } : null;
+  } catch (error) {
+    console.warn("De gebruiker achter de PAT kon niet worden bepaald; teaminitialen worden gebruikt.", error);
+    return null;
+  }
+}
+
+function workItemKey(itemId) {
+  const prefix = String(state.projectName || "")
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-|-$/g, "")
+    .toLocaleUpperCase("en")
+    .slice(0, 24);
+  return prefix ? `${prefix}-${itemId}` : `#${itemId}`;
 }
 
 async function azure(path, options = {}, scope = "project") {
@@ -247,49 +382,42 @@ async function loadBoard({ openSettings = false } = {}) {
     const teamsResult = await azure(`/_apis/projects/${encodeURIComponent(project)}/teams?api-version=7.1`, {}, "organization");
     state.teams = teamsResult.value || [];
     if (!state.teams.length) throw new Error("Geen Azure DevOps-teams gevonden in dit project.");
-    const selectedTeam = state.teams.find(team => team.id === state.teamId)
-      || state.teams.find(team => team.name.toLowerCase().includes("wish"))
-      || state.teams[0];
+    const selectedTeam = state.teams.find(team => team.id === state.teamId) || state.teams[0];
     state.teamId = selectedTeam.id;
+    updateBranding(selectedTeam);
     localStorage.setItem(STORAGE.team, state.teamId);
+    [state.teamMembers, state.authenticatedUser] = await Promise.all([
+      loadTeamMembers(project, selectedTeam),
+      loadAuthenticatedUser()
+    ]);
+    updateBranding(selectedTeam);
 
     const teamSegment = encodeURIComponent(selectedTeam.name);
-    const iterationResult = await azure(`/${teamSegment}/_apis/work/teamsettings/iterations?$timeframe=current&api-version=7.1`);
-    state.iteration = iterationResult.value?.[0] || null;
+    const [iterationsResult, currentIterationResult] = await Promise.all([
+      azure(`/${teamSegment}/_apis/work/teamsettings/iterations?api-version=7.1`),
+      azure(`/${teamSegment}/_apis/work/teamsettings/iterations?$timeframe=current&api-version=7.1`)
+    ]);
+    state.iterations = iterationsResult.value || [];
+    state.iterationStoriesCache.clear();
+    state.currentIterationId = currentIterationResult.value?.[0]?.id || "";
+    const storedIterationId = localStorage.getItem(STORAGE.iteration) || "";
+    state.iteration = state.iterations.find(iteration => iteration.id === storedIterationId)
+      || state.iterations.find(iteration => iteration.id === state.currentIterationId)
+      || nearestIteration(state.iterations);
     if (!state.iteration) {
       state.stories = [];
       render();
-      showNotice(`Voor team “${selectedTeam.name}” is geen huidige sprint ingesteld.`, "error");
+      showNotice(`Voor team “${selectedTeam.name}” zijn geen sprints ingesteld.`, "error");
+      if (state.currentView === "backlog") await loadBacklog(true);
       if (openSettings) showSettings();
       return;
     }
-
-    const workResult = await azure(`/${teamSegment}/_apis/work/teamsettings/iterations/${encodeURIComponent(state.iteration.id)}/workitems?api-version=7.1`);
-    const ids = [...new Set((workResult.workItemRelations || []).map(item => item.target?.id).filter(Boolean))];
-    const items = [];
-    for (let index = 0; index < ids.length; index += 200) {
-      const chunk = ids.slice(index, index + 200);
-      const fields = [
-        "System.Id", "System.Title", "System.State", "System.WorkItemType",
-        "System.AssignedTo", "Microsoft.VSTS.Scheduling.StoryPoints",
-        "Microsoft.VSTS.Scheduling.Effort", "System.Tags", "System.AreaPath", "System.Parent"
-      ].join(",");
-      const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields)}&api-version=7.1`);
-      items.push(...(result.value || []));
-    }
-    state.stories = items.map(normalizeWorkItem);
-    state.detailsCache.clear();
-    state.commentsCache.clear();
-    state.commentsRequestTokens.clear();
-    state.historyCache.clear();
-    state.workItemTypeStatesCache.clear();
-    state.commentsErrors.clear();
-    state.historyErrors.clear();
-    await loadParentDetails(state.stories);
-    state.stories.forEach(item => state.knownStates.add(item.state));
-    addSmartMappings();
-    pruneFilters();
+    localStorage.setItem(STORAGE.iteration, state.iteration.id);
+    state.teamIterationsCache = Promise.resolve(newestIterations().map(iteration => iteration.path || iteration.name).filter(Boolean));
+    await loadIterationStories(selectedTeam, state.iteration);
+    if (state.filters.sprint.size) await applySprintFilter();
     render();
+    if (state.currentView === "backlog") await loadBacklog(true);
     if (openSettings) showSettings();
   } catch (error) {
     console.error(error);
@@ -301,20 +429,102 @@ async function loadBoard({ openSettings = false } = {}) {
   }
 }
 
+async function loadIterationStories(team, iteration) {
+  const stories = await fetchIterationStories(team, iteration);
+  applyBoardStories(stories);
+}
+
+async function fetchIterationStories(team, iteration) {
+    const cached = state.iterationStoriesCache.get(iteration.id);
+    if (cached) return cached;
+    const teamSegment = encodeURIComponent(team.name);
+    const workResult = await azure(`/${teamSegment}/_apis/work/teamsettings/iterations/${encodeURIComponent(iteration.id)}/workitems?api-version=7.1`);
+    const ids = [...new Set((workResult.workItemRelations || []).map(item => item.target?.id).filter(Boolean))];
+    const items = [];
+    for (let index = 0; index < ids.length; index += 200) {
+      const chunk = ids.slice(index, index + 200);
+      const fields = [
+        "System.Id", "System.Title", "System.State", "System.WorkItemType",
+        "System.AssignedTo", "Microsoft.VSTS.Scheduling.StoryPoints",
+        "Microsoft.VSTS.Scheduling.Effort", "Microsoft.VSTS.Common.Priority",
+        "System.Tags", "System.AreaPath", "System.IterationPath", "System.Parent"
+      ].join(",");
+      const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields)}&api-version=7.1`);
+      items.push(...(result.value || []));
+    }
+    const stories = items.map(normalizeWorkItem).map(story => ({
+      ...story,
+      iterationId: iteration.id,
+      iterationName: iteration.name
+    }));
+    await loadParentDetails(stories);
+    state.iterationStoriesCache.set(iteration.id, stories);
+    return stories;
+}
+
+function applyBoardStories(stories) {
+    state.stories = stories;
+    state.detailsCache.clear();
+    state.detailsRequestTokens.clear();
+    state.commentsCache.clear();
+    state.commentsRequestTokens.clear();
+    state.historyCache.clear();
+    state.workItemTypeStatesCache.clear();
+    state.workItemTypeFieldsCache.clear();
+    state.areaPathsCache = null;
+    state.commentsErrors.clear();
+    state.historyErrors.clear();
+    state.stories.forEach(item => state.knownStates.add(item.state));
+    addSmartMappings();
+    if (state.currentView !== "backlog") pruneFilters(state.stories);
+}
+
+function nearestIteration(iterations) {
+  const now = Date.now();
+  return [...iterations].sort((a, b) => {
+    const aStart = new Date(a.attributes?.startDate || 0).getTime();
+    const bStart = new Date(b.attributes?.startDate || 0).getTime();
+    return Math.abs(aStart - now) - Math.abs(bStart - now);
+  })[0] || null;
+}
+
+async function loadTeamMembers(project, team) {
+  try {
+    const result = await azure(`/_apis/projects/${encodeURIComponent(project)}/teams/${encodeURIComponent(team.id)}/members?api-version=7.1`, {}, "organization");
+    return (result.value || []).map(member => member.identity || member).map(identity => ({
+      id: identity.id || "",
+      name: identity.displayName || identity.uniqueName || "Onbekende gebruiker",
+      uniqueName: identity.uniqueName || identity.displayName || ""
+    })).filter(member => member.uniqueName);
+  } catch (error) {
+    console.warn("Teamleden konden niet worden geladen; assignees uit de sprint worden gebruikt.", error);
+    return [];
+  }
+}
+
 function normalizeWorkItem(item) {
   const fields = item.fields || {};
   const assigned = fields["System.AssignedTo"];
+  const storyPoints = fields["Microsoft.VSTS.Scheduling.StoryPoints"];
+  const effort = fields["Microsoft.VSTS.Scheduling.Effort"];
+  const iterationPath = fields["System.IterationPath"] || "";
   return {
     id: item.id,
     title: fields["System.Title"] || "Zonder titel",
     state: fields["System.State"] || "Onbekend",
     type: fields["System.WorkItemType"] || "Work item",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
+    assigneeUniqueName: assigned?.uniqueName || assigned?.displayName || "",
+    priority: fields["Microsoft.VSTS.Common.Priority"] ?? null,
+    iterationPath,
+    iterationName: iterationPath.split("\\").filter(Boolean).pop() || "Geen sprint",
     area: fields["System.AreaPath"] || "",
     tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
     parentId: fields["System.Parent"] || null,
     featureLabel: "",
-    points: fields["Microsoft.VSTS.Scheduling.StoryPoints"] ?? fields["Microsoft.VSTS.Scheduling.Effort"] ?? null
+    points: storyPoints ?? effort ?? null,
+    pointsField: storyPoints !== undefined ? "Microsoft.VSTS.Scheduling.StoryPoints"
+      : effort !== undefined ? "Microsoft.VSTS.Scheduling.Effort" : ""
   };
 }
 
@@ -353,13 +563,26 @@ function addSmartMappings() {
 
 function render() {
   const team = state.teams.find(item => item.id === state.teamId);
-  if (state.iteration) {
-    els.sprintBadge.textContent = state.iteration.name;
+  const filteredIterations = selectedSprintIterations();
+  if (filteredIterations.length) {
+    els.sprintTitle.textContent = filteredIterations.map(iteration => iteration.name).join(", ");
+    els.sprintTitle.setAttribute("aria-label", `Gefilterde sprints: ${els.sprintTitle.textContent}. Klik om een andere sprint te kiezen.`);
+    els.sprintBadge.textContent = "Gefilterde weergave";
+    els.sprintBadge.dataset.sprintKind = "gefilterde-weergave";
+    els.sprintMeta.textContent = `${team?.name || "Team"} · ${filteredIterations.length} ${filteredIterations.length === 1 ? "sprint" : "sprints"}`;
+  } else if (state.iteration) {
+    els.sprintTitle.textContent = state.iteration.name;
+    els.sprintTitle.setAttribute("aria-label", `Sprint ${state.iteration.name}. Klik om een andere sprint te kiezen.`);
+    const label = iterationLabel(state.iteration);
+    els.sprintBadge.textContent = label;
+    els.sprintBadge.dataset.sprintKind = label.toLowerCase().replace(/\s+/g, "-");
     const start = formatDate(state.iteration.attributes?.startDate);
     const end = formatDate(state.iteration.attributes?.finishDate);
     els.sprintMeta.textContent = `${team?.name || "Team"}${start && end ? ` · ${start} – ${end}` : ""}`;
   } else {
-    els.sprintBadge.textContent = "Geen actieve sprint";
+    els.sprintTitle.textContent = "Geen sprint";
+    els.sprintBadge.textContent = "Huidige sprint";
+    els.sprintBadge.dataset.sprintKind = "huidige-sprint";
     els.sprintMeta.textContent = team ? `Team ${team.name}` : "Azure DevOps niet verbonden";
   }
 
@@ -376,6 +599,304 @@ function render() {
   }
 }
 
+function selectedSprintIterations() {
+  if (!state.filters.sprint.size) return [];
+  return newestIterations().filter(iteration => state.filters.sprint.has(iteration.name));
+}
+
+function chronologicalIterations() {
+  return [...state.iterations].sort((a, b) => {
+    const aDate = new Date(a.attributes?.startDate || a.attributes?.finishDate || 0).getTime();
+    const bDate = new Date(b.attributes?.startDate || b.attributes?.finishDate || 0).getTime();
+    return aDate - bDate || a.name.localeCompare(b.name, "nl", { numeric: true });
+  });
+}
+
+function newestIterations() {
+  return chronologicalIterations().reverse();
+}
+
+function iterationLabel(iteration) {
+  if (iteration.id === state.currentIterationId) return "Huidige sprint";
+  const ordered = chronologicalIterations();
+  const currentIndex = ordered.findIndex(value => value.id === state.currentIterationId);
+  if (currentIndex > 0 && ordered[currentIndex - 1]?.id === iteration.id) return "Vorige sprint";
+  if (currentIndex >= 0 && ordered[currentIndex + 1]?.id === iteration.id) return "Volgende sprint";
+  const now = Date.now();
+  const finish = new Date(iteration.attributes?.finishDate || 0).getTime();
+  const start = new Date(iteration.attributes?.startDate || 0).getTime();
+  if (finish && finish < now) return "Afgesloten sprint";
+  if (start && start > now) return "Toekomstige sprint";
+  const iterationIndex = ordered.findIndex(value => value.id === iteration.id);
+  return currentIndex >= 0 && iterationIndex < currentIndex ? "Afgesloten sprint" : "Toekomstige sprint";
+}
+
+function toggleSprintMenu() {
+  if (!els.sprintMenu.hidden) return closeSprintMenu();
+  if (!state.iterations.length || state.loading) return;
+  els.sprintMenu.hidden = false;
+  els.sprintTitle.setAttribute("aria-expanded", "true");
+  els.sprintMenuSearch.value = "";
+  renderSprintMenuOptions();
+  requestAnimationFrame(() => els.sprintMenuSearch.focus());
+}
+
+function closeSprintMenu() {
+  els.sprintMenu.hidden = true;
+  els.sprintTitle.setAttribute("aria-expanded", "false");
+}
+
+function renderSprintMenuOptions() {
+  const query = els.sprintMenuSearch.value.trim().toLocaleLowerCase("nl");
+  const iterations = newestIterations().filter(iteration => !query
+    || iteration.name.toLocaleLowerCase("nl").includes(query)
+    || String(iteration.path || "").toLocaleLowerCase("nl").includes(query)
+    || iterationLabel(iteration).toLocaleLowerCase("nl").includes(query));
+  if (!iterations.length) {
+    const empty = document.createElement("div");
+    empty.className = "sprint-menu-empty";
+    empty.textContent = "Geen sprints gevonden.";
+    els.sprintMenuOptions.replaceChildren(empty);
+    return;
+  }
+  els.sprintMenuOptions.replaceChildren(...iterations.map(iteration => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "sprint-menu-option";
+    button.setAttribute("role", "option");
+    const selected = iteration.id === state.iteration?.id;
+    button.setAttribute("aria-selected", String(selected));
+    button.disabled = selected;
+    const content = document.createElement("span");
+    content.className = "sprint-menu-option-content";
+    const name = document.createElement("strong");
+    name.textContent = iteration.name;
+    const dates = document.createElement("small");
+    const start = formatDate(iteration.attributes?.startDate);
+    const end = formatDate(iteration.attributes?.finishDate);
+    dates.textContent = start && end ? `${start} – ${end}` : iteration.path || "";
+    content.append(name, dates);
+    const label = document.createElement("span");
+    label.className = `sprint-menu-label ${iterationLabel(iteration).toLowerCase().replace(/\s+/g, "-")}`;
+    label.textContent = iterationLabel(iteration);
+    const check = document.createElement("span");
+    check.className = "sprint-menu-check";
+    check.textContent = selected ? "✓" : "";
+    button.append(content, label, check);
+    if (!selected) button.addEventListener("click", () => selectOverviewIteration(iteration));
+    return button;
+  }));
+}
+
+async function selectOverviewIteration(iteration) {
+  const previous = state.iteration;
+  const previousSprintFilter = new Set(state.filters.sprint);
+  const team = state.teams.find(value => value.id === state.teamId);
+  if (!team || iteration.id === previous?.id) return closeSprintMenu();
+  closeSprintMenu();
+  setLoading(true);
+  clearNotice();
+  state.filters.sprint.clear();
+  state.iteration = iteration;
+  try {
+    await loadIterationStories(team, iteration);
+    localStorage.setItem(STORAGE.iteration, iteration.id);
+    render();
+  } catch (error) {
+    console.error(error);
+    state.iteration = previous;
+    state.filters.sprint = previousSprintFilter;
+    render();
+    showNotice(error.message || "Sprint kon niet worden geladen.", "error", "Opnieuw proberen", () => selectOverviewIteration(iteration));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function applySprintFilter() {
+  const team = state.teams.find(value => value.id === state.teamId);
+  if (!team) return;
+  const iterations = selectedSprintIterations();
+  if (!iterations.length) {
+    if (state.iteration) await loadIterationStories(team, state.iteration);
+    return;
+  }
+  const groups = await Promise.all(iterations.map(iteration => fetchIterationStories(team, iteration)));
+  const uniqueStories = new Map();
+  groups.flat().forEach(story => uniqueStories.set(story.id, story));
+  applyBoardStories([...uniqueStories.values()]);
+}
+
+async function showMainView(view) {
+  state.currentView = view;
+  const showBacklog = view === "backlog";
+  els.boardViews.forEach(element => { element.hidden = showBacklog; });
+  els.backlogViews.forEach(element => { element.hidden = !showBacklog; });
+  els.sprintBoardNav.classList.toggle("is-active", !showBacklog);
+  els.backlogNav.classList.toggle("is-active", showBacklog);
+  els.sprintBoardNav.toggleAttribute("aria-current", !showBacklog);
+  els.backlogNav.toggleAttribute("aria-current", showBacklog);
+  if (showBacklog) {
+    await loadBacklog();
+    return;
+  }
+  if (state.filters.sprint.size) {
+    setLoading(true);
+    try { await applySprintFilter(); }
+    catch (error) { console.error(error); showNotice(error.message || "Sprints konden niet worden geladen.", "error"); }
+    finally { setLoading(false); }
+  }
+  render();
+}
+
+async function loadBacklog(force = false) {
+  const team = state.teams.find(value => value.id === state.teamId);
+  if (!team) {
+    els.backlogMeta.textContent = "Verbind Azure DevOps om de backlog te laden.";
+    els.backlogContent.replaceChildren();
+    return;
+  }
+  if (!force && state.backlogTeamId === team.id) return renderBacklog();
+  els.backlogMeta.textContent = `${team.name} · Backlog laden…`;
+  renderBacklogLoading();
+  els.refresh.disabled = true;
+  els.refresh.classList.add("is-spinning");
+  try {
+    const teamSegment = encodeURIComponent(team.name);
+    const levels = await azure(`/${teamSegment}/_apis/work/backlogs?api-version=7.1`);
+    const backlog = (levels.value || []).find(level => level.type === "requirement" && !level.isHidden)
+      || (levels.value || []).find(level => /requirement/i.test(level.id || ""))
+      || (levels.value || []).find(level => !level.isHidden && level.type !== "task");
+    if (!backlog) throw new Error("Geen requirement-backlog gevonden voor dit team.");
+    const result = await azure(`/${teamSegment}/_apis/work/backlogs/${encodeURIComponent(backlog.id)}/workItems?api-version=7.1`);
+    const ids = (result.workItems || []).map(link => link.target?.id).filter(Boolean);
+    const itemsById = new Map();
+    for (let index = 0; index < ids.length; index += 200) {
+      const chunk = ids.slice(index, index + 200);
+      const fields = [
+        "System.Id", "System.Title", "System.State", "System.WorkItemType", "System.AssignedTo",
+        "System.IterationPath", "System.AreaPath", "System.Tags", "System.Parent",
+        "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints", "Microsoft.VSTS.Scheduling.Effort"
+      ].join(",");
+      const batch = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields)}&errorPolicy=Omit&api-version=7.1`);
+      (batch.value || []).forEach(workItem => itemsById.set(workItem.id, normalizeWorkItem(workItem)));
+    }
+    state.backlogItems = ids.map(id => itemsById.get(id)).filter(Boolean);
+    await loadParentDetails(state.backlogItems);
+    pruneFilters(state.backlogItems);
+    state.backlogTeamId = team.id;
+    renderBacklog();
+  } catch (error) {
+    console.error(error);
+    els.backlogMeta.textContent = `${team.name} · Backlog kon niet worden geladen`;
+    const message = document.createElement("div");
+    message.className = "backlog-error";
+    message.textContent = error.message || "Backlog kon niet worden geladen.";
+    els.backlogContent.replaceChildren(message);
+  } finally {
+    els.refresh.disabled = false;
+    els.refresh.classList.remove("is-spinning");
+  }
+}
+
+function renderBacklogLoading() {
+  els.backlogContent.replaceChildren(...Array.from({ length: 3 }, () => {
+    const section = document.createElement("div");
+    section.className = "backlog-skeleton";
+    return section;
+  }));
+}
+
+function renderBacklog() {
+  const team = state.teams.find(value => value.id === state.teamId);
+  const visibleItems = state.backlogItems.filter(item => matchesFilters(item));
+  els.backlogMeta.textContent = `${team?.name || "Team"} · ${visibleItems.length}${visibleItems.length !== state.backlogItems.length ? ` van ${state.backlogItems.length}` : ""} items`;
+  renderFilters();
+  const assignedIds = new Set();
+  const sections = [];
+  chronologicalIterations().forEach(iteration => {
+    const path = String(iteration.path || "").toLocaleLowerCase("nl");
+    const items = visibleItems.filter(item => path && item.iterationPath.toLocaleLowerCase("nl") === path);
+    if (!items.length) return;
+    items.forEach(item => assignedIds.add(item.id));
+    sections.push(createBacklogSection(iteration.name, items, iterationLabel(iteration)));
+  });
+  const remaining = visibleItems.filter(item => !assignedIds.has(item.id));
+  sections.push(createBacklogSection("Overig", remaining, "Backlog"));
+  els.backlogContent.replaceChildren(...sections);
+}
+
+function createBacklogSection(title, items, label) {
+  const section = document.createElement("section");
+  section.className = "backlog-group";
+  const header = document.createElement("header");
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  const badge = document.createElement("span");
+  badge.className = "backlog-group-label";
+  badge.textContent = label;
+  const count = document.createElement("span");
+  count.className = "count";
+  count.textContent = String(items.length);
+  header.append(heading, badge, count);
+  const wrapper = document.createElement("div");
+  wrapper.className = "backlog-table-wrap";
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "backlog-empty";
+    empty.textContent = "Geen items.";
+    wrapper.append(empty);
+  } else {
+    const table = document.createElement("table");
+    table.className = "backlog-table";
+    table.innerHTML = "<thead><tr><th>Type</th><th>Key</th><th>Samenvatting</th><th>State</th><th>Prio</th><th>Points</th><th>Assigned to</th></tr></thead>";
+    const body = document.createElement("tbody");
+    items.forEach(item => body.append(createBacklogRow(item)));
+    table.append(body);
+    wrapper.append(table);
+  }
+  section.append(header, wrapper);
+  return section;
+}
+
+function createBacklogRow(item) {
+  const row = document.createElement("tr");
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.setAttribute("aria-label", `${item.type} ${workItemKey(item.id)}: ${item.title}`);
+  const type = document.createElement("td");
+  const typeBadge = document.createElement("span");
+  typeBadge.className = `backlog-type ${item.type.toLowerCase() === "bug" ? "is-bug" : ""}`;
+  typeBadge.textContent = item.type;
+  type.append(typeBadge);
+  const key = document.createElement("td");
+  key.className = "backlog-key";
+  key.textContent = workItemKey(item.id);
+  const summary = document.createElement("td");
+  summary.className = "backlog-summary";
+  summary.textContent = item.title;
+  const itemState = document.createElement("td");
+  const stateBadge = document.createElement("span");
+  stateBadge.className = "card-state";
+  stateBadge.dataset.stateTone = stateTone(item.state);
+  stateBadge.textContent = item.state;
+  itemState.append(stateBadge);
+  const priority = document.createElement("td");
+  priority.textContent = item.priority ?? "—";
+  const points = document.createElement("td");
+  points.textContent = item.points ?? "—";
+  const assignee = document.createElement("td");
+  assignee.textContent = item.assignee || "Niet toegewezen";
+  row.append(type, key, summary, itemState, priority, points, assignee);
+  row.addEventListener("click", () => showWorkItem(item));
+  row.addEventListener("keydown", event => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    showWorkItem(item);
+  });
+  return row;
+}
+
 function matchesFilters(item, query = "") {
   if (query && !item.title.toLowerCase().includes(query) && !String(item.id).includes(query)) return false;
   return FILTER_DEFINITIONS.every(definition => {
@@ -388,10 +909,15 @@ function matchesFilters(item, query = "") {
   });
 }
 
-function getFilterOptions(definition) {
+function activeFilterItems() {
+  return state.currentView === "backlog" ? state.backlogItems : state.stories;
+}
+
+function getFilterOptions(definition, items = activeFilterItems()) {
+  if (definition.key === "sprint") return [...new Set(newestIterations().map(iteration => iteration.name))];
   const values = new Set();
-  for (const item of state.stories) {
-    if (state.mapping[item.state] === "hidden") continue;
+  for (const item of items) {
+    if (state.currentView !== "backlog" && state.mapping[item.state] === "hidden") continue;
     const itemValues = definition.values ? definition.values(item) : [definition.value(item)];
     itemValues.forEach(value => { if (value) values.add(value); });
   }
@@ -408,9 +934,11 @@ function renderFilters() {
   els.activeFilters.replaceChildren(...chips);
   els.activeFilters.hidden = !chips.length;
   els.clearFilters.hidden = !chips.length;
-  const totalOnBoard = state.stories.filter(item => state.mapping[item.state] !== "hidden").length;
-  const visibleOnBoard = state.stories.filter(item => state.mapping[item.state] !== "hidden" && matchesFilters(item, state.search.trim().toLowerCase())).length;
-  els.filterResultCount.textContent = chips.length || state.search ? `${visibleOnBoard} van ${totalOnBoard}` : `${totalOnBoard} items`;
+  const items = activeFilterItems();
+  const availableItems = state.currentView === "backlog" ? items : items.filter(item => state.mapping[item.state] !== "hidden");
+  const query = state.currentView === "backlog" ? "" : state.search.trim().toLowerCase();
+  const visibleItems = availableItems.filter(item => matchesFilters(item, query));
+  els.filterResultCount.textContent = chips.length || query ? `${visibleItems.length} van ${availableItems.length}` : `${availableItems.length} items`;
 }
 
 function createFilterMenu(definition) {
@@ -434,10 +962,24 @@ function createFilterMenu(definition) {
       const input = document.createElement("input");
       input.type = "checkbox";
       input.checked = state.filters[definition.key].has(option);
-      input.addEventListener("change", () => {
+      input.addEventListener("change", async () => {
+        const previousValues = new Set(state.filters[definition.key]);
         if (input.checked) state.filters[definition.key].add(option);
         else state.filters[definition.key].delete(option);
-        render();
+        if (definition.key === "sprint" && state.currentView !== "backlog") {
+          setLoading(true);
+          clearNotice();
+          try {
+            await applySprintFilter();
+          } catch (error) {
+            console.error(error);
+            state.filters.sprint = previousValues;
+            showNotice(error.message || "Sprints konden niet worden geladen.", "error");
+          } finally {
+            setLoading(false);
+          }
+        }
+        renderCurrentView();
         const reopened = [...els.filterControls.querySelectorAll(".filter-menu")][FILTER_DEFINITIONS.indexOf(definition)];
         if (reopened) reopened.open = true;
       });
@@ -457,18 +999,33 @@ function createFilterChip(definition, value) {
   chip.className = "filter-chip";
   chip.setAttribute("aria-label", `Verwijder filter ${definition.label}: ${value}`);
   chip.innerHTML = `<span>${escapeHtml(definition.label)}:</span> ${escapeHtml(value)} <b aria-hidden="true">×</b>`;
-  chip.addEventListener("click", () => {
+  chip.addEventListener("click", async () => {
     state.filters[definition.key].delete(value);
-    render();
+    if (definition.key === "sprint" && state.currentView !== "backlog") {
+      setLoading(true);
+      clearNotice();
+      try { await applySprintFilter(); }
+      catch (error) {
+        console.error(error);
+        state.filters.sprint.add(value);
+        showNotice(error.message || "Sprints konden niet worden geladen.", "error");
+      } finally { setLoading(false); }
+    }
+    renderCurrentView();
   });
   return chip;
 }
 
-function pruneFilters() {
+function pruneFilters(items = activeFilterItems()) {
   for (const definition of FILTER_DEFINITIONS) {
-    const available = new Set(getFilterOptions(definition));
+    const available = new Set(getFilterOptions(definition, items));
     for (const value of state.filters[definition.key]) if (!available.has(value)) state.filters[definition.key].delete(value);
   }
+}
+
+function renderCurrentView() {
+  if (state.currentView === "backlog") renderBacklog();
+  else render();
 }
 
 function createCard(item) {
@@ -482,11 +1039,11 @@ function createCard(item) {
   card.innerHTML = `
     <div class="card-topline">
       <span class="work-type"><span class="type-icon ${isBug ? "bug" : ""}">${isBug ? "!" : "◆"}</span>${escapeHtml(item.type)}</span>
-      <span class="card-state">${escapeHtml(item.state)}</span>
+      <span class="card-state" data-state-tone="${stateTone(item.state)}">${escapeHtml(item.state)}</span>
     </div>
     <h3>${escapeHtml(item.title)}</h3>
     <div class="card-footer">
-      <span class="story-id">WISH-${item.id}</span>
+      <span class="story-id">${escapeHtml(workItemKey(item.id))}</span>
       ${item.points !== null ? `<span class="points" title="Story points">${escapeHtml(String(item.points))}</span>` : ""}
       <span class="assignee ${item.assignee ? "" : "unassigned"}" title="${escapeHtml(item.assignee || "Niet toegewezen")}">${initials}</span>
     </div>`;
@@ -495,7 +1052,13 @@ function createCard(item) {
 
 async function showWorkItem(item) {
   state.selectedItemId = item.id;
+  state.selectedItem = item;
   closeWorkItemStateMenu();
+  closeWorkItemAssigneeMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus();
+  resetDescriptionEditor();
+  resetWorkItemTitleEditor();
   resetCommentComposer();
   const hasCachedDetail = state.detailsCache.has(item.id);
   const hasCachedComments = state.commentsCache.has(item.id);
@@ -510,7 +1073,10 @@ async function showWorkItem(item) {
   renderHistory(cachedHistory, !hasCachedHistory);
   renderCombinedActivity();
   setActivityTab("comments");
-  if (!els.workItemDialog.open) els.workItemDialog.showModal();
+  if (!els.workItemDialog.open) {
+    els.workItemDialog.showModal();
+    els.workItemDialog.focus({ preventScroll: true });
+  }
 
   if (!hasCachedDetail) {
     loadWorkItemDetail(item);
@@ -524,12 +1090,16 @@ async function showWorkItem(item) {
 }
 
 async function loadWorkItemDetail(item) {
+  const requestToken = (state.detailsRequestTokens.get(item.id) || 0) + 1;
+  state.detailsRequestTokens.set(item.id, requestToken);
   try {
     const result = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
+    if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
     const detail = normalizeWorkItemDetail(result);
     state.detailsCache.set(item.id, detail);
     if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, detail, false);
   } catch (error) {
+    if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
     console.error(error);
     if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, null, false, "Extra gegevens konden niet worden geladen.");
   }
@@ -587,12 +1157,17 @@ function normalizeWorkItemDetail(item) {
   const fields = item.fields || {};
   const assigned = fields["System.AssignedTo"];
   const reporter = fields["System.CreatedBy"];
+  const storyPoints = fields["Microsoft.VSTS.Scheduling.StoryPoints"];
+  const effort = fields["Microsoft.VSTS.Scheduling.Effort"];
   return {
     descriptionHtml: fields["System.Description"] || "",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
+    assigneeUniqueName: assigned?.uniqueName || assigned?.displayName || "",
     reporter: reporter?.displayName || reporter?.uniqueName || "",
     priority: fields["Microsoft.VSTS.Common.Priority"] ?? null,
-    points: fields["Microsoft.VSTS.Scheduling.StoryPoints"] ?? fields["Microsoft.VSTS.Scheduling.Effort"] ?? null,
+    points: storyPoints ?? effort ?? null,
+    pointsField: storyPoints !== undefined ? "Microsoft.VSTS.Scheduling.StoryPoints"
+      : effort !== undefined ? "Microsoft.VSTS.Scheduling.Effort" : "",
     area: fields["System.AreaPath"] || "",
     iteration: fields["System.IterationPath"] || "",
     reason: fields["System.Reason"] || "",
@@ -665,21 +1240,29 @@ function humanizeField(value) {
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
   const { webBase } = parseAzureUrl(state.orgUrl);
   els.workItemType.textContent = item.type;
-  els.workItemKey.textContent = `WISH-${item.id}`;
+  els.workItemKey.textContent = workItemKey(item.id);
   els.workItemTitle.textContent = item.title;
   els.workItemState.textContent = item.state;
+  els.workItemState.dataset.stateTone = stateTone(item.state);
   els.workItemState.setAttribute("aria-label", `State ${item.state}. Klik om te wijzigen.`);
   els.workItemReason.textContent = detail?.reason || "";
   els.workItemReason.hidden = !detail?.reason;
   setRichContent(els.workItemDescription, detail?.descriptionHtml, loading ? "Beschrijving wordt geladen…" : "Geen beschrijving toegevoegd.");
+  els.descriptionEditButton.disabled = loading;
   els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Niet toegewezen";
+  els.workItemAssignee.setAttribute("aria-label", `Assigned to ${detail?.assignee || item.assignee || "Niet toegewezen"}. Klik om te wijzigen.`);
   els.workItemReporter.textContent = detail?.reporter || "—";
   els.workItemPriority.textContent = detail?.priority ?? "—";
   els.workItemPoints.textContent = detail?.points ?? item.points ?? "—";
   els.workItemArea.textContent = detail?.area || item.area || "—";
   els.workItemIteration.textContent = detail?.iteration || state.iteration?.name || "—";
+  els.workItemPriority.setAttribute("aria-label", `Priority ${detail?.priority ?? "niet ingesteld"}. Klik om te wijzigen.`);
+  els.workItemPoints.setAttribute("aria-label", `Story points ${detail?.points ?? item.points ?? "niet ingesteld"}. Klik om te wijzigen.`);
+  els.workItemArea.setAttribute("aria-label", `Area ${detail?.area || item.area || "niet ingesteld"}. Klik om te wijzigen.`);
+  els.workItemIteration.setAttribute("aria-label", `Sprint ${detail?.iteration || state.iteration?.name || "niet ingesteld"}. Klik om te wijzigen.`);
   els.workItemParent.textContent = item.featureLabel || "Geen parent";
   renderDetailTags(detail?.tags || item.tags);
+  els.workItemTags.setAttribute("aria-label", `Tags: ${(detail?.tags || item.tags || []).join(", ") || "geen"}. Klik om te wijzigen.`);
   els.workItemChanged.textContent = detail?.changedDate ? formatDateTime(detail.changedDate) : "—";
   els.workItemLoading.classList.toggle("is-active", loading);
   els.workItemLoadStatus.textContent = error || (loading ? "Extra gegevens laden…" : "");
@@ -687,13 +1270,166 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.openInAzure.href = `${webBase}/_workitems/edit/${item.id}`;
 }
 
+function assigneeChoices(item) {
+  const choices = state.teamMembers.length
+    ? [...state.teamMembers]
+    : state.stories.filter(story => story.assignee).map(story => ({ name: story.assignee, uniqueName: story.assigneeUniqueName || story.assignee }));
+  const detail = state.detailsCache.get(item.id);
+  const currentName = detail?.assignee || item.assignee || "";
+  if (currentName && !choices.some(choice => choice.name === currentName || choice.uniqueName === currentName)) {
+    choices.push({ name: currentName, uniqueName: detail?.assigneeUniqueName || item.assigneeUniqueName || currentName });
+  }
+  const seen = new Set();
+  return choices.filter(choice => {
+    const key = String(choice.uniqueName || choice.name).trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => a.name.localeCompare(b.name, "nl"));
+}
+
+function toggleWorkItemAssigneeMenu() {
+  if (!els.workItemAssigneeMenu.hidden) return closeWorkItemAssigneeMenu();
+  const item = selectedWorkItem();
+  if (!item) return;
+  closeWorkItemStateMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus();
+  els.workItemAssigneeMenu.hidden = false;
+  els.workItemAssignee.setAttribute("aria-expanded", "true");
+  els.workItemAssigneeSearch.value = "";
+  els.workItemAssigneeSource.textContent = state.teamMembers.length ? "Teamleden" : "Gebruikers in deze sprint";
+  renderWorkItemAssigneeOptions(item);
+  requestAnimationFrame(() => els.workItemAssigneeSearch.focus());
+}
+
+function renderWorkItemAssigneeOptions(item) {
+  const detail = state.detailsCache.get(item.id);
+  const currentName = detail?.assignee || item.assignee || "";
+  const query = els.workItemAssigneeSearch.value.trim().toLocaleLowerCase("nl");
+  const choices = assigneeChoices(item).filter(choice => !query
+    || choice.name.toLocaleLowerCase("nl").includes(query)
+    || choice.uniqueName.toLocaleLowerCase("nl").includes(query));
+  const options = [];
+  if (!query || "niet toegewezen".includes(query)) {
+    options.push(createAssigneeOption(item, null, currentName === ""));
+  }
+  options.push(...choices.map(choice => createAssigneeOption(item, choice, choice.name === currentName || choice.uniqueName === currentName)));
+  if (!options.length) {
+    const empty = document.createElement("div");
+    empty.className = "issue-assignee-empty";
+    empty.textContent = "Geen gebruikers gevonden.";
+    options.push(empty);
+  }
+  els.workItemAssigneeOptions.replaceChildren(...options);
+}
+
+function createAssigneeOption(item, choice, selected) {
+  const name = choice?.name || "Niet toegewezen";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "issue-assignee-option";
+  button.setAttribute("role", "option");
+  button.setAttribute("aria-selected", String(selected));
+  button.disabled = selected;
+  const avatar = document.createElement("span");
+  avatar.className = `issue-assignee-avatar${choice ? "" : " is-unassigned"}`;
+  avatar.textContent = choice ? initialsFor(name) : "×";
+  const label = document.createElement("span");
+  label.className = "issue-assignee-label";
+  const primary = document.createElement("strong");
+  primary.textContent = name;
+  label.append(primary);
+  if (choice?.uniqueName && choice.uniqueName !== choice.name) {
+    const secondary = document.createElement("small");
+    secondary.textContent = choice.uniqueName;
+    label.append(secondary);
+  }
+  const check = document.createElement("span");
+  check.className = "issue-assignee-check";
+  check.textContent = selected ? "✓" : "";
+  button.append(avatar, label, check);
+  if (!selected) button.addEventListener("click", () => changeWorkItemAssignee(item, choice));
+  return button;
+}
+
+function initialsFor(name) {
+  return String(name || "?").split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase();
+}
+
+function closeWorkItemAssigneeMenu() {
+  els.workItemAssigneeMenu.hidden = true;
+  els.workItemAssignee.setAttribute("aria-expanded", "false");
+}
+
+async function changeWorkItemAssignee(item, choice) {
+  closeWorkItemAssigneeMenu();
+  const nextName = choice?.name || "Niet toegewezen";
+  els.workItemAssignee.disabled = true;
+  els.workItemAssignee.classList.add("is-saving");
+  els.workItemLoadStatus.textContent = `Assigned to wijzigen naar ${nextName}…`;
+  els.workItemLoadStatus.classList.remove("is-error");
+  try {
+    const operation = choice
+      ? { op: "add", path: "/fields/System.AssignedTo", value: choice.uniqueName }
+      : { op: "add", path: "/fields/System.AssignedTo", value: "" };
+    const result = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([operation])
+    });
+    state.detailsRequestTokens.set(item.id, (state.detailsRequestTokens.get(item.id) || 0) + 1);
+    const assigned = result.fields?.["System.AssignedTo"];
+    item.assignee = assigned?.displayName || assigned?.uniqueName || "";
+    item.assigneeUniqueName = assigned?.uniqueName || assigned?.displayName || "";
+    let detail = state.detailsCache.get(item.id);
+    if (!detail) {
+      detail = normalizeWorkItemDetail(result);
+      state.detailsCache.set(item.id, detail);
+    }
+    if (detail) {
+      detail.assignee = item.assignee;
+      detail.assigneeUniqueName = item.assigneeUniqueName;
+      detail.changedDate = result.fields?.["System.ChangedDate"] || detail.changedDate;
+    }
+    state.historyCache.delete(item.id);
+    state.historyErrors.delete(item.id);
+    pruneFilters();
+    render();
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDetail(item, detail || null, false);
+      els.workItemLoadStatus.textContent = `Assigned to gewijzigd naar ${item.assignee || "Niet toegewezen"}.`;
+      renderHistory([], true);
+      renderCombinedActivity();
+      loadWorkItemHistory(item);
+    }
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.auth
+      ? "Assigned to kon niet worden gewijzigd. De PAT heeft ‘Work Items: Read & write’ nodig."
+      : error.message || "Assigned to kon niet worden gewijzigd.";
+    els.workItemLoadStatus.classList.add("is-error");
+  } finally {
+    els.workItemAssignee.disabled = false;
+    els.workItemAssignee.classList.remove("is-saving");
+  }
+}
+
+function stateTone(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return STATE_TONES[normalized] || "neutral";
+}
+
 async function toggleWorkItemStateMenu() {
   if (!els.workItemStateMenu.hidden) {
     closeWorkItemStateMenu();
     return;
   }
-  const item = state.stories.find(story => story.id === state.selectedItemId);
+  const item = selectedWorkItem();
   if (!item) return;
+  closeWorkItemAssigneeMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus();
   els.workItemStateMenu.hidden = false;
   els.workItemState.setAttribute("aria-expanded", "true");
   const loading = document.createElement("div");
@@ -804,6 +1540,607 @@ function renderDetailTags(tags) {
   }));
 }
 
+function workItemTagsFor(item) {
+  return [...(state.detailsCache.get(item.id)?.tags || item.tags || [])];
+}
+
+function sprintTagChoices() {
+  const tags = state.stories.flatMap(story => story.tags || []);
+  return [...new Set(tags.map(tag => tag.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "nl"));
+}
+
+function toggleWorkItemTagsMenu() {
+  if (!els.workItemTagsMenu.hidden) return closeWorkItemTagsMenu();
+  const item = selectedWorkItem();
+  if (!item) return;
+  closeWorkItemStateMenu();
+  closeWorkItemAssigneeMenu();
+  closeWorkItemDetailFieldMenus();
+  els.workItemTagsMenu.hidden = false;
+  els.workItemTags.setAttribute("aria-expanded", "true");
+  els.workItemTagsInput.value = "";
+  renderWorkItemTagsEditor(item);
+  requestAnimationFrame(() => els.workItemTagsInput.focus());
+}
+
+function renderWorkItemTagsEditor(item) {
+  const selectedTags = workItemTagsFor(item);
+  els.workItemTagsSelected.replaceChildren(...selectedTags.map(tag => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "issue-tags-selected-chip";
+    button.title = `Tag ${tag} verwijderen`;
+    const label = document.createElement("span");
+    label.textContent = tag;
+    const remove = document.createElement("span");
+    remove.className = "issue-tags-remove";
+    remove.setAttribute("aria-hidden", "true");
+    remove.textContent = "×";
+    button.append(label, remove);
+    button.addEventListener("click", () => updateWorkItemTags(item, selectedTags.filter(value => value !== tag)));
+    return button;
+  }));
+  if (!selectedTags.length) {
+    const empty = document.createElement("span");
+    empty.className = "issue-tags-selected-empty";
+    empty.textContent = "Nog geen tags";
+    els.workItemTagsSelected.append(empty);
+  }
+  renderWorkItemTagOptions(item);
+}
+
+function renderWorkItemTagOptions(item) {
+  const selectedTags = workItemTagsFor(item);
+  const selectedKeys = new Set(selectedTags.map(tag => tag.toLocaleLowerCase("nl")));
+  const query = els.workItemTagsInput.value.trim();
+  const queryKey = query.toLocaleLowerCase("nl");
+  const suggestions = sprintTagChoices().filter(tag => !selectedKeys.has(tag.toLocaleLowerCase("nl"))
+    && (!queryKey || tag.toLocaleLowerCase("nl").includes(queryKey)));
+  const options = suggestions.map(tag => createWorkItemTagOption(item, tag));
+  if (query && !selectedKeys.has(queryKey) && !suggestions.some(tag => tag.toLocaleLowerCase("nl") === queryKey)) {
+    const add = createWorkItemTagOption(item, query);
+    add.classList.add("is-create");
+    add.querySelector("span:last-child").textContent = "Nieuwe tag toevoegen";
+    options.unshift(add);
+  }
+  if (!options.length) {
+    const empty = document.createElement("div");
+    empty.className = "issue-tags-options-empty";
+    empty.textContent = query ? "Geen andere tags gevonden." : "Geen andere sprinttags.";
+    options.push(empty);
+  }
+  els.workItemTagsOptions.replaceChildren(...options);
+}
+
+function createWorkItemTagOption(item, tag) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "issue-tags-option";
+  const label = document.createElement("strong");
+  label.textContent = tag;
+  const meta = document.createElement("span");
+  meta.textContent = "Sprinttag toevoegen";
+  button.append(label, meta);
+  button.addEventListener("click", () => addWorkItemTag(item, tag));
+  return button;
+}
+
+function addWorkItemTag(item, rawTag) {
+  const tag = String(rawTag || "").trim().replace(/;/g, "");
+  if (!tag) return;
+  const tags = workItemTagsFor(item);
+  if (tags.some(value => value.toLocaleLowerCase("nl") === tag.toLocaleLowerCase("nl"))) return;
+  updateWorkItemTags(item, [...tags, tag]);
+}
+
+function closeWorkItemTagsMenu() {
+  els.workItemTagsMenu.hidden = true;
+  els.workItemTags.setAttribute("aria-expanded", "false");
+}
+
+async function updateWorkItemTags(item, nextTags) {
+  const currentTags = workItemTagsFor(item);
+  const savedTags = [...new Map(nextTags.map(tag => {
+    const value = String(tag || "").trim();
+    return [value.toLocaleLowerCase("nl"), value];
+  }).filter(([, value]) => value)).values()];
+  els.workItemTagsInput.disabled = true;
+  els.workItemTagsMenu.classList.add("is-saving");
+  els.workItemLoadStatus.textContent = "Tags opslaan…";
+  els.workItemLoadStatus.classList.remove("is-error");
+  try {
+    await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{
+        op: currentTags.length ? "replace" : "add",
+        path: "/fields/System.Tags",
+        value: savedTags.join("; ")
+      }])
+    });
+    state.detailsRequestTokens.set(item.id, (state.detailsRequestTokens.get(item.id) || 0) + 1);
+    const verifiedItem = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`);
+    const detail = normalizeWorkItemDetail(verifiedItem);
+    const verifiedTags = detail.tags;
+    item.tags = verifiedTags;
+    state.detailsCache.set(item.id, detail);
+    state.historyCache.delete(item.id);
+    state.historyErrors.delete(item.id);
+    pruneFilters();
+    render();
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDetail(item, detail || null, false);
+      els.workItemLoadStatus.textContent = "Tags opgeslagen.";
+      els.workItemTagsInput.value = "";
+      renderWorkItemTagsEditor(item);
+      renderHistory([], true);
+      renderCombinedActivity();
+      loadWorkItemHistory(item);
+    }
+    if (tagSetKey(verifiedTags) !== tagSetKey(savedTags)) {
+      throw new Error("Azure DevOps heeft de tagwijziging niet overgenomen. De actuele tags zijn opnieuw geladen.");
+    }
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.auth
+      ? "Tags konden niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig."
+      : error.message || "Tags konden niet worden opgeslagen.";
+    els.workItemLoadStatus.classList.add("is-error");
+  } finally {
+    els.workItemTagsInput.disabled = false;
+    els.workItemTagsMenu.classList.remove("is-saving");
+    if (!els.workItemTagsMenu.hidden) els.workItemTagsInput.focus();
+  }
+}
+
+function tagSetKey(tags) {
+  return tags.map(tag => tag.trim().toLocaleLowerCase("nl")).filter(Boolean).sort().join("\n");
+}
+
+const PRIORITY_OPTIONS = [
+  { value: 1, label: "Highest" },
+  { value: 2, label: "High" },
+  { value: 3, label: "Medium" },
+  { value: 4, label: "Low" }
+];
+
+function selectedWorkItem() {
+  return state.selectedItem;
+}
+
+function closeWorkItemDetailFieldMenus(except = null) {
+  [
+    [els.workItemPriority, els.workItemPriorityMenu],
+    [els.workItemPoints, els.workItemPointsMenu],
+    [els.workItemArea, els.workItemAreaMenu],
+    [els.workItemIteration, els.workItemIterationMenu]
+  ].forEach(([trigger, menu]) => {
+    if (menu === except) return;
+    menu.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+  });
+}
+
+function openDetailFieldMenu(trigger, menu) {
+  const wasOpen = !menu.hidden;
+  closeWorkItemStateMenu();
+  closeWorkItemAssigneeMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus(menu);
+  menu.hidden = wasOpen;
+  trigger.setAttribute("aria-expanded", String(!wasOpen));
+  return !wasOpen;
+}
+
+function toggleWorkItemPriorityMenu() {
+  const item = selectedWorkItem();
+  if (!item || !openDetailFieldMenu(els.workItemPriority, els.workItemPriorityMenu)) return;
+  const current = state.detailsCache.get(item.id)?.priority;
+  els.workItemPriorityOptions.replaceChildren(...PRIORITY_OPTIONS.map(option => {
+    const button = createDetailFieldOption(`${option.value} · ${option.label}`, Number(current) === option.value);
+    if (!button.disabled) button.addEventListener("click", () => updateWorkItemField(item, "Microsoft.VSTS.Common.Priority", option.value, "Priority"));
+    return button;
+  }));
+}
+
+function toggleWorkItemPointsMenu() {
+  const item = selectedWorkItem();
+  if (!item || !openDetailFieldMenu(els.workItemPoints, els.workItemPointsMenu)) return;
+  const current = state.detailsCache.get(item.id)?.points ?? item.points;
+  els.workItemPointsInput.value = current ?? "";
+  els.workItemPointsQuick.replaceChildren(...[1, 2, 3, 5, 8, 13].map(value => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = String(value);
+    button.className = Number(current) === value ? "is-selected" : "";
+    button.addEventListener("click", () => {
+      els.workItemPointsInput.value = String(value);
+      els.workItemPointsForm.requestSubmit();
+    });
+    return button;
+  }));
+  requestAnimationFrame(() => els.workItemPointsInput.select());
+}
+
+async function toggleWorkItemAreaMenu() {
+  const item = selectedWorkItem();
+  if (!item || !openDetailFieldMenu(els.workItemArea, els.workItemAreaMenu)) return;
+  els.workItemAreaSearch.value = "";
+  renderDetailFieldLoading(els.workItemAreaOptions, "Areas laden…");
+  requestAnimationFrame(() => els.workItemAreaSearch.focus());
+  try {
+    const paths = await loadAreaPaths();
+    if (!els.workItemAreaMenu.hidden && state.selectedItemId === item.id) renderAreaOptions(item, paths);
+  } catch (error) {
+    console.error(error);
+    renderDetailFieldError(els.workItemAreaOptions, "Areas konden niet worden geladen.");
+  }
+}
+
+async function toggleWorkItemIterationMenu() {
+  const item = selectedWorkItem();
+  if (!item || !openDetailFieldMenu(els.workItemIteration, els.workItemIterationMenu)) return;
+  els.workItemIterationSearch.value = "";
+  renderDetailFieldLoading(els.workItemIterationOptions, "Sprints laden…");
+  requestAnimationFrame(() => els.workItemIterationSearch.focus());
+  try {
+    const paths = await loadTeamIterations();
+    if (!els.workItemIterationMenu.hidden && state.selectedItemId === item.id) renderIterationOptions(item, paths);
+  } catch (error) {
+    console.error(error);
+    renderDetailFieldError(els.workItemIterationOptions, "Sprints konden niet worden geladen.");
+  }
+}
+
+async function loadAreaPaths() {
+  if (!state.areaPathsCache) {
+    state.areaPathsCache = azure(`/_apis/wit/classificationnodes/areas?$depth=10&api-version=7.1`)
+      .then(root => flattenClassificationPaths(root));
+    state.areaPathsCache.catch(() => { state.areaPathsCache = null; });
+  }
+  return state.areaPathsCache;
+}
+
+function flattenClassificationPaths(root) {
+  const paths = [];
+  const visit = node => {
+    if (node?.path) paths.push(node.path.startsWith("\\") ? node.path.slice(1) : node.path);
+    (node?.children || []).forEach(visit);
+  };
+  visit(root);
+  return [...new Set(paths)].sort((a, b) => a.localeCompare(b, "nl"));
+}
+
+async function loadTeamIterations() {
+  if (!state.teamIterationsCache) {
+    const team = state.teams.find(value => value.id === state.teamId);
+    if (!team) return [];
+    state.teamIterationsCache = azure(`/${encodeURIComponent(team.name)}/_apis/work/teamsettings/iterations?api-version=7.1`)
+      .then(result => [...(result.value || [])]
+        .sort((a, b) => {
+          const aDate = new Date(a.attributes?.startDate || a.attributes?.finishDate || 0).getTime();
+          const bDate = new Date(b.attributes?.startDate || b.attributes?.finishDate || 0).getTime();
+          return bDate - aDate || b.name.localeCompare(a.name, "nl", { numeric: true });
+        })
+        .map(iteration => iteration.path || iteration.name)
+        .filter((path, index, paths) => path && paths.indexOf(path) === index));
+    state.teamIterationsCache.catch(() => { state.teamIterationsCache = null; });
+  }
+  return state.teamIterationsCache;
+}
+
+function renderAreaOptions(item, paths) {
+  renderSearchableDetailOptions({
+    item,
+    paths,
+    query: els.workItemAreaSearch.value,
+    current: state.detailsCache.get(item.id)?.area || item.area,
+    container: els.workItemAreaOptions,
+    field: "System.AreaPath",
+    label: "Area"
+  });
+}
+
+function renderIterationOptions(item, paths) {
+  renderSearchableDetailOptions({
+    item,
+    paths,
+    query: els.workItemIterationSearch.value,
+    current: state.detailsCache.get(item.id)?.iteration || state.iteration?.path || state.iteration?.name,
+    container: els.workItemIterationOptions,
+    field: "System.IterationPath",
+    label: "Sprint"
+  });
+}
+
+function renderSearchableDetailOptions({ item, paths, query, current, container, field, label }) {
+  const queryKey = query.trim().toLocaleLowerCase("nl");
+  const filtered = paths.filter(path => !queryKey || path.toLocaleLowerCase("nl").includes(queryKey));
+  if (!filtered.length) return renderDetailFieldError(container, `Geen ${label.toLocaleLowerCase("nl")} gevonden.`);
+  container.replaceChildren(...filtered.map(path => {
+    const button = createDetailFieldOption(path, path === current);
+    if (!button.disabled) button.addEventListener("click", () => updateWorkItemField(item, field, path, label));
+    return button;
+  }));
+}
+
+function createDetailFieldOption(label, selected = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "issue-detail-field-option";
+  button.disabled = selected;
+  button.setAttribute("aria-selected", String(selected));
+  const text = document.createElement("span");
+  text.textContent = label;
+  const check = document.createElement("span");
+  check.className = "issue-detail-field-check";
+  check.textContent = selected ? "✓" : "";
+  button.append(text, check);
+  return button;
+}
+
+function renderDetailFieldLoading(container, message) {
+  const node = document.createElement("div");
+  node.className = "issue-detail-field-message";
+  node.textContent = message;
+  container.replaceChildren(node);
+}
+
+function renderDetailFieldError(container, message) {
+  const node = document.createElement("div");
+  node.className = "issue-detail-field-message";
+  node.textContent = message;
+  container.replaceChildren(node);
+}
+
+async function resolvePointsField(item) {
+  const known = state.detailsCache.get(item.id)?.pointsField || item.pointsField;
+  if (known) return known;
+  let pending = state.workItemTypeFieldsCache.get(item.type);
+  if (!pending) {
+    pending = azure(`/_apis/wit/workitemtypes/${encodeURIComponent(item.type)}/fields?api-version=7.1`)
+      .then(result => result.value || []);
+    state.workItemTypeFieldsCache.set(item.type, pending);
+    pending.catch(() => state.workItemTypeFieldsCache.delete(item.type));
+  }
+  const fields = await pending;
+  const references = new Set(fields.map(field => field.referenceName));
+  const preferred = /task/i.test(item.type)
+    ? ["Microsoft.VSTS.Scheduling.Effort", "Microsoft.VSTS.Scheduling.StoryPoints"]
+    : ["Microsoft.VSTS.Scheduling.StoryPoints", "Microsoft.VSTS.Scheduling.Effort"];
+  return preferred.find(reference => references.has(reference)) || "";
+}
+
+async function updateWorkItemField(item, field, value, label) {
+  closeWorkItemDetailFieldMenus();
+  els.workItemLoadStatus.textContent = `${label} opslaan…`;
+  els.workItemLoadStatus.classList.remove("is-error");
+  try {
+    await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: `/fields/${field}`, value }])
+    });
+    state.detailsRequestTokens.set(item.id, (state.detailsRequestTokens.get(item.id) || 0) + 1);
+    const verifiedItem = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`);
+    const normalized = normalizeWorkItem(verifiedItem);
+    const detail = normalizeWorkItemDetail(verifiedItem);
+    item.points = normalized.points;
+    item.pointsField = normalized.pointsField;
+    item.priority = normalized.priority;
+    item.area = normalized.area;
+    item.tags = normalized.tags;
+    item.iterationPath = normalized.iterationPath;
+    state.detailsCache.set(item.id, detail);
+    state.historyCache.delete(item.id);
+    state.historyErrors.delete(item.id);
+    pruneFilters();
+    render();
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDetail(item, detail, false);
+    }
+    if (!workItemFieldValueMatches(field, verifiedItem.fields?.[field], value)) {
+      throw new Error(`Azure DevOps heeft de wijziging van ${label.toLocaleLowerCase("nl")} niet overgenomen. De actuele waarde is opnieuw geladen.`);
+    }
+    if (isSelectedWorkItem(item.id)) {
+      els.workItemLoadStatus.textContent = `${label} opgeslagen.`;
+      renderHistory([], true);
+      renderCombinedActivity();
+      loadWorkItemHistory(item);
+    }
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.auth
+      ? `${label} kon niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig.`
+      : error.message || `${label} kon niet worden opgeslagen.`;
+    els.workItemLoadStatus.classList.add("is-error");
+  }
+}
+
+function workItemFieldValueMatches(field, actual, expected) {
+  if (["Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints", "Microsoft.VSTS.Scheduling.Effort"].includes(field)) {
+    return Number(actual) === Number(expected);
+  }
+  return String(actual || "").toLocaleLowerCase("nl") === String(expected || "").toLocaleLowerCase("nl");
+}
+
+function openWorkItemTitleEditor() {
+  const item = selectedWorkItem();
+  if (!item || !els.workItemTitleForm.hidden) return;
+  closeWorkItemStateMenu();
+  closeWorkItemAssigneeMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus();
+  els.workItemTitleInput.value = item.title;
+  els.workItemTitle.hidden = true;
+  els.workItemTitleForm.hidden = false;
+  els.workItemTitleStatus.textContent = "";
+  els.workItemTitleStatus.classList.remove("is-error");
+  requestAnimationFrame(() => els.workItemTitleInput.select());
+}
+
+function resetWorkItemTitleEditor() {
+  els.workItemTitleForm.hidden = true;
+  els.workItemTitle.hidden = false;
+  els.workItemTitleInput.value = "";
+  els.workItemTitleStatus.textContent = "";
+  els.workItemTitleStatus.classList.remove("is-error");
+  setWorkItemTitleEditorBusy(false);
+}
+
+function setWorkItemTitleEditorBusy(busy) {
+  els.workItemTitleInput.disabled = busy;
+  els.workItemTitleCancel.disabled = busy;
+  els.workItemTitleSubmit.disabled = busy;
+  els.workItemTitleSubmit.textContent = busy ? "Opslaan…" : "Opslaan";
+}
+
+async function submitWorkItemTitle(event) {
+  event.preventDefault();
+  const item = selectedWorkItem();
+  const nextTitle = els.workItemTitleInput.value.trim();
+  if (!item || !nextTitle) return;
+  if (nextTitle === item.title) return resetWorkItemTitleEditor();
+  setWorkItemTitleEditorBusy(true);
+  els.workItemTitleStatus.textContent = "Titel opslaan…";
+  els.workItemTitleStatus.classList.remove("is-error");
+  try {
+    await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: "/fields/System.Title", value: nextTitle }])
+    });
+    state.detailsRequestTokens.set(item.id, (state.detailsRequestTokens.get(item.id) || 0) + 1);
+    const verifiedItem = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`);
+    const normalized = normalizeWorkItem(verifiedItem);
+    const detail = normalizeWorkItemDetail(verifiedItem);
+    item.title = normalized.title;
+    state.detailsCache.set(item.id, detail);
+    state.historyCache.delete(item.id);
+    state.historyErrors.delete(item.id);
+    render();
+    if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, detail, false);
+    if (item.title !== nextTitle) {
+      throw new Error("Azure DevOps heeft de titelwijziging niet overgenomen. De actuele titel is opnieuw geladen.");
+    }
+    resetWorkItemTitleEditor();
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDetail(item, detail, false);
+      els.workItemLoadStatus.textContent = "Titel opgeslagen.";
+      renderHistory([], true);
+      renderCombinedActivity();
+      loadWorkItemHistory(item);
+    }
+  } catch (error) {
+    console.error(error);
+    els.workItemTitleStatus.textContent = error.auth
+      ? "Titel kon niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig."
+      : error.message || "Titel kon niet worden opgeslagen.";
+    els.workItemTitleStatus.classList.add("is-error");
+    setWorkItemTitleEditorBusy(false);
+    els.workItemTitleInput.focus();
+  }
+}
+
+function openDescriptionEditor() {
+  const item = selectedWorkItem();
+  if (!item || els.descriptionEditButton.disabled) return;
+  closeWorkItemStateMenu();
+  closeWorkItemAssigneeMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus();
+  const html = state.detailsCache.get(item.id)?.descriptionHtml || "";
+  els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
+  hydrateRichTextImages(els.descriptionEditor);
+  els.workItemDescription.hidden = true;
+  els.descriptionEditButton.hidden = true;
+  els.descriptionEditorForm.hidden = false;
+  els.descriptionEditorStatus.textContent = "";
+  els.descriptionEditorStatus.classList.remove("is-error");
+  requestAnimationFrame(() => els.descriptionEditor.focus());
+}
+
+function resetDescriptionEditor() {
+  els.descriptionEditorForm.hidden = true;
+  els.workItemDescription.hidden = false;
+  els.descriptionEditButton.hidden = false;
+  els.descriptionEditor.replaceChildren();
+  els.descriptionEditorStatus.textContent = "";
+  els.descriptionEditorStatus.classList.remove("is-error");
+  setDescriptionEditorBusy(false);
+}
+
+function setDescriptionEditorBusy(busy) {
+  els.descriptionEditor.contentEditable = String(!busy);
+  els.descriptionEditorCancel.disabled = busy;
+  els.descriptionEditorSubmit.disabled = busy;
+  els.descriptionEditorSubmit.textContent = busy ? "Opslaan…" : "Opslaan";
+}
+
+function applyDescriptionCommand(command) {
+  els.descriptionEditor.focus();
+  document.execCommand(command, false);
+}
+
+function descriptionEditorHtml() {
+  const source = els.descriptionEditor.cloneNode(true);
+  restoreAuthenticatedImageSources(source);
+  const safe = document.createElement("div");
+  safe.append(sanitizeRichHtml(source.innerHTML));
+  restoreAuthenticatedImageSources(safe);
+  const html = safe.innerHTML.trim();
+  return html === "<br>" ? "" : html;
+}
+
+function restoreAuthenticatedImageSources(container) {
+  container.querySelectorAll("img[data-auth-src]").forEach(image => {
+    image.src = image.dataset.authSrc;
+    image.removeAttribute("data-auth-src");
+    image.removeAttribute("aria-busy");
+    image.classList.remove("is-loading");
+    if (!image.className) image.removeAttribute("class");
+  });
+}
+
+async function submitDescriptionEditor(event) {
+  event.preventDefault();
+  const item = selectedWorkItem();
+  if (!item) return;
+  const descriptionHtml = descriptionEditorHtml();
+  setDescriptionEditorBusy(true);
+  els.descriptionEditorStatus.textContent = "Beschrijving opslaan…";
+  els.descriptionEditorStatus.classList.remove("is-error");
+  try {
+    await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: "/fields/System.Description", value: descriptionHtml }])
+    });
+    state.detailsRequestTokens.set(item.id, (state.detailsRequestTokens.get(item.id) || 0) + 1);
+    const verifiedItem = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`);
+    const detail = normalizeWorkItemDetail(verifiedItem);
+    state.detailsCache.set(item.id, detail);
+    state.historyCache.delete(item.id);
+    state.historyErrors.delete(item.id);
+    resetDescriptionEditor();
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDetail(item, detail, false);
+      els.workItemLoadStatus.textContent = "Beschrijving opgeslagen.";
+      renderHistory([], true);
+      renderCombinedActivity();
+      loadWorkItemHistory(item);
+    }
+  } catch (error) {
+    console.error(error);
+    els.descriptionEditorStatus.textContent = error.auth
+      ? "Beschrijving kon niet worden opgeslagen. De PAT heeft ‘Work Items: Read & write’ nodig."
+      : error.message || "Beschrijving kon niet worden opgeslagen.";
+    els.descriptionEditorStatus.classList.add("is-error");
+    setDescriptionEditorBusy(false);
+    els.descriptionEditor.focus();
+  }
+}
+
 function renderComments(comments, loading = false, error = "") {
   els.workItemCommentCount.textContent = String(comments.length);
   els.workItemCommentsStatus.classList.toggle("is-error", Boolean(error));
@@ -846,7 +2183,7 @@ function setCommentComposerBusy(busy) {
 
 async function submitWorkItemComment(event) {
   event.preventDefault();
-  const item = state.stories.find(story => story.id === state.selectedItemId);
+  const item = selectedWorkItem();
   const text = els.commentComposerInput.value.trim();
   if (!item || !text) return;
   setCommentComposerBusy(true);
@@ -1187,8 +2524,19 @@ function emptyNode() {
 
 function renderEmptyBoard() {
   state.stories = [];
+  state.iterationStoriesCache.clear();
+  state.backlogItems = [];
+  state.backlogTeamId = "";
   state.iteration = null;
+  state.iterations = [];
+  state.currentIterationId = "";
+  state.filters.sprint.clear();
+  closeSprintMenu();
   render();
+  if (state.currentView === "backlog") {
+    els.backlogMeta.textContent = "Verbind Azure DevOps om de backlog te laden.";
+    els.backlogContent.replaceChildren();
+  }
 }
 
 function showSettings() {
@@ -1232,8 +2580,10 @@ function showConnection(error = "") {
 function setLoading(value) {
   state.loading = value;
   els.refresh.disabled = value;
+  els.sprintTitle.disabled = value || !state.iterations.length;
   els.refresh.classList.toggle("is-spinning", value);
   if (value) {
+    closeSprintMenu();
     document.querySelectorAll(".card-list").forEach(list => {
       list.replaceChildren(...Array.from({ length: 3 }, () => {
         const node = document.createElement("div");
@@ -1270,6 +2620,8 @@ els.connectionForm.addEventListener("submit", event => {
   try {
     parseAzureUrl(els.orgUrl.value);
     state.orgUrl = els.orgUrl.value.trim();
+    state.authenticatedUser = null;
+    updateBranding();
     state.pat = els.pat.value.trim();
     if (!state.pat) throw new Error("Vul een PAT in.");
     localStorage.setItem(STORAGE.url, state.orgUrl);
@@ -1287,7 +2639,12 @@ els.settingsForm.addEventListener("submit", event => {
   localStorage.setItem(STORAGE.team, state.teamId);
   localStorage.setItem(STORAGE.mapping, JSON.stringify(state.mapping));
   els.settingsDialog.close();
-  if (previousTeam !== state.teamId) loadBoard(); else render();
+  if (previousTeam !== state.teamId) {
+    state.filters.sprint.clear();
+    state.backlogItems = [];
+    state.backlogTeamId = "";
+    loadBoard();
+  } else render();
 });
 
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
@@ -1295,6 +2652,122 @@ document.querySelectorAll("[data-close-work-item]").forEach(button => button.add
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
 els.workItemState.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemStateMenu(); });
 els.workItemStateMenu.addEventListener("click", event => event.stopPropagation());
+els.workItemAssignee.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemAssigneeMenu(); });
+els.workItemAssigneeMenu.addEventListener("click", event => event.stopPropagation());
+els.workItemAssigneeSearch.addEventListener("input", () => {
+  const item = selectedWorkItem();
+  if (item) renderWorkItemAssigneeOptions(item);
+});
+els.workItemAssigneeSearch.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeWorkItemAssigneeMenu();
+    els.workItemAssignee.focus();
+  }
+});
+els.workItemTags.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemTagsMenu(); });
+els.workItemTagsMenu.addEventListener("click", event => event.stopPropagation());
+els.workItemTagsInput.addEventListener("input", () => {
+  const item = selectedWorkItem();
+  if (item) renderWorkItemTagOptions(item);
+});
+els.workItemTagsInput.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeWorkItemTagsMenu();
+    els.workItemTags.focus();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    const item = selectedWorkItem();
+    if (item) addWorkItemTag(item, els.workItemTagsInput.value);
+  }
+});
+els.workItemPriority.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemPriorityMenu(); });
+els.workItemPoints.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemPointsMenu(); });
+els.workItemArea.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemAreaMenu(); });
+els.workItemIteration.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemIterationMenu(); });
+[els.workItemPriorityMenu, els.workItemPointsMenu, els.workItemAreaMenu, els.workItemIterationMenu]
+  .forEach(menu => menu.addEventListener("click", event => event.stopPropagation()));
+els.workItemPointsForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const item = selectedWorkItem();
+  if (!item) return;
+  const value = Number(els.workItemPointsInput.value);
+  if (!Number.isFinite(value) || value < 0) return;
+  els.workItemPointsInput.disabled = true;
+  try {
+    const field = await resolvePointsField(item);
+    if (!field) throw new Error(`Voor work-itemtype “${item.type}” is geen Story Points- of Effort-veld gevonden.`);
+    await updateWorkItemField(item, field, value, "Story points");
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.message || "Story points konden niet worden opgeslagen.";
+    els.workItemLoadStatus.classList.add("is-error");
+  } finally {
+    els.workItemPointsInput.disabled = false;
+  }
+});
+els.workItemAreaSearch.addEventListener("input", async () => {
+  const item = selectedWorkItem();
+  if (!item) return;
+  try { renderAreaOptions(item, await loadAreaPaths()); } catch {}
+});
+els.workItemIterationSearch.addEventListener("input", async () => {
+  const item = selectedWorkItem();
+  if (!item) return;
+  try { renderIterationOptions(item, await loadTeamIterations()); } catch {}
+});
+[els.workItemAreaSearch, els.workItemIterationSearch, els.workItemPointsInput].forEach(input => input.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeWorkItemDetailFieldMenus();
+}));
+els.descriptionEditButton.addEventListener("click", openDescriptionEditor);
+els.descriptionEditorCancel.addEventListener("click", resetDescriptionEditor);
+els.descriptionEditorForm.addEventListener("submit", submitDescriptionEditor);
+document.querySelectorAll("[data-description-command]").forEach(button => {
+  button.addEventListener("mousedown", event => event.preventDefault());
+  button.addEventListener("click", () => applyDescriptionCommand(button.dataset.descriptionCommand));
+});
+els.descriptionEditor.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    resetDescriptionEditor();
+    els.descriptionEditButton.focus();
+  } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    els.descriptionEditorForm.requestSubmit();
+  }
+});
+els.workItemTitle.addEventListener("click", openWorkItemTitleEditor);
+els.workItemTitle.addEventListener("keydown", event => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  openWorkItemTitleEditor();
+});
+els.workItemTitleCancel.addEventListener("click", resetWorkItemTitleEditor);
+els.workItemTitleForm.addEventListener("submit", submitWorkItemTitle);
+els.workItemTitleInput.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  resetWorkItemTitleEditor();
+  els.workItemTitle.focus();
+});
+els.sprintTitle.addEventListener("click", event => { event.stopPropagation(); toggleSprintMenu(); });
+els.sprintMenu.addEventListener("click", event => event.stopPropagation());
+els.sprintMenuSearch.addEventListener("input", renderSprintMenuOptions);
+els.sprintMenuSearch.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeSprintMenu();
+  els.sprintTitle.focus();
+});
 els.commentComposerPrompt.addEventListener("click", () => setCommentComposerExpanded(true));
 els.commentComposerCancel.addEventListener("click", resetCommentComposer);
 els.commentComposerForm.addEventListener("submit", submitWorkItemComment);
@@ -1309,12 +2782,48 @@ els.commentComposerInput.addEventListener("keydown", event => {
   }
 });
 els.workItemDialog.addEventListener("cancel", event => {
+  if (!els.workItemTitleForm.hidden) {
+    event.preventDefault();
+    resetWorkItemTitleEditor();
+    return;
+  }
+  if (!els.descriptionEditorForm.hidden) {
+    event.preventDefault();
+    resetDescriptionEditor();
+    return;
+  }
+  if ([els.workItemPriorityMenu, els.workItemPointsMenu, els.workItemAreaMenu, els.workItemIterationMenu].some(menu => !menu.hidden)) {
+    event.preventDefault();
+    closeWorkItemDetailFieldMenus();
+    return;
+  }
+  if (!els.workItemTagsMenu.hidden) {
+    event.preventDefault();
+    closeWorkItemTagsMenu();
+    return;
+  }
+  if (!els.workItemAssigneeMenu.hidden) {
+    event.preventDefault();
+    closeWorkItemAssigneeMenu();
+    return;
+  }
   if (!els.workItemStateMenu.hidden) {
     event.preventDefault();
     closeWorkItemStateMenu();
   }
 });
-els.workItemDialog.addEventListener("close", () => { closeWorkItemStateMenu(); resetCommentComposer(); state.selectedItemId = null; });
+els.workItemDialog.addEventListener("close", () => {
+  closeWorkItemStateMenu();
+  closeWorkItemAssigneeMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus();
+  resetWorkItemTitleEditor();
+  resetDescriptionEditor();
+  resetCommentComposer();
+  if (state.currentView === "backlog") renderBacklog();
+  state.selectedItemId = null;
+  state.selectedItem = null;
+});
 els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) els.workItemDialog.close(); });
 els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connectionDialog.close(); });
 els.togglePat.addEventListener("click", () => {
@@ -1326,16 +2835,29 @@ els.changeConnection.addEventListener("click", () => showConnection());
 els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
 });
-els.settings.addEventListener("click", showSettings);
+els.headerAvatar.addEventListener("click", showSettings);
+els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
+els.backlogNav.addEventListener("click", () => showMainView("backlog"));
 els.refresh.addEventListener("click", () => loadBoard());
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
-els.clearFilters.addEventListener("click", () => {
+els.clearFilters.addEventListener("click", async () => {
+  const hadSprintFilter = Boolean(state.filters.sprint.size);
   Object.values(state.filters).forEach(values => values.clear());
-  render();
+  if (hadSprintFilter && state.currentView !== "backlog") {
+    setLoading(true);
+    try { await applySprintFilter(); }
+    catch (error) { console.error(error); showNotice(error.message || "Huidige sprint kon niet worden geladen.", "error"); }
+    finally { setLoading(false); }
+  }
+  renderCurrentView();
 });
 
 document.addEventListener("click", event => {
+  if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
   if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();
+  if (!els.workItemAssigneeControl.contains(event.target)) closeWorkItemAssigneeMenu();
+  if (!els.workItemTagsControl.contains(event.target)) closeWorkItemTagsMenu();
+  if (![els.workItemPriorityControl, els.workItemPointsControl, els.workItemAreaControl, els.workItemIterationControl].some(control => control.contains(event.target))) closeWorkItemDetailFieldMenus();
   document.querySelectorAll(".filter-menu[open]").forEach(menu => {
     if (!menu.contains(event.target)) menu.removeAttribute("open");
   });
