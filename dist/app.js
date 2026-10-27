@@ -1015,12 +1015,7 @@ async function loadForYouMentions(user) {
   const items = await fetchWorkItems(ids, { includeDescription: true });
   const mentionGroups = await mapWithConcurrency(items, 6, async item => {
     const mentions = [];
-    const changedBy = {
-      id: item.changedById,
-      uniqueName: item.changedByUniqueName,
-      displayName: item.changedBy
-    };
-    if (htmlMentionsUser(item.descriptionHtml, user) && !identityMatches(changedBy, user)) {
+    if (htmlMentionsUser(item.descriptionHtml, user)) {
       mentions.push({
         item,
         mention: {
