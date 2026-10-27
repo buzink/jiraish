@@ -88,6 +88,7 @@ const state = {
   forYouMentions: [],
   forYouActivity: [],
   forYouErrors: {},
+  forYouExpanded: { work: false, mentions: false, activity: false },
   currentView: "board",
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
@@ -158,12 +159,15 @@ const els = {
   forYouWorkCount: document.querySelector("#forYouWorkCount"),
   forYouWorkStatus: document.querySelector("#forYouWorkStatus"),
   forYouWorkList: document.querySelector("#forYouWorkList"),
+  forYouWorkShowAll: document.querySelector("#forYouWorkShowAll"),
   forYouMentionsCount: document.querySelector("#forYouMentionsCount"),
   forYouMentionsStatus: document.querySelector("#forYouMentionsStatus"),
   forYouMentionsList: document.querySelector("#forYouMentionsList"),
+  forYouMentionsShowAll: document.querySelector("#forYouMentionsShowAll"),
   forYouActivityCount: document.querySelector("#forYouActivityCount"),
   forYouActivityStatus: document.querySelector("#forYouActivityStatus"),
   forYouActivityList: document.querySelector("#forYouActivityList"),
+  forYouActivityShowAll: document.querySelector("#forYouActivityShowAll"),
   backlogView: document.querySelector("#backlogView"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
@@ -1036,14 +1040,15 @@ function commentMentionsUser(comment, user) {
 function renderForYouLoading() {
   const team = state.teams.find(value => value.id === state.teamId);
   els.forYouMeta.textContent = `${team?.name || state.projectName || "Project"} · Loading your work…`;
-  for (const [count, status, list] of [
-    [els.forYouWorkCount, els.forYouWorkStatus, els.forYouWorkList],
-    [els.forYouMentionsCount, els.forYouMentionsStatus, els.forYouMentionsList],
-    [els.forYouActivityCount, els.forYouActivityStatus, els.forYouActivityList]
+  for (const [count, status, list, showAll] of [
+    [els.forYouWorkCount, els.forYouWorkStatus, els.forYouWorkList, els.forYouWorkShowAll],
+    [els.forYouMentionsCount, els.forYouMentionsStatus, els.forYouMentionsList, els.forYouMentionsShowAll],
+    [els.forYouActivityCount, els.forYouActivityStatus, els.forYouActivityList, els.forYouActivityShowAll]
   ]) {
     count.textContent = "—";
     status.textContent = "";
     status.classList.remove("is-error");
+    showAll.hidden = true;
     list.replaceChildren(...Array.from({ length: 3 }, () => {
       const skeleton = document.createElement("div");
       skeleton.className = "for-you-skeleton";
@@ -1068,11 +1073,27 @@ function renderForYouSection(kind, items, renderer, emptyMessage) {
   const count = els[`forYou${title}Count`];
   const status = els[`forYou${title}Status`];
   const list = els[`forYou${title}List`];
+  const showAll = els[`forYou${title}ShowAll`];
   const error = state.forYouErrors[kind] || "";
+  const expanded = state.forYouExpanded[kind];
+  const visibleItems = expanded ? items : items.slice(0, 5);
   count.textContent = String(items.length);
   status.classList.toggle("is-error", Boolean(error));
   status.textContent = error || (!items.length ? emptyMessage : "");
-  list.replaceChildren(...items.map(renderer));
+  list.replaceChildren(...visibleItems.map(renderer));
+  showAll.hidden = items.length <= 5;
+  showAll.textContent = expanded ? "Show less" : "Show all";
+  showAll.setAttribute("aria-expanded", String(expanded));
+  showAll.setAttribute("aria-controls", list.id);
+}
+
+function toggleForYouSection(kind) {
+  state.forYouExpanded[kind] = !state.forYouExpanded[kind];
+  renderForYou();
+  if (!state.forYouExpanded[kind]) {
+    const title = kind[0].toUpperCase() + kind.slice(1);
+    els[`forYou${title}ShowAll`].scrollIntoView({ block: "nearest" });
+  }
 }
 
 function forYouLeadingIcon(item) {
@@ -3253,6 +3274,9 @@ els.theme.addEventListener("click", () => {
 });
 els.headerAvatar.addEventListener("click", showSettings);
 els.forYouNav.addEventListener("click", () => showMainView("for-you"));
+els.forYouWorkShowAll.addEventListener("click", () => toggleForYouSection("work"));
+els.forYouMentionsShowAll.addEventListener("click", () => toggleForYouSection("mentions"));
+els.forYouActivityShowAll.addEventListener("click", () => toggleForYouSection("activity"));
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
 els.refresh.addEventListener("click", () => loadBoard());
