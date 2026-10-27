@@ -293,7 +293,13 @@
                   <button type="button" data-description-command="insertUnorderedList" aria-label="Bulleted list" title="Bulleted list">• List</button>
                   <button type="button" data-description-command="insertOrderedList" aria-label="Numbered list" title="Numbered list">1. List</button>
                 </div>
-                <div id="descriptionEditor" class="description-editor-content rich-content" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Add a description…"></div>
+                <div class="mention-editor-wrap">
+                  <div id="descriptionEditor" class="description-editor-content rich-content" contenteditable="true" role="textbox" aria-label="Description" aria-multiline="true" aria-expanded="false" data-placeholder="Add a description…"></div>
+                  <div id="descriptionMentionMenu" class="mention-menu" role="listbox" aria-label="Mention a team member" hidden>
+                    <div class="mention-menu-label">Mention someone</div>
+                    <div id="descriptionMentionOptions" class="mention-options"></div>
+                  </div>
+                </div>
                 <div class="description-editor-footer">
                   <span>Ctrl + Enter to save</span>
                   <button id="descriptionEditorCancel" class="text-button" type="button">Cancel</button>
@@ -324,8 +330,13 @@
                     <span>Add a comment…</span>
                   </button>
                   <form id="commentComposerForm" class="comment-composer-form" hidden>
-                    <label class="sr-only" for="commentComposerInput">Comment</label>
-                    <textarea id="commentComposerInput" rows="4" placeholder="Write a comment…" required></textarea>
+                    <div class="mention-editor-wrap">
+                      <div id="commentComposerInput" class="comment-composer-input rich-content" contenteditable="true" role="textbox" aria-label="Comment" aria-multiline="true" aria-expanded="false" data-placeholder="Write a comment…"></div>
+                      <div id="commentMentionMenu" class="mention-menu" role="listbox" aria-label="Mention a team member" hidden>
+                        <div class="mention-menu-label">Mention someone</div>
+                        <div id="commentMentionOptions" class="mention-options"></div>
+                      </div>
+                    </div>
                     <div class="comment-composer-footer">
                       <span class="comment-composer-hint">Ctrl + Enter to save</span>
                       <button id="commentComposerCancel" class="text-button" type="button">Cancel</button>

@@ -232,6 +232,8 @@ const els = {
   descriptionEditButton: document.querySelector("#descriptionEditButton"),
   descriptionEditorForm: document.querySelector("#descriptionEditorForm"),
   descriptionEditor: document.querySelector("#descriptionEditor"),
+  descriptionMentionMenu: document.querySelector("#descriptionMentionMenu"),
+  descriptionMentionOptions: document.querySelector("#descriptionMentionOptions"),
   descriptionEditorCancel: document.querySelector("#descriptionEditorCancel"),
   descriptionEditorSubmit: document.querySelector("#descriptionEditorSubmit"),
   descriptionEditorStatus: document.querySelector("#descriptionEditorStatus"),
@@ -283,6 +285,8 @@ const els = {
   commentComposerPrompt: document.querySelector("#commentComposerPrompt"),
   commentComposerForm: document.querySelector("#commentComposerForm"),
   commentComposerInput: document.querySelector("#commentComposerInput"),
+  commentMentionMenu: document.querySelector("#commentMentionMenu"),
+  commentMentionOptions: document.querySelector("#commentMentionOptions"),
   commentComposerCancel: document.querySelector("#commentComposerCancel"),
   commentComposerSubmit: document.querySelector("#commentComposerSubmit"),
   commentComposerStatus: document.querySelector("#commentComposerStatus"),
@@ -290,6 +294,11 @@ const els = {
   workItemHistory: document.querySelector("#workItemHistory"),
   workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
   openInAzure: document.querySelector("#openInAzure")
+};
+
+const mentionState = {
+  description: { query: "", range: null, activeIndex: 0, choices: [] },
+  comment: { query: "", range: null, activeIndex: 0, choices: [] }
 };
 
 function readJson(key, fallback) {
@@ -594,6 +603,7 @@ function normalizeWorkItem(item) {
     type: fields["System.WorkItemType"] || "Work item",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
     assigneeUniqueName: assigned?.uniqueName || assigned?.displayName || "",
+    assigneeId: assigned?.id || "",
     priority: fields["Microsoft.VSTS.Common.Priority"] ?? null,
     iterationPath,
     iterationName: iterationPath.split("\\").filter(Boolean).pop() || "No sprint",
@@ -1747,6 +1757,7 @@ function normalizeWorkItemDetail(item) {
     descriptionHtml: fields["System.Description"] || "",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
     assigneeUniqueName: assigned?.uniqueName || assigned?.displayName || "",
+    assigneeId: assigned?.id || "",
     reporter: reporter?.displayName || reporter?.uniqueName || "",
     priority: fields["Microsoft.VSTS.Common.Priority"] ?? null,
     points: storyPoints ?? effort ?? null,
@@ -1973,6 +1984,7 @@ async function changeWorkItemAssignee(item, choice) {
     const assigned = result.fields?.["System.AssignedTo"];
     item.assignee = assigned?.displayName || assigned?.uniqueName || "";
     item.assigneeUniqueName = assigned?.uniqueName || assigned?.displayName || "";
+    item.assigneeId = assigned?.id || "";
     let detail = state.detailsCache.get(item.id);
     if (!detail) {
       detail = normalizeWorkItemDetail(result);
@@ -1981,6 +1993,7 @@ async function changeWorkItemAssignee(item, choice) {
     if (detail) {
       detail.assignee = item.assignee;
       detail.assigneeUniqueName = item.assigneeUniqueName;
+      detail.assigneeId = item.assigneeId;
       detail.changedDate = result.fields?.["System.ChangedDate"] || detail.changedDate;
     }
     state.historyCache.delete(item.id);
@@ -2633,6 +2646,181 @@ async function submitWorkItemTitle(event) {
   }
 }
 
+function mentionChoices() {
+  const choices = [];
+  if (state.authenticatedUser?.id) choices.push({
+    id: state.authenticatedUser.id,
+    name: state.authenticatedUser.displayName,
+    uniqueName: state.authenticatedUser.uniqueName || ""
+  });
+  state.teamMembers.forEach(member => choices.push(member));
+  [...state.stories, ...state.backlogItems].forEach(item => {
+    if (item.assigneeId && item.assignee) choices.push({
+      id: item.assigneeId,
+      name: item.assignee,
+      uniqueName: item.assigneeUniqueName || ""
+    });
+  });
+  const unique = new Map();
+  choices.forEach(choice => {
+    const id = String(choice.id || "").trim();
+    const name = String(choice.name || choice.displayName || "").trim();
+    if (id && name && !unique.has(id.toLocaleLowerCase("en"))) {
+      unique.set(id.toLocaleLowerCase("en"), { id, name, uniqueName: choice.uniqueName || "" });
+    }
+  });
+  return [...unique.values()].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+}
+
+function mentionElements(kind) {
+  return kind === "description"
+    ? { editor: els.descriptionEditor, menu: els.descriptionMentionMenu, options: els.descriptionMentionOptions }
+    : { editor: els.commentComposerInput, menu: els.commentMentionMenu, options: els.commentMentionOptions };
+}
+
+function mentionTriggerAtCaret(editor) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !selection.isCollapsed) return null;
+  const caret = selection.getRangeAt(0);
+  if (!editor.contains(caret.endContainer)) return null;
+  let node = caret.endContainer;
+  let offset = caret.endOffset;
+  if (node.nodeType !== Node.TEXT_NODE) {
+    const child = node.childNodes[Math.max(0, offset - 1)];
+    node = child;
+    while (node?.lastChild) node = node.lastChild;
+    if (node?.nodeType !== Node.TEXT_NODE) return null;
+    offset = node.textContent.length;
+  }
+  const prefix = node.textContent.slice(0, offset);
+  const match = prefix.match(/(?:^|\s)@([^@\s]*)$/u);
+  if (!match) return null;
+  const tokenLength = match[1].length + 1;
+  const range = document.createRange();
+  range.setStart(node, offset - tokenLength);
+  range.setEnd(node, offset);
+  return { query: match[1], range };
+}
+
+function updateMentionSuggestions(kind) {
+  const { editor, menu } = mentionElements(kind);
+  const trigger = mentionTriggerAtCaret(editor);
+  if (!trigger) return closeMentionMenu(kind);
+  const query = trigger.query.toLocaleLowerCase("en");
+  const choices = mentionChoices().filter(choice => !query
+    || choice.name.toLocaleLowerCase("en").includes(query)
+    || choice.uniqueName.toLocaleLowerCase("en").includes(query)).slice(0, 8);
+  mentionState[kind] = { query: trigger.query, range: trigger.range.cloneRange(), activeIndex: 0, choices };
+  menu.hidden = false;
+  editor.setAttribute("aria-expanded", "true");
+  editor.setAttribute("aria-controls", menu.id);
+  renderMentionOptions(kind);
+}
+
+function renderMentionOptions(kind) {
+  const { editor, options } = mentionElements(kind);
+  const current = mentionState[kind];
+  if (!current.choices.length) {
+    const empty = document.createElement("div");
+    empty.className = "mention-empty";
+    empty.textContent = state.teamMembers.length ? "No matching team members." : "No team members available.";
+    options.replaceChildren(empty);
+    editor.removeAttribute("aria-activedescendant");
+    return;
+  }
+  options.replaceChildren(...current.choices.map((choice, index) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.id = `${kind}MentionOption${index}`;
+    option.className = `mention-option${index === current.activeIndex ? " is-active" : ""}`;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(index === current.activeIndex));
+    const avatar = document.createElement("span");
+    avatar.className = "mention-avatar";
+    avatar.textContent = initialsFor(choice.name);
+    const label = document.createElement("span");
+    label.className = "mention-label";
+    const name = document.createElement("strong");
+    name.textContent = choice.name;
+    label.append(name);
+    if (choice.uniqueName && choice.uniqueName !== choice.name) {
+      const detail = document.createElement("small");
+      detail.textContent = choice.uniqueName;
+      label.append(detail);
+    }
+    option.append(avatar, label);
+    option.addEventListener("mousedown", event => event.preventDefault());
+    option.addEventListener("click", () => insertMention(kind, choice));
+    return option;
+  }));
+  editor.setAttribute("aria-activedescendant", `${kind}MentionOption${current.activeIndex}`);
+}
+
+function insertMention(kind, choice) {
+  const { editor } = mentionElements(kind);
+  const range = mentionState[kind].range;
+  if (!range) return;
+  range.deleteContents();
+  const mention = document.createElement("a");
+  mention.href = "#";
+  mention.className = "user-mention";
+  mention.setAttribute("data-vss-mention", `version:2.0,${choice.id}`);
+  mention.contentEditable = "false";
+  mention.textContent = `@${choice.name}`;
+  const space = document.createTextNode(" ");
+  range.insertNode(mention);
+  mention.after(space);
+  const caret = document.createRange();
+  caret.setStartAfter(space);
+  caret.collapse(true);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(caret);
+  closeMentionMenu(kind);
+  editor.focus();
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function moveMentionSelection(kind, direction) {
+  const current = mentionState[kind];
+  if (!current.choices.length) return;
+  current.activeIndex = (current.activeIndex + direction + current.choices.length) % current.choices.length;
+  renderMentionOptions(kind);
+  mentionElements(kind).options.querySelector(".is-active")?.scrollIntoView({ block: "nearest" });
+}
+
+function closeMentionMenu(kind) {
+  const { editor, menu, options } = mentionElements(kind);
+  menu.hidden = true;
+  options.replaceChildren();
+  editor.setAttribute("aria-expanded", "false");
+  editor.removeAttribute("aria-controls");
+  editor.removeAttribute("aria-activedescendant");
+  mentionState[kind] = { query: "", range: null, activeIndex: 0, choices: [] };
+}
+
+function handleMentionKeydown(kind, event) {
+  const { menu } = mentionElements(kind);
+  if (menu.hidden) return false;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    moveMentionSelection(kind, event.key === "ArrowDown" ? 1 : -1);
+    return true;
+  }
+  if ((event.key === "Enter" || event.key === "Tab") && mentionState[kind].choices.length) {
+    event.preventDefault();
+    insertMention(kind, mentionState[kind].choices[mentionState[kind].activeIndex]);
+    return true;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMentionMenu(kind);
+    return true;
+  }
+  return false;
+}
+
 function openDescriptionEditor() {
   const item = selectedWorkItem();
   if (!item || els.descriptionEditButton.disabled) return;
@@ -2640,8 +2828,10 @@ function openDescriptionEditor() {
   closeWorkItemAssigneeMenu();
   closeWorkItemTagsMenu();
   closeWorkItemDetailFieldMenus();
+  closeMentionMenu("comment");
   const html = state.detailsCache.get(item.id)?.descriptionHtml || "";
   els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
+  els.descriptionEditor.querySelectorAll("a.user-mention").forEach(mention => { mention.contentEditable = "false"; });
   hydrateRichTextImages(els.descriptionEditor);
   els.workItemDescription.hidden = true;
   els.descriptionEditButton.hidden = true;
@@ -2652,6 +2842,7 @@ function openDescriptionEditor() {
 }
 
 function resetDescriptionEditor() {
+  closeMentionMenu("description");
   els.descriptionEditorForm.hidden = true;
   els.workItemDescription.hidden = false;
   els.descriptionEditButton.hidden = false;
@@ -2674,7 +2865,11 @@ function applyDescriptionCommand(command) {
 }
 
 function descriptionEditorHtml() {
-  const source = els.descriptionEditor.cloneNode(true);
+  return richEditorHtml(els.descriptionEditor);
+}
+
+function richEditorHtml(editor) {
+  const source = editor.cloneNode(true);
   restoreAuthenticatedImageSources(source);
   const safe = document.createElement("div");
   safe.append(sanitizeRichHtml(source.innerHTML));
@@ -2749,16 +2944,18 @@ function renderComments(comments, loading = false, error = "") {
 }
 
 function setCommentComposerExpanded(expanded) {
+  if (expanded) closeMentionMenu("description");
   els.commentComposerPrompt.hidden = expanded;
   els.commentComposerForm.hidden = !expanded;
+  if (!expanded) closeMentionMenu("comment");
   if (expanded) requestAnimationFrame(() => els.commentComposerInput.focus());
 }
 
 function resetCommentComposer() {
-  els.commentComposerInput.value = "";
+  els.commentComposerInput.replaceChildren();
   els.commentComposerStatus.textContent = "";
   els.commentComposerStatus.classList.remove("is-error");
-  els.commentComposerInput.disabled = false;
+  els.commentComposerInput.contentEditable = "true";
   els.commentComposerCancel.disabled = false;
   els.commentComposerSubmit.disabled = false;
   els.commentComposerSubmit.textContent = "Save";
@@ -2766,7 +2963,7 @@ function resetCommentComposer() {
 }
 
 function setCommentComposerBusy(busy) {
-  els.commentComposerInput.disabled = busy;
+  els.commentComposerInput.contentEditable = String(!busy);
   els.commentComposerCancel.disabled = busy;
   els.commentComposerSubmit.disabled = busy;
   els.commentComposerSubmit.textContent = busy ? "Saving…" : "Save";
@@ -2775,8 +2972,8 @@ function setCommentComposerBusy(busy) {
 async function submitWorkItemComment(event) {
   event.preventDefault();
   const item = selectedWorkItem();
-  const text = els.commentComposerInput.value.trim();
-  if (!item || !text) return;
+  const text = richEditorHtml(els.commentComposerInput);
+  if (!item || !htmlToText(text).trim()) return;
   setCommentComposerBusy(true);
   els.commentComposerStatus.textContent = "Posting comment…";
   els.commentComposerStatus.classList.remove("is-error");
@@ -2997,11 +3194,18 @@ function appendSafeNode(parent, source) {
 
 function copySafeRichTextAttributes(source, target, tag) {
   if (tag === "a") {
-    const href = safeRichTextUrl(source.getAttribute("href"), false);
-    if (href) {
-      target.href = href;
-      target.target = "_blank";
-      target.rel = "noopener noreferrer";
+    const mention = source.getAttribute("data-vss-mention") || "";
+    if (/^version:2\.0,[a-z0-9._:@-]{1,200}$/i.test(mention)) {
+      target.setAttribute("href", "#");
+      target.setAttribute("data-vss-mention", mention);
+      target.classList.add("user-mention");
+    } else {
+      const href = safeRichTextUrl(source.getAttribute("href"), false);
+      if (href) {
+        target.href = href;
+        target.target = "_blank";
+        target.rel = "noopener noreferrer";
+      }
     }
   }
   if (tag === "img") {
@@ -3335,6 +3539,7 @@ document.querySelectorAll("[data-description-command]").forEach(button => {
   button.addEventListener("click", () => applyDescriptionCommand(button.dataset.descriptionCommand));
 });
 els.descriptionEditor.addEventListener("keydown", event => {
+  if (handleMentionKeydown("description", event)) return;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
@@ -3345,6 +3550,7 @@ els.descriptionEditor.addEventListener("keydown", event => {
     els.descriptionEditorForm.requestSubmit();
   }
 });
+els.descriptionEditor.addEventListener("input", () => updateMentionSuggestions("description"));
 els.workItemTitle.addEventListener("click", openWorkItemTitleEditor);
 els.workItemTitle.addEventListener("keydown", event => {
   if (event.key !== "Enter" && event.key !== " ") return;
@@ -3374,6 +3580,7 @@ els.commentComposerPrompt.addEventListener("click", () => setCommentComposerExpa
 els.commentComposerCancel.addEventListener("click", resetCommentComposer);
 els.commentComposerForm.addEventListener("submit", submitWorkItemComment);
 els.commentComposerInput.addEventListener("keydown", event => {
+  if (handleMentionKeydown("comment", event)) return;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
@@ -3383,6 +3590,7 @@ els.commentComposerInput.addEventListener("keydown", event => {
     els.commentComposerForm.requestSubmit();
   }
 });
+els.commentComposerInput.addEventListener("input", () => updateMentionSuggestions("comment"));
 els.workItemDialog.addEventListener("cancel", event => {
   if (!els.workItemTitleForm.hidden) {
     event.preventDefault();
@@ -3473,6 +3681,9 @@ els.clearFilters.addEventListener("click", async () => {
 });
 
 document.addEventListener("click", event => {
+  if (event.target.closest?.("a.user-mention")) event.preventDefault();
+  if (!els.descriptionMentionMenu.contains(event.target) && !els.descriptionEditor.contains(event.target)) closeMentionMenu("description");
+  if (!els.commentMentionMenu.contains(event.target) && !els.commentComposerInput.contains(event.target)) closeMentionMenu("comment");
   if (!els.forYouPersonControl.contains(event.target)) closeForYouPersonMenu();
   if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
   if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();

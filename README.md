@@ -10,6 +10,7 @@ Jiraish is a compact, Jira-style sprint and backlog interface for Azure DevOps. 
 - Filters for type, assignee, priority, sprint, state, area, tags, and feature
 - View and edit work items directly
 - Edit titles, descriptions, states, assignees, priorities, story points, areas, sprints, and tags
+- Mention team members in descriptions and comments with Jira-style `@` suggestions
 - Light and dark themes
 - Responsive layout for desktop and mobile
 - Dynamic branding based on the selected Azure DevOps team
