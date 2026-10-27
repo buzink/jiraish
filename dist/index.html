@@ -25,6 +25,7 @@
         <span id="brandName">Jiraish</span>
       </div>
       <nav aria-label="Main navigation">
+        <button id="forYouNav" class="nav-item" type="button">For you</button>
         <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint board</button>
         <button id="backlogNav" class="nav-item" type="button">Backlog</button>
       </nav>
@@ -77,7 +78,15 @@
         </div>
       </section>
 
-      <section class="filter-panel" aria-label="Backlog filters">
+      <section class="for-you-heading" aria-labelledby="forYouTitle" data-for-you-view hidden>
+        <div>
+          <div class="eyebrow" data-project-team>PROJECT</div>
+          <h1 id="forYouTitle">For you</h1>
+          <p id="forYouMeta" class="sprint-meta">Your work and recent activity in one place.</p>
+        </div>
+      </section>
+
+      <section class="filter-panel" aria-label="Backlog filters" data-list-view>
         <div class="filter-toolbar">
           <div class="filter-toolbar-label">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.2V18l-3 1.5v-7.3L4 5Z"/></svg>
@@ -90,7 +99,7 @@
         <div id="activeFilters" class="active-filters" aria-label="Active filters" hidden></div>
       </section>
 
-      <section id="statusRegion" class="status-region" aria-live="polite"></section>
+      <section id="statusRegion" class="status-region" aria-live="polite" data-list-view></section>
 
       <section id="board" class="board" aria-label="Sprint Kanban board" data-board-view>
         <article class="column" data-column="todo">
@@ -118,6 +127,49 @@
 
       <section id="backlogView" class="backlog-view" aria-labelledby="backlogTitle" data-backlog-view hidden>
         <div id="backlogContent" class="backlog-content"></div>
+      </section>
+
+      <section id="forYouView" class="for-you-view" aria-labelledby="forYouTitle" data-for-you-view hidden>
+        <div class="for-you-grid">
+          <section class="for-you-panel for-you-work-panel" aria-labelledby="forYouWorkTitle">
+            <header>
+              <div>
+                <span class="for-you-icon for-you-icon-work" aria-hidden="true">✓</span>
+                <h2 id="forYouWorkTitle">Work in progress</h2>
+              </div>
+              <span id="forYouWorkCount" class="count">0</span>
+            </header>
+            <p class="for-you-description">Open work items assigned to you.</p>
+            <div id="forYouWorkStatus" class="for-you-status" aria-live="polite"></div>
+            <div id="forYouWorkList" class="for-you-list"></div>
+          </section>
+
+          <section class="for-you-panel" aria-labelledby="forYouMentionsTitle">
+            <header>
+              <div>
+                <span class="for-you-icon for-you-icon-mention" aria-hidden="true">@</span>
+                <h2 id="forYouMentionsTitle">Reply to mentions</h2>
+              </div>
+              <span id="forYouMentionsCount" class="count">0</span>
+            </header>
+            <p class="for-you-description">Recent comments where someone mentioned you.</p>
+            <div id="forYouMentionsStatus" class="for-you-status" aria-live="polite"></div>
+            <div id="forYouMentionsList" class="for-you-list"></div>
+          </section>
+
+          <section class="for-you-panel" aria-labelledby="forYouActivityTitle">
+            <header>
+              <div>
+                <span class="for-you-icon for-you-icon-activity" aria-hidden="true">↺</span>
+                <h2 id="forYouActivityTitle">Worked on</h2>
+              </div>
+              <span id="forYouActivityCount" class="count">0</span>
+            </header>
+            <p class="for-you-description">Your latest changes across work items.</p>
+            <div id="forYouActivityStatus" class="for-you-status" aria-live="polite"></div>
+            <div id="forYouActivityList" class="for-you-list"></div>
+          </section>
+        </div>
       </section>
     </main>
 

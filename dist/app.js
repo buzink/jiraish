@@ -83,6 +83,11 @@ const state = {
   iterationStoriesCache: new Map(),
   backlogItems: [],
   backlogTeamId: "",
+  forYouProjectName: "",
+  forYouWorkItems: [],
+  forYouMentions: [],
+  forYouActivity: [],
+  forYouErrors: {},
   currentView: "board",
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
@@ -142,10 +147,23 @@ const els = {
   brandName: document.querySelector("#brandName"),
   headerAvatar: document.querySelector("#headerAvatar"),
   projectTeamLabels: [...document.querySelectorAll("[data-project-team]")],
+  forYouNav: document.querySelector("#forYouNav"),
   sprintBoardNav: document.querySelector("#sprintBoardNav"),
   backlogNav: document.querySelector("#backlogNav"),
+  listViews: [...document.querySelectorAll("[data-list-view]")],
   boardViews: [...document.querySelectorAll("[data-board-view]")],
   backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
+  forYouViews: [...document.querySelectorAll("[data-for-you-view]")],
+  forYouMeta: document.querySelector("#forYouMeta"),
+  forYouWorkCount: document.querySelector("#forYouWorkCount"),
+  forYouWorkStatus: document.querySelector("#forYouWorkStatus"),
+  forYouWorkList: document.querySelector("#forYouWorkList"),
+  forYouMentionsCount: document.querySelector("#forYouMentionsCount"),
+  forYouMentionsStatus: document.querySelector("#forYouMentionsStatus"),
+  forYouMentionsList: document.querySelector("#forYouMentionsList"),
+  forYouActivityCount: document.querySelector("#forYouActivityCount"),
+  forYouActivityStatus: document.querySelector("#forYouActivityStatus"),
+  forYouActivityList: document.querySelector("#forYouActivityList"),
   backlogView: document.querySelector("#backlogView"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
@@ -351,7 +369,11 @@ async function loadAuthenticatedUser() {
       || properties.Account?.$value
       || identity.uniqueName
       || "";
-    return displayName ? { id: identity.id || "", displayName } : null;
+    return displayName ? {
+      id: identity.id || "",
+      displayName,
+      uniqueName: identity.uniqueName || identity.mailAddress || identity.properties?.Account?.$value || ""
+    } : null;
   } catch (error) {
     console.warn("The user associated with the PAT could not be determined; team initials will be used.", error);
     return null;
@@ -399,6 +421,7 @@ async function loadBoard({ openSettings = false } = {}) {
     renderEmptyBoard();
     return;
   }
+  state.forYouProjectName = "";
   setLoading(true);
   clearNotice();
   try {
@@ -445,6 +468,7 @@ async function loadBoard({ openSettings = false } = {}) {
       render();
       showNotice(`No sprints are configured for team “${selectedTeam.name}”.`, "error");
       if (state.currentView === "backlog") await loadBacklog(true);
+      if (state.currentView === "for-you") await loadForYou(true);
       if (openSettings) showSettings();
       return;
     }
@@ -454,6 +478,7 @@ async function loadBoard({ openSettings = false } = {}) {
     if (state.filters.sprint.size) await applySprintFilter();
     render();
     if (state.currentView === "backlog") await loadBacklog(true);
+    if (state.currentView === "for-you") await loadForYou(true);
     if (openSettings) showSettings();
   } catch (error) {
     console.error(error);
@@ -559,9 +584,28 @@ function normalizeWorkItem(item) {
     parentId: fields["System.Parent"] || null,
     featureLabel: "",
     points: storyPoints ?? effort ?? null,
+    changedDate: fields["System.ChangedDate"] || "",
+    changedBy: fields["System.ChangedBy"]?.displayName || fields["System.ChangedBy"]?.uniqueName || "",
     pointsField: storyPoints !== undefined ? "Microsoft.VSTS.Scheduling.StoryPoints"
       : effort !== undefined ? "Microsoft.VSTS.Scheduling.Effort" : ""
   };
+}
+
+async function fetchWorkItems(ids) {
+  const uniqueIds = [...new Set(ids.map(Number).filter(Boolean))];
+  const items = [];
+  const fields = [
+    "System.Id", "System.Title", "System.State", "System.WorkItemType", "System.AssignedTo",
+    "System.IterationPath", "System.AreaPath", "System.Tags", "System.Parent", "System.ChangedDate",
+    "System.ChangedBy", "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints",
+    "Microsoft.VSTS.Scheduling.Effort"
+  ].join(",");
+  for (let index = 0; index < uniqueIds.length; index += 200) {
+    const chunk = uniqueIds.slice(index, index + 200);
+    const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields)}&errorPolicy=Omit&api-version=7.1`);
+    items.push(...(result.value || []).map(normalizeWorkItem));
+  }
+  return items;
 }
 
 async function loadParentDetails(items) {
@@ -765,13 +809,23 @@ async function applySprintFilter() {
 
 async function showMainView(view) {
   state.currentView = view;
+  const showForYou = view === "for-you";
   const showBacklog = view === "backlog";
-  els.boardViews.forEach(element => { element.hidden = showBacklog; });
+  const showBoard = view === "board";
+  els.listViews.forEach(element => { element.hidden = showForYou; });
+  els.boardViews.forEach(element => { element.hidden = !showBoard; });
   els.backlogViews.forEach(element => { element.hidden = !showBacklog; });
-  els.sprintBoardNav.classList.toggle("is-active", !showBacklog);
+  els.forYouViews.forEach(element => { element.hidden = !showForYou; });
+  els.forYouNav.classList.toggle("is-active", showForYou);
+  els.sprintBoardNav.classList.toggle("is-active", showBoard);
   els.backlogNav.classList.toggle("is-active", showBacklog);
-  els.sprintBoardNav.toggleAttribute("aria-current", !showBacklog);
+  els.forYouNav.toggleAttribute("aria-current", showForYou);
+  els.sprintBoardNav.toggleAttribute("aria-current", showBoard);
   els.backlogNav.toggleAttribute("aria-current", showBacklog);
+  if (showForYou) {
+    await loadForYou();
+    return;
+  }
   if (showBacklog) {
     await loadBacklog();
     return;
@@ -783,6 +837,316 @@ async function showMainView(view) {
     finally { setLoading(false); }
   }
   render();
+}
+
+async function queryWorkItemIds(query, top = 100) {
+  const result = await azure(`/_apis/wit/wiql?$top=${top}&api-version=7.1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query })
+  });
+  return (result.workItems || []).map(item => item.id).filter(Boolean);
+}
+
+function wiqlText(value) {
+  return String(value || "").replace(/'/g, "''");
+}
+
+function isFinishedWorkItem(item) {
+  if (state.mapping[item.state] === "done") return true;
+  return /^(closed|done|completed|removed|resolved)$/i.test(item.state.trim());
+}
+
+async function mapWithConcurrency(values, limit, mapper) {
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(values[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker));
+  return results;
+}
+
+async function loadForYou(force = false) {
+  if (!state.projectName) {
+    state.forYouProjectName = "";
+    state.forYouWorkItems = [];
+    state.forYouMentions = [];
+    state.forYouActivity = [];
+    state.forYouErrors = {};
+    renderForYou();
+    return;
+  }
+  if (!force && state.forYouProjectName === state.projectName) {
+    renderForYou();
+    return;
+  }
+
+  state.forYouErrors = {};
+  renderForYouLoading();
+  els.refresh.disabled = true;
+  els.refresh.classList.add("is-spinning");
+  const sections = await Promise.allSettled([
+    loadForYouWorkItems(),
+    loadForYouMentions(),
+    loadForYouActivity()
+  ]);
+  const [work, mentions, activity] = sections;
+  if (work.status === "fulfilled") state.forYouWorkItems = work.value;
+  else {
+    console.error(work.reason);
+    state.forYouWorkItems = [];
+    state.forYouErrors.work = work.reason?.message || "Work in progress could not be loaded.";
+  }
+  if (mentions.status === "fulfilled") state.forYouMentions = mentions.value;
+  else {
+    console.error(mentions.reason);
+    state.forYouMentions = [];
+    state.forYouErrors.mentions = mentions.reason?.message || "Mentions could not be loaded.";
+  }
+  if (activity.status === "fulfilled") state.forYouActivity = activity.value;
+  else {
+    console.error(activity.reason);
+    state.forYouActivity = [];
+    state.forYouErrors.activity = activity.reason?.message || "Activity could not be loaded.";
+  }
+  state.forYouProjectName = state.projectName;
+  renderForYou();
+  els.refresh.disabled = false;
+  els.refresh.classList.remove("is-spinning");
+}
+
+async function loadForYouWorkItems() {
+  const ids = await queryWorkItemIds(`
+    SELECT [System.Id]
+    FROM WorkItems
+    WHERE [System.TeamProject] = @project
+      AND [System.AssignedTo] = @Me
+    ORDER BY [System.ChangedDate] DESC
+  `, 100);
+  const items = await fetchWorkItems(ids);
+  return items.filter(item => !isFinishedWorkItem(item))
+    .sort((a, b) => new Date(b.changedDate) - new Date(a.changedDate));
+}
+
+async function loadForYouMentions() {
+  const user = state.authenticatedUser;
+  if (!user?.displayName) throw new Error("The current user could not be identified for mentions.");
+  const ids = await queryWorkItemIds(`
+    SELECT [System.Id]
+    FROM WorkItems
+    WHERE [System.TeamProject] = @project
+      AND [System.History] CONTAINS WORDS '${wiqlText(user.displayName)}'
+    ORDER BY [System.ChangedDate] DESC
+  `, 30);
+  const items = await fetchWorkItems(ids);
+  const mentionGroups = await mapWithConcurrency(items, 5, async item => {
+    const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&$expand=renderedText&api-version=7.1-preview.4`);
+    const comments = normalizeComments(result);
+    state.commentsCache.set(item.id, comments);
+    return comments.filter(comment => !commentIsByUser(comment, user) && commentMentionsUser(comment, user))
+      .map(comment => ({ item, comment }));
+  });
+  return mentionGroups.flat()
+    .sort((a, b) => new Date(b.comment.createdDate) - new Date(a.comment.createdDate))
+    .slice(0, 20);
+}
+
+async function loadForYouActivity() {
+  if (!state.authenticatedUser) {
+    const ids = await queryWorkItemIds(`
+      SELECT [System.Id]
+      FROM WorkItems
+      WHERE [System.TeamProject] = @project
+        AND [System.ChangedBy] = @Me
+      ORDER BY [System.ChangedDate] DESC
+    `, 20);
+    const items = await fetchWorkItems(ids);
+    return items.map(item => ({
+      item,
+      entry: {
+        id: `latest-${item.id}`,
+        revision: "",
+        author: item.changedBy || "You",
+        date: item.changedDate,
+        created: false,
+        changes: []
+      }
+    })).sort((a, b) => new Date(b.entry.date) - new Date(a.entry.date));
+  }
+  let ids;
+  try {
+    ids = await queryWorkItemIds(`
+      SELECT [System.Id]
+      FROM WorkItems
+      WHERE [System.TeamProject] = @project
+        AND [System.ChangedBy] EVER @Me
+      ORDER BY [System.ChangedDate] DESC
+    `, 25);
+  } catch (error) {
+    console.warn("The historical Changed By query was not supported; using the latest changes instead.", error);
+    ids = await queryWorkItemIds(`
+      SELECT [System.Id]
+      FROM WorkItems
+      WHERE [System.TeamProject] = @project
+        AND [System.ChangedBy] = @Me
+      ORDER BY [System.ChangedDate] DESC
+    `, 25);
+  }
+  const items = await fetchWorkItems(ids);
+  const activityGroups = await mapWithConcurrency(items, 5, async item => {
+    const result = await azure(`/_apis/wit/workItems/${item.id}/updates?api-version=7.1`);
+    const history = normalizeHistory(result);
+    state.historyCache.set(item.id, history);
+    return (result.value || []).filter(update => identityMatches(update.revisedBy, state.authenticatedUser))
+      .map(update => ({ item, entry: normalizeHistoryUpdate(update) }));
+  });
+  return activityGroups.flat()
+    .sort((a, b) => new Date(b.entry.date) - new Date(a.entry.date))
+    .slice(0, 20);
+}
+
+function identityMatches(identity, user) {
+  if (!identity || !user) return false;
+  const normalized = value => String(value || "").trim().toLocaleLowerCase("en");
+  if (identity.id && user.id && normalized(identity.id) === normalized(user.id)) return true;
+  const identityNames = [identity.uniqueName, identity.displayName].map(normalized).filter(Boolean);
+  const userNames = [user.uniqueName, user.displayName].map(normalized).filter(Boolean);
+  return identityNames.some(name => userNames.includes(name));
+}
+
+function commentIsByUser(comment, user) {
+  return identityMatches({ id: comment.authorId, uniqueName: comment.authorUniqueName, displayName: comment.author }, user);
+}
+
+function commentMentionsUser(comment, user) {
+  const source = String(comment.html || "");
+  const sourceKey = source.toLocaleLowerCase("en");
+  const textKey = htmlToText(source).toLocaleLowerCase("en");
+  const idKeys = [user.id, user.uniqueName].map(value => String(value || "").toLocaleLowerCase("en")).filter(Boolean);
+  if (sourceKey.includes("data-vss-mention") && idKeys.some(value => sourceKey.includes(value))) return true;
+  const displayName = String(user.displayName || "").trim().toLocaleLowerCase("en");
+  return Boolean(displayName && (textKey.includes(`@${displayName}`)
+    || (sourceKey.includes("data-vss-mention") && sourceKey.includes(displayName))));
+}
+
+function renderForYouLoading() {
+  const team = state.teams.find(value => value.id === state.teamId);
+  els.forYouMeta.textContent = `${team?.name || state.projectName || "Project"} · Loading your work…`;
+  for (const [count, status, list] of [
+    [els.forYouWorkCount, els.forYouWorkStatus, els.forYouWorkList],
+    [els.forYouMentionsCount, els.forYouMentionsStatus, els.forYouMentionsList],
+    [els.forYouActivityCount, els.forYouActivityStatus, els.forYouActivityList]
+  ]) {
+    count.textContent = "—";
+    status.textContent = "";
+    status.classList.remove("is-error");
+    list.replaceChildren(...Array.from({ length: 3 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "for-you-skeleton";
+      return skeleton;
+    }));
+  }
+}
+
+function renderForYou() {
+  const team = state.teams.find(value => value.id === state.teamId);
+  const userName = state.authenticatedUser?.displayName || "You";
+  els.forYouMeta.textContent = state.projectName
+    ? `${userName} · ${team?.name || state.projectName}`
+    : "Connect Azure DevOps to load your work.";
+  renderForYouSection("work", state.forYouWorkItems, createForYouWorkItem, "No open work items are assigned to you.");
+  renderForYouSection("mentions", state.forYouMentions, createForYouMention, "No recent mentions need a reply.");
+  renderForYouSection("activity", state.forYouActivity, createForYouActivity, "No recent activity was found.");
+}
+
+function renderForYouSection(kind, items, renderer, emptyMessage) {
+  const title = kind[0].toUpperCase() + kind.slice(1);
+  const count = els[`forYou${title}Count`];
+  const status = els[`forYou${title}Status`];
+  const list = els[`forYou${title}List`];
+  const error = state.forYouErrors[kind] || "";
+  count.textContent = String(items.length);
+  status.classList.toggle("is-error", Boolean(error));
+  status.textContent = error || (!items.length ? emptyMessage : "");
+  list.replaceChildren(...items.map(renderer));
+}
+
+function forYouLeadingIcon(item) {
+  const icon = document.createElement("span");
+  icon.className = `for-you-type-icon ${item.type.toLocaleLowerCase("en") === "bug" ? "is-bug" : ""}`;
+  icon.textContent = item.type.toLocaleLowerCase("en") === "bug" ? "!" : "◆";
+  return icon;
+}
+
+function createForYouItem(item, leading, ariaLabel) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "for-you-item";
+  button.setAttribute("aria-label", ariaLabel);
+  const body = document.createElement("span");
+  body.className = "for-you-item-body";
+  const title = document.createElement("span");
+  title.className = "for-you-item-title";
+  title.textContent = item.title;
+  body.append(title);
+  button.append(leading, body);
+  button.addEventListener("click", () => showWorkItem(item));
+  return { button, body };
+}
+
+function createForYouWorkItem(item) {
+  const { button, body } = createForYouItem(item, forYouLeadingIcon(item), `${item.type} ${workItemKey(item.id)}: ${item.title}`);
+  const meta = document.createElement("span");
+  meta.className = "for-you-item-meta";
+  meta.textContent = `${workItemKey(item.id)} · ${item.iterationName}`;
+  body.append(meta);
+  const itemState = document.createElement("span");
+  itemState.className = "card-state";
+  itemState.dataset.stateTone = stateTone(item.state);
+  itemState.textContent = item.state;
+  button.append(itemState);
+  return button;
+}
+
+function createForYouMention(mention) {
+  const avatar = document.createElement("span");
+  avatar.className = "for-you-avatar";
+  avatar.textContent = initialsFor(mention.comment.author);
+  const { button, body } = createForYouItem(mention.item, avatar, `Mention by ${mention.comment.author} on ${workItemKey(mention.item.id)}: ${mention.item.title}`);
+  const excerpt = document.createElement("span");
+  excerpt.className = "for-you-item-excerpt";
+  excerpt.textContent = htmlToText(mention.comment.html) || "Mentioned you in a comment.";
+  const meta = document.createElement("span");
+  meta.className = "for-you-item-meta";
+  meta.textContent = `${mention.comment.author} · ${workItemKey(mention.item.id)} · ${formatDateTime(mention.comment.createdDate)}`;
+  body.append(excerpt, meta);
+  return button;
+}
+
+function createForYouActivity(activity) {
+  const symbol = document.createElement("span");
+  symbol.className = "for-you-activity-symbol";
+  symbol.textContent = "↺";
+  const { button, body } = createForYouItem(activity.item, symbol, `Your activity on ${workItemKey(activity.item.id)}: ${activity.item.title}`);
+  const excerpt = document.createElement("span");
+  excerpt.className = "for-you-item-excerpt";
+  excerpt.textContent = activitySummary(activity.entry);
+  const meta = document.createElement("span");
+  meta.className = "for-you-item-meta";
+  meta.textContent = `${workItemKey(activity.item.id)} · ${formatDateTime(activity.entry.date)}`;
+  body.append(excerpt, meta);
+  return button;
+}
+
+function activitySummary(entry) {
+  if (entry.created) return "Created this work item.";
+  const fields = [...new Set(entry.changes.map(change => change.label))];
+  if (!fields.length) return "Updated this work item.";
+  return `Updated ${fields.slice(0, 3).join(", ")}${fields.length > 3 ? ` and ${fields.length - 3} more` : ""}.`;
 }
 
 async function loadBacklog(force = false) {
@@ -1060,7 +1424,8 @@ function pruneFilters(items = activeFilterItems()) {
 }
 
 function renderCurrentView() {
-  if (state.currentView === "backlog") renderBacklog();
+  if (state.currentView === "for-you") renderForYou();
+  else if (state.currentView === "backlog") renderBacklog();
   else render();
 }
 
@@ -1221,6 +1586,8 @@ function normalizeComment(comment) {
   return {
     id: comment.commentId ?? comment.id,
     author: comment.createdBy?.displayName || comment.createdBy?.uniqueName || "Unknown user",
+    authorId: comment.createdBy?.id || "",
+    authorUniqueName: comment.createdBy?.uniqueName || "",
     html: comment.renderedText || comment.text || "",
     createdDate: comment.createdDate || "",
     modifiedDate: comment.modifiedDate || ""
@@ -1228,27 +1595,32 @@ function normalizeComment(comment) {
 }
 
 function normalizeHistory(result) {
-  return (result.value || []).map(update => {
-    const changes = Object.entries(update.fields || {}).flatMap(([field, change]) => {
-      const label = HISTORY_FIELDS[field] || (field.startsWith("Custom.") ? humanizeField(field.slice(7)) : "");
-      if (!label) return [];
-      return [{
-        label,
-        compact: field === "System.Description",
-        oldValue: formatHistoryValue(change.oldValue),
-        newValue: formatHistoryValue(change.newValue)
-      }];
-    });
-    return {
-      id: update.id,
-      revision: update.rev,
-      author: update.revisedBy?.displayName || update.revisedBy?.uniqueName || "Unknown user",
-      date: historyDateFor(update),
-      created: update.rev === 1,
-      changes
-    };
-  }).filter(entry => entry.created || entry.changes.length)
+  return (result.value || []).map(normalizeHistoryUpdate)
+    .filter(entry => entry.created || entry.changes.length)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+function normalizeHistoryUpdate(update) {
+  const changes = Object.entries(update.fields || {}).flatMap(([field, change]) => {
+    const label = HISTORY_FIELDS[field] || (field.startsWith("Custom.") ? humanizeField(field.slice(7)) : "");
+    if (!label) return [];
+    return [{
+      label,
+      compact: field === "System.Description",
+      oldValue: formatHistoryValue(change.oldValue),
+      newValue: formatHistoryValue(change.newValue)
+    }];
+  });
+  return {
+    id: update.id,
+    revision: update.rev,
+    author: update.revisedBy?.displayName || update.revisedBy?.uniqueName || "Unknown user",
+    authorId: update.revisedBy?.id || "",
+    authorUniqueName: update.revisedBy?.uniqueName || "",
+    date: historyDateFor(update),
+    created: update.rev === 1,
+    changes
+  };
 }
 
 function historyDateFor(update) {
@@ -1263,7 +1635,7 @@ function historyDateFor(update) {
 
 function formatHistoryValue(value) {
   if (value === undefined || value === null || value === "") return "—";
-  if (typeof value === "object") return value.displayName || value.uniqueName || "Bijgewerkt";
+  if (typeof value === "object") return value.displayName || value.uniqueName || "Updated";
   const rawText = String(value).trim();
   const text = /<[a-z][\s\S]*>/i.test(rawText) ? htmlToText(rawText) : rawText;
   return text.length > 90 ? `${text.slice(0, 87)}…` : text;
@@ -2563,6 +2935,11 @@ function renderEmptyBoard() {
   state.iterationStoriesCache.clear();
   state.backlogItems = [];
   state.backlogTeamId = "";
+  state.forYouProjectName = "";
+  state.forYouWorkItems = [];
+  state.forYouMentions = [];
+  state.forYouActivity = [];
+  state.forYouErrors = {};
   state.iteration = null;
   state.iterations = [];
   state.currentIterationId = "";
@@ -2573,6 +2950,7 @@ function renderEmptyBoard() {
     els.backlogMeta.textContent = "Connect Azure DevOps to load the backlog.";
     els.backlogContent.replaceChildren();
   }
+  if (state.currentView === "for-you") renderForYou();
 }
 
 function showSettings() {
@@ -2657,6 +3035,7 @@ els.connectionForm.addEventListener("submit", event => {
     parseAzureUrl(els.orgUrl.value);
     state.orgUrl = els.orgUrl.value.trim();
     state.authenticatedUser = null;
+    state.forYouProjectName = "";
     updateBranding();
     state.pat = els.pat.value.trim();
     if (!state.pat) throw new Error("Enter a PAT.");
@@ -2857,6 +3236,7 @@ els.workItemDialog.addEventListener("close", () => {
   resetDescriptionEditor();
   resetCommentComposer();
   if (state.currentView === "backlog") renderBacklog();
+  if (state.currentView === "for-you") renderForYou();
   state.selectedItemId = null;
   state.selectedItem = null;
 });
@@ -2872,6 +3252,7 @@ els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
 });
 els.headerAvatar.addEventListener("click", showSettings);
+els.forYouNav.addEventListener("click", () => showMainView("for-you"));
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
 els.refresh.addEventListener("click", () => loadBoard());
