@@ -593,6 +593,7 @@ async function loadTeamMembers(project, team) {
 function normalizeWorkItem(item) {
   const fields = item.fields || {};
   const assigned = fields["System.AssignedTo"];
+  const changedBy = fields["System.ChangedBy"];
   const storyPoints = fields["Microsoft.VSTS.Scheduling.StoryPoints"];
   const effort = fields["Microsoft.VSTS.Scheduling.Effort"];
   const iterationPath = fields["System.IterationPath"] || "";
@@ -613,13 +614,16 @@ function normalizeWorkItem(item) {
     featureLabel: "",
     points: storyPoints ?? effort ?? null,
     changedDate: fields["System.ChangedDate"] || "",
-    changedBy: fields["System.ChangedBy"]?.displayName || fields["System.ChangedBy"]?.uniqueName || "",
+    changedBy: changedBy?.displayName || changedBy?.uniqueName || "",
+    changedById: changedBy?.id || "",
+    changedByUniqueName: changedBy?.uniqueName || changedBy?.displayName || "",
+    descriptionHtml: fields["System.Description"] || "",
     pointsField: storyPoints !== undefined ? "Microsoft.VSTS.Scheduling.StoryPoints"
       : effort !== undefined ? "Microsoft.VSTS.Scheduling.Effort" : ""
   };
 }
 
-async function fetchWorkItems(ids) {
+async function fetchWorkItems(ids, { includeDescription = false } = {}) {
   const uniqueIds = [...new Set(ids.map(Number).filter(Boolean))];
   const items = [];
   const fields = [
@@ -627,10 +631,11 @@ async function fetchWorkItems(ids) {
     "System.IterationPath", "System.AreaPath", "System.Tags", "System.Parent", "System.ChangedDate",
     "System.ChangedBy", "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints",
     "Microsoft.VSTS.Scheduling.Effort"
-  ].join(",");
+  ];
+  if (includeDescription) fields.push("System.Description");
   for (let index = 0; index < uniqueIds.length; index += 200) {
     const chunk = uniqueIds.slice(index, index + 200);
-    const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields)}&errorPolicy=Omit&api-version=7.1`);
+    const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields.join(","))}&errorPolicy=Omit&api-version=7.1`);
     items.push(...(result.value || []).map(normalizeWorkItem));
   }
   return items;
@@ -989,24 +994,59 @@ async function loadForYouWorkItems(user, isSelf) {
 
 async function loadForYouMentions(user) {
   if (!user?.displayName) throw new Error("The selected user could not be identified for mentions.");
-  const ids = await queryWorkItemIds(`
+  const recentIdsPromise = queryWorkItemIds(`
+    SELECT [System.Id]
+    FROM WorkItems
+    WHERE [System.TeamProject] = @project
+    ORDER BY [System.ChangedDate] DESC
+  `, 100);
+  const historyIdsPromise = queryWorkItemIds(`
     SELECT [System.Id]
     FROM WorkItems
     WHERE [System.TeamProject] = @project
       AND [System.History] CONTAINS WORDS '${wiqlText(user.displayName)}'
     ORDER BY [System.ChangedDate] DESC
-  `, 30);
-  const items = await fetchWorkItems(ids);
-  const mentionGroups = await mapWithConcurrency(items, 5, async item => {
-    const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&$expand=renderedText&api-version=7.1-preview.4`);
-    const comments = normalizeComments(result);
-    state.commentsCache.set(item.id, comments);
-    return comments.filter(comment => !commentIsByUser(comment, user) && commentMentionsUser(comment, user))
-      .map(comment => ({ item, comment }));
+  `, 50).catch(error => {
+    console.warn("Azure's history index could not be used to supplement mention candidates.", error);
+    return [];
+  });
+  const [recentIds, historyIds] = await Promise.all([recentIdsPromise, historyIdsPromise]);
+  const ids = [...new Set([...recentIds, ...historyIds])];
+  const items = await fetchWorkItems(ids, { includeDescription: true });
+  const mentionGroups = await mapWithConcurrency(items, 6, async item => {
+    const mentions = [];
+    const changedBy = {
+      id: item.changedById,
+      uniqueName: item.changedByUniqueName,
+      displayName: item.changedBy
+    };
+    if (htmlMentionsUser(item.descriptionHtml, user) && !identityMatches(changedBy, user)) {
+      mentions.push({
+        item,
+        mention: {
+          author: item.changedBy || "Unknown user",
+          authorId: item.changedById,
+          authorUniqueName: item.changedByUniqueName,
+          html: item.descriptionHtml,
+          createdDate: item.changedDate,
+          kind: "Description"
+        }
+      });
+    }
+    try {
+      const result = await azure(`/_apis/wit/workItems/${item.id}/comments?$top=100&order=desc&$expand=renderedText&api-version=7.1-preview.4`);
+      const comments = normalizeComments(result);
+      state.commentsCache.set(item.id, comments);
+      mentions.push(...comments
+        .filter(comment => !commentIsByUser(comment, user) && commentMentionsUser(comment, user))
+        .map(comment => ({ item, mention: { ...comment, kind: "Comment" } })));
+    } catch (error) {
+      console.warn(`Comments for work item ${item.id} could not be checked for mentions.`, error);
+    }
+    return mentions;
   });
   return mentionGroups.flat()
-    .sort((a, b) => new Date(b.comment.createdDate) - new Date(a.comment.createdDate))
-    .slice(0, 20);
+    .sort((a, b) => new Date(b.mention.createdDate) - new Date(a.mention.createdDate));
 }
 
 async function loadForYouActivity(user, isSelf) {
@@ -1078,7 +1118,11 @@ function commentIsByUser(comment, user) {
 }
 
 function commentMentionsUser(comment, user) {
-  const source = String(comment.html || "");
+  return htmlMentionsUser(comment.html, user);
+}
+
+function htmlMentionsUser(html, user) {
+  const source = String(html || "");
   const sourceKey = source.toLocaleLowerCase("en");
   const textKey = htmlToText(source).toLocaleLowerCase("en");
   const idKeys = [user.id, user.uniqueName].map(value => String(value || "").toLocaleLowerCase("en")).filter(Boolean);
@@ -1308,14 +1352,14 @@ function createForYouWorkItem(item) {
 function createForYouMention(mention) {
   const avatar = document.createElement("span");
   avatar.className = "for-you-avatar";
-  avatar.textContent = initialsFor(mention.comment.author);
-  const { button, body } = createForYouItem(mention.item, avatar, `Mention by ${mention.comment.author} on ${workItemKey(mention.item.id)}: ${mention.item.title}`);
+  avatar.textContent = initialsFor(mention.mention.author);
+  const { button, body } = createForYouItem(mention.item, avatar, `Mention by ${mention.mention.author} on ${workItemKey(mention.item.id)}: ${mention.item.title}`);
   const excerpt = document.createElement("span");
   excerpt.className = "for-you-item-excerpt";
-  excerpt.textContent = htmlToText(mention.comment.html) || "Mentioned you in a comment.";
+  excerpt.textContent = htmlToText(mention.mention.html) || `Mentioned you in the ${mention.mention.kind.toLocaleLowerCase("en")}.`;
   const meta = document.createElement("span");
   meta.className = "for-you-item-meta";
-  meta.textContent = `${mention.comment.author} · ${workItemKey(mention.item.id)} · ${formatDateTime(mention.comment.createdDate)}`;
+  meta.textContent = `${mention.mention.author} · ${mention.mention.kind} · ${workItemKey(mention.item.id)} · ${formatDateTime(mention.mention.createdDate)}`;
   body.append(excerpt, meta);
   return button;
 }
