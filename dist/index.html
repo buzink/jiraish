@@ -147,6 +147,23 @@
       </section>
 
       <section id="forYouView" class="for-you-view" aria-labelledby="forYouTitle" data-for-you-view hidden>
+        <section id="githubPrPanel" class="for-you-panel github-pr-panel" aria-labelledby="githubPrTitle" hidden>
+          <header>
+            <div>
+              <span class="for-you-icon github-pr-icon" aria-hidden="true">GH</span>
+              <h2 id="githubPrTitle">Open GitHub pull requests</h2>
+            </div>
+            <span id="githubPrCount" class="count">0</span>
+          </header>
+          <p class="for-you-description">All open pull requests across the configured repositories.</p>
+          <div id="githubPrStatus" class="for-you-status" aria-live="polite"></div>
+          <div id="githubPrTableWrap" class="github-pr-table-wrap">
+            <table class="github-pr-table">
+              <thead><tr><th>Repository</th><th>Pull request</th><th>Author</th><th>Updated</th></tr></thead>
+              <tbody id="githubPrRows"></tbody>
+            </table>
+          </div>
+        </section>
         <div class="for-you-grid">
           <section class="for-you-panel for-you-work-panel" aria-labelledby="forYouWorkTitle">
             <header>
@@ -254,7 +271,15 @@
           </div>
           <span class="field-help">Required: read and write access for Work Items, plus read access for Project &amp; Team.</span>
         </label>
-        <div class="privacy-note"><strong>Private on this device.</strong> Your PAT is never sent to our servers; it is only sent directly to Azure DevOps.</div>
+        <label>
+          <span>GitHub API key <span class="optional-label">Optional</span></span>
+          <div class="password-field">
+            <input id="githubTokenInput" name="githubToken" type="password" placeholder="Paste a GitHub token here" autocomplete="off" />
+            <button id="toggleGithubToken" type="button" aria-label="Show or hide GitHub API key">Show</button>
+          </div>
+          <span class="field-help">Used only to show open pull requests on the For you page.</span>
+        </label>
+        <div class="privacy-note"><strong>Private on this device.</strong> Your credentials are stored in local storage and sent only to Azure DevOps and GitHub respectively.</div>
         <p id="connectionError" class="form-error" role="alert"></p>
         <div class="dialog-actions">
           <button id="cancelConnection" class="text-button" type="button">Cancel</button>
@@ -273,6 +298,18 @@
           Azure DevOps team
           <select id="teamSelect" name="team"></select>
         </label>
+        <fieldset id="githubRepoSettings" class="github-repo-settings" hidden>
+          <legend>GitHub pull requests</legend>
+          <label class="checkbox-label">
+            <input id="githubAllRepos" type="checkbox" checked>
+            Show pull requests from all repositories
+          </label>
+          <label id="githubReposLabel" hidden>
+            Repositories
+            <textarea id="githubReposInput" rows="3" placeholder="owner/repository, one per line"></textarea>
+            <span class="field-help">Enter exact GitHub repository names as owner/repository, separated by commas or new lines.</span>
+          </label>
+        </fieldset>
         <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
         <div id="stateMappings" class="state-mappings"></div>
         <div class="settings-footer">

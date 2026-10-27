@@ -6,7 +6,10 @@ const STORAGE = {
   mapping: "wish-board.state-mapping",
   mappingVersion: "wish-board.state-mapping-version",
   iteration: "wish-board.iteration-id",
-  theme: "wish-board.theme"
+  theme: "wish-board.theme",
+  githubToken: "wish-board.github-token",
+  githubRepos: "wish-board.github-repositories",
+  githubAllRepos: "wish-board.github-all-repositories"
 };
 
 const DEFAULT_URL = "https://dev.azure.com/organization/project/";
@@ -56,6 +59,9 @@ const STATE_TONES = {
 const state = {
   orgUrl: localStorage.getItem(STORAGE.url) || DEFAULT_URL,
   pat: localStorage.getItem(STORAGE.pat) || "",
+  githubToken: localStorage.getItem(STORAGE.githubToken) || "",
+  githubRepos: readJson(STORAGE.githubRepos, []),
+  githubAllRepos: localStorage.getItem(STORAGE.githubAllRepos) !== "false",
   teams: [],
   teamId: localStorage.getItem(STORAGE.team) || "",
   projectName: localStorage.getItem(STORAGE.project) || "",
@@ -90,6 +96,9 @@ const state = {
   forYouCreated: [],
   forYouUpdated: [],
   forYouCompleted: [],
+  githubPullRequests: [],
+  githubPullRequestsKey: "",
+  githubPullRequestsError: "",
   forYouErrors: {},
   forYouExpanded: { work: false, mentions: false, activity: false, created: false, updated: false, completed: false },
   forYouSelectedUser: null,
@@ -197,6 +206,11 @@ const els = {
   forYouCompletedStatus: document.querySelector("#forYouCompletedStatus"),
   forYouCompletedList: document.querySelector("#forYouCompletedList"),
   forYouCompletedShowAll: document.querySelector("#forYouCompletedShowAll"),
+  githubPrPanel: document.querySelector("#githubPrPanel"),
+  githubPrCount: document.querySelector("#githubPrCount"),
+  githubPrStatus: document.querySelector("#githubPrStatus"),
+  githubPrTableWrap: document.querySelector("#githubPrTableWrap"),
+  githubPrRows: document.querySelector("#githubPrRows"),
   backlogView: document.querySelector("#backlogView"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
@@ -220,13 +234,19 @@ const els = {
   connectionForm: document.querySelector("#connectionForm"),
   orgUrl: document.querySelector("#orgUrlInput"),
   pat: document.querySelector("#patInput"),
+  githubToken: document.querySelector("#githubTokenInput"),
   connectionError: document.querySelector("#connectionError"),
   cancelConnection: document.querySelector("#cancelConnection"),
   togglePat: document.querySelector("#togglePat"),
+  toggleGithubToken: document.querySelector("#toggleGithubToken"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
   teamSelect: document.querySelector("#teamSelect"),
   stateMappings: document.querySelector("#stateMappings"),
+  githubRepoSettings: document.querySelector("#githubRepoSettings"),
+  githubAllRepos: document.querySelector("#githubAllRepos"),
+  githubReposLabel: document.querySelector("#githubReposLabel"),
+  githubReposInput: document.querySelector("#githubReposInput"),
   changeConnection: document.querySelector("#changeConnection"),
   workItemDialog: document.querySelector("#workItemDialog"),
   workItemLoading: document.querySelector("#workItemLoading"),
@@ -941,6 +961,58 @@ function forYouIdentityQuery(user, isSelf) {
   return `'${wiqlText(user?.uniqueName || user?.displayName)}'`;
 }
 
+function githubPullRequestsCacheKey() {
+  if (!state.githubToken) return "";
+  const repositories = state.githubAllRepos ? "*" : state.githubRepos.map(repo => repo.toLocaleLowerCase("en")).sort().join(",");
+  return repositories;
+}
+
+async function github(path) {
+  const response = await fetch(`https://api.github.com${path}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${state.githubToken}`,
+      "X-GitHub-Api-Version": "2026-03-10"
+    }
+  });
+  let result = null;
+  try { result = await response.json(); } catch {}
+  if (!response.ok) {
+    const message = response.status === 401
+      ? "GitHub rejected the API key. Update it under Change connection."
+      : result?.message || `GitHub request failed (${response.status}).`;
+    throw new Error(message);
+  }
+  return result;
+}
+
+async function githubPages(path) {
+  const values = [];
+  for (let page = 1; ; page++) {
+    const separator = path.includes("?") ? "&" : "?";
+    const result = await github(`${path}${separator}per_page=100&page=${page}`);
+    if (!Array.isArray(result)) throw new Error("GitHub returned an unexpected response.");
+    values.push(...result);
+    if (result.length < 100) break;
+  }
+  return values;
+}
+
+async function loadGithubPullRequests() {
+  if (!state.githubToken) return [];
+  const repositories = state.githubAllRepos
+    ? (await githubPages("/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=full_name")).map(repository => repository.full_name)
+    : state.githubRepos;
+  const pullRequestGroups = await mapWithConcurrency(repositories.filter(Boolean), 6, async repository => {
+    const [owner, name, ...rest] = repository.split("/");
+    if (!owner || !name || rest.length) throw new Error(`“${repository}” is not a valid owner/repository name.`);
+    const pulls = await githubPages(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls?state=open&sort=updated&direction=desc`);
+    return pulls.map(pullRequest => ({ ...pullRequest, repository: `${owner}/${name}` }));
+  });
+  return pullRequestGroups.flat()
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+}
+
 async function loadForYou(force = false) {
   if (!state.projectName) {
     state.forYouProjectName = "";
@@ -957,7 +1029,9 @@ async function loadForYou(force = false) {
   const user = forYouTargetUser();
   const isSelf = !state.forYouSelectedUser;
   const userKey = forYouTargetKey(user);
-  if (!force && state.forYouProjectName === state.projectName && state.forYouUserKey === userKey) {
+  const githubKey = githubPullRequestsCacheKey();
+  if (!force && state.forYouProjectName === state.projectName && state.forYouUserKey === userKey
+      && (!state.githubToken || state.githubPullRequestsKey === githubKey)) {
     renderForYou();
     return;
   }
@@ -973,10 +1047,11 @@ async function loadForYou(force = false) {
     loadForYouActivity(user, isSelf),
     loadForYouCreated(),
     loadForYouUpdated(),
-    loadForYouCompleted()
+    loadForYouCompleted(),
+    state.githubToken ? loadGithubPullRequests() : Promise.resolve([])
   ]);
   if (requestToken !== state.forYouRequestToken) return;
-  const [work, mentions, activity, created, updated, completed] = sections;
+  const [work, mentions, activity, created, updated, completed, pullRequests] = sections;
   if (work.status === "fulfilled") state.forYouWorkItems = work.value;
   else {
     console.error(work.reason);
@@ -1013,6 +1088,15 @@ async function loadForYou(force = false) {
     state.forYouCompleted = [];
     state.forYouErrors.completed = completed.reason?.message || "Recently completed work items could not be loaded.";
   }
+  if (pullRequests.status === "fulfilled") {
+    state.githubPullRequests = pullRequests.value;
+    state.githubPullRequestsError = "";
+  } else {
+    console.error(pullRequests.reason);
+    state.githubPullRequests = [];
+    state.githubPullRequestsError = pullRequests.reason?.message || "GitHub pull requests could not be loaded.";
+  }
+  state.githubPullRequestsKey = githubKey;
   state.forYouProjectName = state.projectName;
   state.forYouUserKey = userKey;
   renderForYou();
@@ -1328,6 +1412,14 @@ async function selectForYouUser(choice) {
 
 function renderForYouLoading() {
   renderForYouIdentity();
+  els.githubPrPanel.hidden = !state.githubToken;
+  if (state.githubToken) {
+    els.githubPrCount.textContent = "—";
+    els.githubPrStatus.textContent = "Loading GitHub pull requests…";
+    els.githubPrStatus.classList.remove("is-error");
+    els.githubPrTableWrap.hidden = true;
+    els.githubPrRows.replaceChildren();
+  }
   for (const [count, status, list, showAll] of [
     [els.forYouWorkCount, els.forYouWorkStatus, els.forYouWorkList, els.forYouWorkShowAll],
     [els.forYouMentionsCount, els.forYouMentionsStatus, els.forYouMentionsList, els.forYouMentionsShowAll],
@@ -1353,6 +1445,7 @@ function renderForYou() {
   const isSelf = !state.forYouSelectedUser;
   const displayName = user?.displayName || "the selected user";
   renderForYouIdentity();
+  renderGithubPullRequests();
   renderForYouSection("work", state.forYouWorkItems, createForYouWorkItem,
     isSelf ? "No open work items are assigned to you." : `No open work items are assigned to ${displayName}.`);
   renderForYouSection("mentions", state.forYouMentions, createForYouMention,
@@ -1365,6 +1458,40 @@ function renderForYou() {
     "No recently updated work items were found.");
   renderForYouSection("completed", state.forYouCompleted, item => createForYouProjectActivity(item, "Completed"),
     "No recently completed work items were found.");
+}
+
+function renderGithubPullRequests() {
+  els.githubPrPanel.hidden = !state.githubToken;
+  if (!state.githubToken) {
+    els.githubPrRows.replaceChildren();
+    return;
+  }
+  const error = state.githubPullRequestsError;
+  els.githubPrCount.textContent = String(state.githubPullRequests.length);
+  els.githubPrStatus.classList.toggle("is-error", Boolean(error));
+  els.githubPrStatus.textContent = error || (!state.githubPullRequests.length ? "No matching open pull requests were found." : "");
+  els.githubPrTableWrap.hidden = Boolean(error) || !state.githubPullRequests.length;
+  els.githubPrRows.replaceChildren(...state.githubPullRequests.map(pullRequest => {
+    const row = document.createElement("tr");
+    const repository = document.createElement("td");
+    repository.textContent = pullRequest.repository;
+    const titleCell = document.createElement("td");
+    const link = document.createElement("a");
+    link.href = pullRequest.html_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = `#${pullRequest.number} ${pullRequest.title}`;
+    const role = document.createElement("span");
+    role.className = "github-pr-role";
+    role.textContent = pullRequest.draft ? "Draft" : "Open";
+    titleCell.append(link, role);
+    const author = document.createElement("td");
+    author.textContent = pullRequest.user?.login || "Unknown";
+    const updated = document.createElement("td");
+    updated.textContent = formatDateTime(pullRequest.updated_at);
+    row.append(repository, titleCell, author, updated);
+    return row;
+  }));
 }
 
 function renderForYouSection(kind, items, renderer, emptyMessage) {
@@ -3518,12 +3645,17 @@ function showSettings() {
     row.append(label, select);
     return row;
   }));
+  els.githubRepoSettings.hidden = !state.githubToken;
+  els.githubAllRepos.checked = state.githubAllRepos;
+  els.githubReposInput.value = state.githubRepos.join("\n");
+  updateGithubRepositorySettings();
   els.settingsDialog.showModal();
 }
 
 function showConnection(error = "") {
   els.orgUrl.value = state.orgUrl;
   els.pat.value = state.pat;
+  els.githubToken.value = state.githubToken;
   els.connectionError.textContent = error;
   if (els.settingsDialog.open) els.settingsDialog.close();
   if (!els.connectionDialog.open) els.connectionDialog.showModal();
@@ -3567,6 +3699,18 @@ function formatDate(value) { return value ? new Intl.DateTimeFormat("en-GB", { d
 function formatDateTime(value) { return value ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : ""; }
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 
+function parseGithubRepositories(value) {
+  return [...new Set(String(value || "").split(/[\n,]+/)
+    .map(repository => repository.trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\/$/, ""))
+    .filter(Boolean))];
+}
+
+function updateGithubRepositorySettings() {
+  const showRepositories = !els.githubAllRepos.checked;
+  els.githubReposLabel.hidden = !showRepositories;
+  els.githubReposInput.required = showRepositories;
+}
+
 els.connectionForm.addEventListener("submit", event => {
   event.preventDefault();
   try {
@@ -3579,26 +3723,43 @@ els.connectionForm.addEventListener("submit", event => {
     updateBranding();
     state.pat = els.pat.value.trim();
     if (!state.pat) throw new Error("Enter a PAT.");
+    const githubToken = els.githubToken.value.trim();
+    if (githubToken !== state.githubToken) {
+      state.githubPullRequests = [];
+      state.githubPullRequestsKey = "";
+      state.githubPullRequestsError = "";
+    }
+    state.githubToken = githubToken;
     localStorage.setItem(STORAGE.url, state.orgUrl);
     localStorage.setItem(STORAGE.pat, state.pat);
+    if (state.githubToken) localStorage.setItem(STORAGE.githubToken, state.githubToken);
+    else localStorage.removeItem(STORAGE.githubToken);
     els.connectionDialog.close();
     loadBoard({ openSettings: !state.teamId });
   } catch (error) { els.connectionError.textContent = error.message; }
 });
 
-els.settingsForm.addEventListener("submit", event => {
+els.settingsForm.addEventListener("submit", async event => {
   event.preventDefault();
   const previousTeam = state.teamId;
+  const previousGithubKey = githubPullRequestsCacheKey();
   state.teamId = els.teamSelect.value;
+  state.githubAllRepos = els.githubAllRepos.checked;
+  state.githubRepos = parseGithubRepositories(els.githubReposInput.value);
   els.stateMappings.querySelectorAll("select[data-state]").forEach(select => { state.mapping[select.dataset.state] = select.value; });
   localStorage.setItem(STORAGE.team, state.teamId);
   localStorage.setItem(STORAGE.mapping, JSON.stringify(state.mapping));
+  localStorage.setItem(STORAGE.githubAllRepos, String(state.githubAllRepos));
+  localStorage.setItem(STORAGE.githubRepos, JSON.stringify(state.githubRepos));
   els.settingsDialog.close();
   if (previousTeam !== state.teamId) {
     state.filters.sprint.clear();
     state.backlogItems = [];
     state.backlogTeamId = "";
     loadBoard();
+  } else if (previousGithubKey !== githubPullRequestsCacheKey() && state.currentView === "for-you") {
+    state.githubPullRequestsKey = "";
+    await loadForYou(true);
   } else render();
 });
 
@@ -3791,6 +3952,12 @@ els.togglePat.addEventListener("click", () => {
   els.pat.type = show ? "text" : "password";
   els.togglePat.textContent = show ? "Hide" : "Show";
 });
+els.toggleGithubToken.addEventListener("click", () => {
+  const show = els.githubToken.type === "password";
+  els.githubToken.type = show ? "text" : "password";
+  els.toggleGithubToken.textContent = show ? "Hide" : "Show";
+});
+els.githubAllRepos.addEventListener("change", updateGithubRepositorySettings);
 els.changeConnection.addEventListener("click", () => showConnection());
 els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);

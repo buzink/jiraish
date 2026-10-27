@@ -6,7 +6,7 @@ Jiraish is a compact, Jira-style sprint and backlog interface for Azure DevOps. 
 
 - Sprint board with To do, Active, and Done columns
 - Backlog tables grouped by sprint while preserving the Azure DevOps backlog order
-- For you page with assigned work, mentions, personal activity, and project-wide created, updated, and completed work items
+- For you page with assigned work, mentions, personal activity, project-wide work item activity, and relevant open GitHub pull requests
 - Filters for type, assignee, priority, sprint, state, area, tags, and feature
 - View and edit work items directly
 - Edit titles, descriptions, states, assignees, priorities, story points, areas, sprints, and tags
@@ -41,6 +41,12 @@ The PAT needs at least read access to projects, teams, iterations, and work item
 
 The URL and PAT are stored only in the browser's local storage. Never publish or commit a PAT.
 
+## Configure GitHub
+
+Change the connection and optionally add a GitHub API token to show all open pull requests from repositories available to that token on the For you page. The pull request table stays hidden when no GitHub token is configured. Settings can show pull requests from all available repositories (the default) or limit the table to an exact list of `owner/repository` names.
+
+The GitHub token is also stored only in the browser's local storage and sent directly to the GitHub API. Use a fine-grained token with read-only access to the repositories you want Jiraish to include.
+
 ## GitHub Pages
 
 The workflow in `.github/workflows/deploy-pages.yml` publishes the contents of `dist` on every push to `main`. For a repository named `jiraish`, the default project site is:
@@ -63,4 +69,4 @@ dist/
 
 ## Security
 
-Jiraish is a client-side application. Anyone with access to the browser profile may be able to read the locally stored PAT. Use a PAT with the minimum required permissions and a short lifetime.
+Jiraish is a client-side application. Anyone with access to the browser profile may be able to read the locally stored Azure DevOps and GitHub tokens. Use tokens with the minimum required permissions and a short lifetime.
