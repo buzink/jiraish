@@ -268,6 +268,7 @@ const els = {
   descriptionEditorForm: document.querySelector("#descriptionEditorForm"),
   descriptionEditor: document.querySelector("#descriptionEditor"),
   descriptionMentionMenu: document.querySelector("#descriptionMentionMenu"),
+  descriptionMentionLabel: document.querySelector("#descriptionMentionLabel"),
   descriptionMentionOptions: document.querySelector("#descriptionMentionOptions"),
   descriptionEditorCancel: document.querySelector("#descriptionEditorCancel"),
   descriptionEditorSubmit: document.querySelector("#descriptionEditorSubmit"),
@@ -321,6 +322,7 @@ const els = {
   commentComposerForm: document.querySelector("#commentComposerForm"),
   commentComposerInput: document.querySelector("#commentComposerInput"),
   commentMentionMenu: document.querySelector("#commentMentionMenu"),
+  commentMentionLabel: document.querySelector("#commentMentionLabel"),
   commentMentionOptions: document.querySelector("#commentMentionOptions"),
   commentComposerCancel: document.querySelector("#commentComposerCancel"),
   commentComposerSubmit: document.querySelector("#commentComposerSubmit"),
@@ -332,8 +334,8 @@ const els = {
 };
 
 const mentionState = {
-  description: { query: "", range: null, activeIndex: 0, choices: [] },
-  comment: { query: "", range: null, activeIndex: 0, choices: [] }
+  description: { mode: "mention", query: "", range: null, activeIndex: 0, choices: [], loading: false, requestToken: 0, timer: null },
+  comment: { mode: "mention", query: "", range: null, activeIndex: 0, choices: [], loading: false, requestToken: 0, timer: null }
 };
 
 function readJson(key, fallback) {
@@ -450,6 +452,11 @@ function workItemKey(itemId) {
     .toLocaleUpperCase("en")
     .slice(0, 24);
   return prefix ? `${prefix}-${itemId}` : `#${itemId}`;
+}
+
+function workItemWebUrl(itemId) {
+  const { webBase } = activeAzureContext();
+  return `${webBase}/_workitems/edit/${Number(itemId)}`;
 }
 
 async function azure(path, options = {}, scope = "project") {
@@ -1956,6 +1963,20 @@ async function showWorkItem(item) {
   }
 }
 
+async function showLinkedWorkItem(itemId) {
+  const localItem = knownWorkItems().find(item => Number(item.id) === Number(itemId));
+  if (localItem) return showWorkItem(localItem);
+  try {
+    const [item] = await fetchWorkItems([itemId]);
+    if (!item) throw new Error(`Work item ${itemId} was not found.`);
+    await showWorkItem(item);
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.message || "The linked work item could not be opened.";
+    els.workItemLoadStatus.classList.add("is-error");
+  }
+}
+
 async function loadWorkItemDetail(item) {
   const requestToken = (state.detailsRequestTokens.get(item.id) || 0) + 1;
   state.detailsRequestTokens.set(item.id, requestToken);
@@ -2947,11 +2968,11 @@ function mentionChoices() {
 
 function mentionElements(kind) {
   return kind === "description"
-    ? { editor: els.descriptionEditor, menu: els.descriptionMentionMenu, options: els.descriptionMentionOptions }
-    : { editor: els.commentComposerInput, menu: els.commentMentionMenu, options: els.commentMentionOptions };
+    ? { editor: els.descriptionEditor, menu: els.descriptionMentionMenu, label: els.descriptionMentionLabel, options: els.descriptionMentionOptions }
+    : { editor: els.commentComposerInput, menu: els.commentMentionMenu, label: els.commentMentionLabel, options: els.commentMentionOptions };
 }
 
-function mentionTriggerAtCaret(editor) {
+function editorTriggerAtCaret(editor) {
   const selection = window.getSelection();
   if (!selection?.rangeCount || !selection.isCollapsed) return null;
   const caret = selection.getRangeAt(0);
@@ -2966,28 +2987,109 @@ function mentionTriggerAtCaret(editor) {
     offset = node.textContent.length;
   }
   const prefix = node.textContent.slice(0, offset);
-  const match = prefix.match(/(?:^|\s)@([^@\s]*)$/u);
+  const mentionMatch = prefix.match(/(?:^|\s)@([^@\s]*)$/u);
+  const workItemMatch = prefix.match(/(?:^|\s)#([^#\n]*)$/u);
+  const match = mentionMatch || workItemMatch;
   if (!match) return null;
   const tokenLength = match[1].length + 1;
   const range = document.createRange();
   range.setStart(node, offset - tokenLength);
   range.setEnd(node, offset);
-  return { query: match[1], range };
+  return { mode: mentionMatch ? "mention" : "work-item", query: match[1], range };
 }
 
 function updateMentionSuggestions(kind) {
-  const { editor, menu } = mentionElements(kind);
-  const trigger = mentionTriggerAtCaret(editor);
+  const { editor, menu, label } = mentionElements(kind);
+  const trigger = editorTriggerAtCaret(editor);
   if (!trigger) return closeMentionMenu(kind);
-  const query = trigger.query.toLocaleLowerCase("en");
-  const choices = mentionChoices().filter(choice => !query
-    || choice.name.toLocaleLowerCase("en").includes(query)
-    || choice.uniqueName.toLocaleLowerCase("en").includes(query)).slice(0, 8);
-  mentionState[kind] = { query: trigger.query, range: trigger.range.cloneRange(), activeIndex: 0, choices };
+  const previous = mentionState[kind];
+  if (previous.timer) clearTimeout(previous.timer);
+  const query = trigger.query.trim().toLocaleLowerCase("en");
+  const choices = trigger.mode === "mention"
+    ? mentionChoices().filter(choice => !query
+      || choice.name.toLocaleLowerCase("en").includes(query)
+      || choice.uniqueName.toLocaleLowerCase("en").includes(query)).slice(0, 8)
+    : localWorkItemLinkChoices(query);
+  const requestToken = previous.requestToken + 1;
+  mentionState[kind] = {
+    mode: trigger.mode,
+    query: trigger.query,
+    range: trigger.range.cloneRange(),
+    activeIndex: 0,
+    choices,
+    loading: trigger.mode === "work-item" && Boolean(query),
+    requestToken,
+    timer: null
+  };
+  label.textContent = trigger.mode === "mention" ? "Mention someone" : "Link a work item";
+  menu.setAttribute("aria-label", trigger.mode === "mention" ? "Mention a team member" : "Link a work item");
   menu.hidden = false;
   editor.setAttribute("aria-expanded", "true");
   editor.setAttribute("aria-controls", menu.id);
   renderMentionOptions(kind);
+  if (trigger.mode === "work-item" && query) {
+    mentionState[kind].timer = setTimeout(() => loadWorkItemLinkSuggestions(kind, trigger.query, requestToken), 180);
+  }
+}
+
+function knownWorkItems() {
+  const items = [
+    ...state.stories,
+    ...state.backlogItems,
+    ...state.forYouWorkItems,
+    ...state.forYouCreated,
+    ...state.forYouUpdated,
+    ...state.forYouCompleted,
+    ...state.forYouMentions.map(value => value.item),
+    ...state.forYouActivity.map(value => value.item)
+  ];
+  if (state.selectedItem) items.push(state.selectedItem);
+  const unique = new Map();
+  items.filter(Boolean).forEach(item => unique.set(Number(item.id), item));
+  return [...unique.values()];
+}
+
+function localWorkItemLinkChoices(query) {
+  const items = knownWorkItems();
+  const numeric = /^\d+$/.test(query);
+  return items.filter(item => !query
+    || (numeric ? String(item.id).startsWith(query) : item.title.toLocaleLowerCase("en").includes(query)))
+    .sort((a, b) => numeric
+      ? String(a.id).localeCompare(String(b.id), "en", { numeric: true })
+      : new Date(b.changedDate || 0) - new Date(a.changedDate || 0))
+    .slice(0, 8);
+}
+
+async function loadWorkItemLinkSuggestions(kind, rawQuery, requestToken) {
+  const query = rawQuery.trim();
+  try {
+    const ids = /^\d+$/.test(query)
+      ? [Number(query)]
+      : await queryWorkItemIds(`
+          SELECT [System.Id]
+          FROM WorkItems
+          WHERE [System.TeamProject] = @project
+            AND [System.Title] CONTAINS '${wiqlText(query)}'
+          ORDER BY [System.ChangedDate] DESC
+        `, 20);
+    const remoteChoices = await fetchWorkItems(ids);
+    const current = mentionState[kind];
+    if (current.requestToken !== requestToken || current.mode !== "work-item" || current.query !== rawQuery) return;
+    const merged = new Map(current.choices.map(choice => [Number(choice.id), choice]));
+    remoteChoices.forEach(choice => merged.set(Number(choice.id), choice));
+    current.choices = [...merged.values()].slice(0, 8);
+    current.loading = false;
+    current.timer = null;
+    current.activeIndex = Math.min(current.activeIndex, Math.max(0, current.choices.length - 1));
+    renderMentionOptions(kind);
+  } catch (error) {
+    console.warn("Work item link suggestions could not be loaded.", error);
+    const current = mentionState[kind];
+    if (current.requestToken !== requestToken) return;
+    current.loading = false;
+    current.timer = null;
+    renderMentionOptions(kind);
+  }
 }
 
 function renderMentionOptions(kind) {
@@ -2996,7 +3098,11 @@ function renderMentionOptions(kind) {
   if (!current.choices.length) {
     const empty = document.createElement("div");
     empty.className = "mention-empty";
-    empty.textContent = state.teamMembers.length ? "No matching team members." : "No team members available.";
+    empty.textContent = current.loading
+      ? "Searching work items…"
+      : current.mode === "work-item"
+        ? "No matching work items."
+        : state.teamMembers.length ? "No matching team members." : "No team members available.";
     options.replaceChildren(empty);
     editor.removeAttribute("aria-activedescendant");
     return;
@@ -3009,14 +3115,18 @@ function renderMentionOptions(kind) {
     option.setAttribute("role", "option");
     option.setAttribute("aria-selected", String(index === current.activeIndex));
     const avatar = document.createElement("span");
-    avatar.className = "mention-avatar";
-    avatar.textContent = initialsFor(choice.name);
+    avatar.className = current.mode === "work-item" ? "mention-work-item-icon" : "mention-avatar";
+    avatar.textContent = current.mode === "work-item" ? (choice.type?.toLocaleLowerCase("en") === "bug" ? "!" : "◆") : initialsFor(choice.name);
     const label = document.createElement("span");
     label.className = "mention-label";
     const name = document.createElement("strong");
-    name.textContent = choice.name;
+    name.textContent = current.mode === "work-item" ? choice.title : choice.name;
     label.append(name);
-    if (choice.uniqueName && choice.uniqueName !== choice.name) {
+    if (current.mode === "work-item") {
+      const detail = document.createElement("small");
+      detail.textContent = `${workItemKey(choice.id)} · ${choice.type || "Work item"} · ${choice.state || "Unknown"}`;
+      label.append(detail);
+    } else if (choice.uniqueName && choice.uniqueName !== choice.name) {
       const detail = document.createElement("small");
       detail.textContent = choice.uniqueName;
       label.append(detail);
@@ -3031,15 +3141,23 @@ function renderMentionOptions(kind) {
 
 function insertMention(kind, choice) {
   const { editor } = mentionElements(kind);
-  const range = mentionState[kind].range;
+  const current = mentionState[kind];
+  const range = current.range;
   if (!range) return;
   range.deleteContents();
   const mention = document.createElement("a");
-  mention.href = "#";
-  mention.className = "user-mention";
-  mention.setAttribute("data-vss-mention", `version:2.0,${choice.id}`);
+  if (current.mode === "work-item") {
+    mention.href = workItemWebUrl(choice.id);
+    mention.className = "internal-work-item-link";
+    mention.dataset.workItemId = String(choice.id);
+    mention.textContent = `${choice.title} (${workItemKey(choice.id)})`;
+  } else {
+    mention.href = "#";
+    mention.className = "user-mention";
+    mention.setAttribute("data-vss-mention", `version:2.0,${choice.id}`);
+    mention.textContent = `@${choice.name}`;
+  }
   mention.contentEditable = "false";
-  mention.textContent = `@${choice.name}`;
   const space = document.createTextNode(" ");
   range.insertNode(mention);
   mention.after(space);
@@ -3064,12 +3182,14 @@ function moveMentionSelection(kind, direction) {
 
 function closeMentionMenu(kind) {
   const { editor, menu, options } = mentionElements(kind);
+  const current = mentionState[kind];
+  if (current.timer) clearTimeout(current.timer);
   menu.hidden = true;
   options.replaceChildren();
   editor.setAttribute("aria-expanded", "false");
   editor.removeAttribute("aria-controls");
   editor.removeAttribute("aria-activedescendant");
-  mentionState[kind] = { query: "", range: null, activeIndex: 0, choices: [] };
+  mentionState[kind] = { mode: "mention", query: "", range: null, activeIndex: 0, choices: [], loading: false, requestToken: current.requestToken + 1, timer: null };
 }
 
 function handleMentionKeydown(kind, event) {
@@ -3104,7 +3224,7 @@ function openDescriptionEditor() {
   closeMentionMenu("comment");
   const html = state.detailsCache.get(item.id)?.descriptionHtml || "";
   els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
-  els.descriptionEditor.querySelectorAll("a.user-mention").forEach(mention => { mention.contentEditable = "false"; });
+  els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
   hydrateRichTextImages(els.descriptionEditor);
   els.workItemDescription.hidden = true;
   els.descriptionEditButton.hidden = true;
@@ -3476,8 +3596,14 @@ function copySafeRichTextAttributes(source, target, tag) {
       const href = safeRichTextUrl(source.getAttribute("href"), false);
       if (href) {
         target.href = href;
-        target.target = "_blank";
-        target.rel = "noopener noreferrer";
+        const workItemId = workItemIdFromUrl(href);
+        if (workItemId) {
+          target.classList.add("internal-work-item-link");
+          target.dataset.workItemId = String(workItemId);
+        } else {
+          target.target = "_blank";
+          target.rel = "noopener noreferrer";
+        }
       }
     }
   }
@@ -3503,6 +3629,19 @@ function copySafeRichTextAttributes(source, target, tag) {
     const value = source.style.getPropertyValue(property);
     if (value && !/url\s*\(|expression\s*\(/i.test(value)) target.style.setProperty(property, value);
   }
+}
+
+function workItemIdFromUrl(value) {
+  if (!value || !isConfiguredAzureUrl(value)) return null;
+  try {
+    const url = new URL(value);
+    const activeProject = new URL(activeAzureContext().webBase);
+    const projectPath = decodeURIComponent(activeProject.pathname).replace(/\/$/, "").toLocaleLowerCase("en");
+    const linkPath = decodeURIComponent(url.pathname).toLocaleLowerCase("en");
+    if (url.origin !== activeProject.origin || !linkPath.startsWith(`${projectPath}/_workitems/edit/`)) return null;
+    const match = decodeURIComponent(url.pathname).match(/\/_workitems\/edit\/(\d+)(?:\/|$)/i);
+    return match ? Number(match[1]) : null;
+  } catch { return null; }
 }
 
 function safeRichTextUrl(value, image) {
@@ -4001,6 +4140,11 @@ els.clearFilters.addEventListener("click", async () => {
 
 document.addEventListener("click", event => {
   if (event.target.closest?.("a.user-mention")) event.preventDefault();
+  const workItemLink = event.target.closest?.("a.internal-work-item-link");
+  if (workItemLink) {
+    event.preventDefault();
+    if (!workItemLink.closest('[contenteditable="true"]')) showLinkedWorkItem(Number(workItemLink.dataset.workItemId));
+  }
   if (!els.descriptionMentionMenu.contains(event.target) && !els.descriptionEditor.contains(event.target)) closeMentionMenu("description");
   if (!els.commentMentionMenu.contains(event.target) && !els.commentComposerInput.contains(event.target)) closeMentionMenu("comment");
   if (!els.forYouPersonControl.contains(event.target)) closeForYouPersonMenu();

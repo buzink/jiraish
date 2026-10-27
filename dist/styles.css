@@ -372,6 +372,7 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .mention-option { width: 100%; min-height: 43px; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 9px; padding: 5px 7px; border: 0; border-radius: 3px; color: var(--text); background: transparent; text-align: left; }
 .mention-option:hover, .mention-option.is-active { color: var(--navy); background: var(--board-bg); outline: 0; }
 .mention-avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: white; background: #6554c0; font-size: 9px; font-weight: 800; }
+.mention-work-item-icon { width: 24px; height: 24px; display: grid; place-items: center; margin-left: 2px; border-radius: 3px; color: white; background: #36b37e; font-size: 9px; font-weight: 800; }
 .mention-label { min-width: 0; display: grid; }
 .mention-label strong, .mention-label small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-label strong { font-size: 12px; font-weight: 600; }
@@ -430,6 +431,8 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .rich-content pre code { padding: 0; background: transparent; }
 .rich-content a { color: var(--blue-600); text-decoration: underline; overflow-wrap: anywhere; }
 .rich-content a.user-mention { display: inline; padding: 1px 3px; border-radius: 3px; color: #0052cc; background: #deebff; font-weight: 600; text-decoration: none; }
+.rich-content a.internal-work-item-link { display: inline; padding: 1px 3px; border-radius: 3px; color: #0052cc; background: #e9f2ff; font-weight: 600; text-decoration: none; }
+.rich-content a.internal-work-item-link:hover { text-decoration: underline; text-underline-offset: 2px; }
 .rich-content img { display: block; max-width: 100%; height: auto; margin: 10px 0; border-radius: 4px; }
 .rich-content img.is-loading { width: 160px; min-height: 80px; background: linear-gradient(100deg, var(--board-bg) 30%, var(--surface) 50%, var(--board-bg) 70%); background-size: 250% 100%; animation: image-loading 1.2s ease-in-out infinite; }
 .rich-content img.is-broken { display: none; }
@@ -643,6 +646,7 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 [data-theme="dark"] .activity-placeholder { background: #22272b; }
 [data-theme="dark"] .comment-composer-prompt, [data-theme="dark"] .comment-composer-input { border-color: #596773; color: #b6c2cf; background: #22272b; }
 [data-theme="dark"] .rich-content a.user-mention { color: #cce0ff; background: #09326c; }
+[data-theme="dark"] .rich-content a.internal-work-item-link { color: #cce0ff; background: #09326c; }
 [data-theme="dark"] .comment-composer-prompt:hover { background: #38414a; }
 [data-theme="dark"] .comment-composer-status.is-error { color: #ff7452; }
 [data-theme="dark"] .comment-count { color: #b6c2cf; background: #38414a; }

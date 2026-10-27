@@ -374,13 +374,13 @@
                 </div>
                 <div class="mention-editor-wrap">
                   <div id="descriptionEditor" class="description-editor-content rich-content" contenteditable="true" role="textbox" aria-label="Description" aria-multiline="true" aria-expanded="false" data-placeholder="Add a description…"></div>
-                  <div id="descriptionMentionMenu" class="mention-menu" role="listbox" aria-label="Mention a team member" hidden>
-                    <div class="mention-menu-label">Mention someone</div>
+                  <div id="descriptionMentionMenu" class="mention-menu" role="listbox" aria-label="Insert a reference" hidden>
+                    <div id="descriptionMentionLabel" class="mention-menu-label">Mention someone</div>
                     <div id="descriptionMentionOptions" class="mention-options"></div>
                   </div>
                 </div>
                 <div class="description-editor-footer">
-                  <span>Ctrl + Enter to save</span>
+                  <span>@ mention · # link · Ctrl + Enter to save</span>
                   <button id="descriptionEditorCancel" class="text-button" type="button">Cancel</button>
                   <button id="descriptionEditorSubmit" class="primary-button" type="submit">Save</button>
                 </div>
@@ -411,13 +411,13 @@
                   <form id="commentComposerForm" class="comment-composer-form" hidden>
                     <div class="mention-editor-wrap">
                       <div id="commentComposerInput" class="comment-composer-input rich-content" contenteditable="true" role="textbox" aria-label="Comment" aria-multiline="true" aria-expanded="false" data-placeholder="Write a comment…"></div>
-                      <div id="commentMentionMenu" class="mention-menu" role="listbox" aria-label="Mention a team member" hidden>
-                        <div class="mention-menu-label">Mention someone</div>
+                      <div id="commentMentionMenu" class="mention-menu" role="listbox" aria-label="Insert a reference" hidden>
+                        <div id="commentMentionLabel" class="mention-menu-label">Mention someone</div>
                         <div id="commentMentionOptions" class="mention-options"></div>
                       </div>
                     </div>
                     <div class="comment-composer-footer">
-                      <span class="comment-composer-hint">Ctrl + Enter to save</span>
+                      <span class="comment-composer-hint">@ mention · # link · Ctrl + Enter to save</span>
                       <button id="commentComposerCancel" class="text-button" type="button">Cancel</button>
                       <button id="commentComposerSubmit" class="primary-button" type="submit">Save</button>
                     </div>
