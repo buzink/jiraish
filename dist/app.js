@@ -2,6 +2,7 @@ const STORAGE = {
   pat: "wish-board.azure-pat",
   url: "wish-board.azure-url",
   team: "wish-board.team-id",
+  project: "wish-board.project-name",
   mapping: "wish-board.state-mapping",
   mappingVersion: "wish-board.state-mapping-version",
   iteration: "wish-board.iteration-id",
@@ -57,7 +58,7 @@ const state = {
   pat: localStorage.getItem(STORAGE.pat) || "",
   teams: [],
   teamId: localStorage.getItem(STORAGE.team) || "",
-  projectName: "",
+  projectName: localStorage.getItem(STORAGE.project) || "",
   teamName: "",
   authenticatedUser: null,
   teamMembers: [],
@@ -284,22 +285,44 @@ function applyTheme(theme, persist = false) {
 function parseAzureUrl(input) {
   const url = new URL(input.trim());
   const parts = url.pathname.split("/").filter(Boolean).map(part => decodeURIComponent(part));
-  const organization = url.hostname === "dev.azure.com" ? parts[0] : url.hostname.split(".")[0];
-  const project = url.hostname === "dev.azure.com" ? parts[1] : parts[0];
-  if (!organization || !project) throw new Error("Gebruik een URL met organisatie én project.");
+  const isModernUrl = url.hostname === "dev.azure.com";
+  const organization = isModernUrl ? parts[0] : url.hostname.split(".")[0];
+  const rawProject = isModernUrl ? parts[1] : parts[0];
+  const project = rawProject && !rawProject.startsWith("_") ? rawProject : "";
+  const projectTail = isModernUrl ? parts.slice(2) : parts.slice(1);
+  let pathTeam = projectTail[0] && !projectTail[0].startsWith("_") ? projectTail[0] : "";
+  if (projectTail[0] === "_boards") {
+    const teamMarker = projectTail.indexOf("t");
+    pathTeam = teamMarker >= 0 ? projectTail[teamMarker + 1] || "" : "";
+  } else if (["_backlogs", "_sprints"].includes(projectTail[0])) {
+    pathTeam = projectTail[2] || "";
+  }
+  const team = url.searchParams.get("team") || url.searchParams.get("teamId") || pathTeam;
+  if (!organization) throw new Error("Gebruik minimaal een geldige Azure DevOps-organisatie-URL.");
+  const orgBase = `https://dev.azure.com/${encodeURIComponent(organization)}`;
+  const projectBase = project ? `${orgBase}/${encodeURIComponent(project)}` : orgBase;
   return {
     organization,
-    project,
-    orgBase: `https://dev.azure.com/${encodeURIComponent(organization)}`,
-    base: `https://dev.azure.com/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`,
-    webBase: `https://dev.azure.com/${encodeURIComponent(organization)}/${encodeURIComponent(project)}`
+    project: project || "",
+    team,
+    orgBase,
+    base: projectBase,
+    webBase: projectBase
   };
 }
 
+function activeAzureContext() {
+  const parsed = parseAzureUrl(state.orgUrl);
+  const project = parsed.project || state.projectName;
+  const projectBase = project ? `${parsed.orgBase}/${encodeURIComponent(project)}` : parsed.orgBase;
+  return { ...parsed, project, base: projectBase, webBase: projectBase };
+}
+
 function updateBranding(team = null) {
-  let project = "";
-  try { project = parseAzureUrl(state.orgUrl).project; } catch {}
-  state.projectName = project;
+  let configuredProject = "";
+  try { configuredProject = parseAzureUrl(state.orgUrl).project; } catch {}
+  if (configuredProject) state.projectName = configuredProject;
+  const project = state.projectName;
   state.teamName = team?.name || "";
   const displayName = state.teamName || "Jiraish";
   const profileName = state.authenticatedUser?.displayName || state.teamName || displayName;
@@ -346,7 +369,8 @@ function workItemKey(itemId) {
 }
 
 async function azure(path, options = {}, scope = "project") {
-  const parsed = parseAzureUrl(state.orgUrl);
+  const parsed = activeAzureContext();
+  if (scope === "project" && !parsed.project) throw new Error("Er is nog geen Azure DevOps-project geselecteerd.");
   const apiBase = scope === "organization" ? parsed.orgBase : parsed.base;
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
@@ -378,11 +402,23 @@ async function loadBoard({ openSettings = false } = {}) {
   setLoading(true);
   clearNotice();
   try {
-    const { project } = parseAzureUrl(state.orgUrl);
+    const configured = parseAzureUrl(state.orgUrl);
+    let project = configured.project;
+    if (!project) {
+      const projectsResult = await azure("/_apis/projects?$top=1000&api-version=7.1", {}, "organization");
+      const projects = projectsResult.value || [];
+      if (!projects.length) throw new Error("Geen Azure DevOps-projecten gevonden in deze organisatie.");
+      project = projects.find(value => value.name === state.projectName)?.name || projects[0].name;
+    }
+    state.projectName = project;
+    localStorage.setItem(STORAGE.project, project);
     const teamsResult = await azure(`/_apis/projects/${encodeURIComponent(project)}/teams?api-version=7.1`, {}, "organization");
     state.teams = teamsResult.value || [];
     if (!state.teams.length) throw new Error("Geen Azure DevOps-teams gevonden in dit project.");
-    const selectedTeam = state.teams.find(team => team.id === state.teamId) || state.teams[0];
+    const configuredTeam = configured.team.toLocaleLowerCase("nl");
+    const selectedTeam = state.teams.find(team => team.id === state.teamId)
+      || state.teams.find(team => configuredTeam && (team.id.toLocaleLowerCase("nl") === configuredTeam || team.name.toLocaleLowerCase("nl") === configuredTeam))
+      || state.teams[0];
     state.teamId = selectedTeam.id;
     updateBranding(selectedTeam);
     localStorage.setItem(STORAGE.team, state.teamId);
@@ -1238,7 +1274,7 @@ function humanizeField(value) {
 }
 
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
-  const { webBase } = parseAzureUrl(state.orgUrl);
+  const { webBase } = activeAzureContext();
   els.workItemType.textContent = item.type;
   els.workItemKey.textContent = workItemKey(item.id);
   els.workItemTitle.textContent = item.title;
@@ -2441,7 +2477,7 @@ function safeRichTextUrl(value, image) {
   if (!value) return "";
   if (image && /^data:image\/(png|gif|jpe?g|webp);base64,/i.test(value)) return value;
   try {
-    const { webBase } = parseAzureUrl(state.orgUrl);
+    const { webBase } = activeAzureContext();
     let url = new URL(value, `${webBase}/`);
     if (image) url = normalizeAzureImageUrl(url);
     const protocols = image ? ["https:", "http:"] : ["https:", "http:", "mailto:"];
@@ -2456,7 +2492,7 @@ function normalizeAzureImageUrl(url) {
     ? segments[0]
     : "";
   if (attachmentId) {
-    const { base } = parseAzureUrl(state.orgUrl);
+    const { base } = activeAzureContext();
     const attachmentUrl = new URL(`${base}/_apis/wit/attachments/${attachmentId}`);
     url.searchParams.forEach((value, key) => attachmentUrl.searchParams.append(key, value));
     if (!attachmentUrl.searchParams.has("api-version")) attachmentUrl.searchParams.set("api-version", "7.1");

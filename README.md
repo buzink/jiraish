@@ -25,11 +25,15 @@ Open daarna `http://localhost:8080`.
 
 ## Azure DevOps instellen
 
-Open Jiraish en vul de URL van een Azure DevOps-project en een Personal Access Token in. Een project-URL heeft deze vorm:
+Open Jiraish en vul een Azure DevOps-URL en een Personal Access Token in. Jiraish accepteert een organisatie-, project- of team-URL:
 
 ```text
+https://dev.azure.com/organisatie/
 https://dev.azure.com/organisatie/project/
+https://dev.azure.com/organisatie/project/team/
 ```
+
+Bij een team-URL wordt dat team bij de eerste keer openen als standaard gekozen. Zonder team gebruikt Jiraish het eerder gekozen team of, als dat niet beschikbaar is, het eerste team. Bij een URL met alleen de organisatie gebruikt Jiraish het eerder gekozen project of het eerste beschikbare project.
 
 De PAT heeft minimaal leesrechten op projecten, teams, iteraties en work-items nodig. Voor het aanpassen van work-items zijn ook schrijfrechten voor work-items vereist.
 
