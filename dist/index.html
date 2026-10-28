@@ -198,6 +198,28 @@
       </section>
 
       <section id="forYouView" class="for-you-view" aria-labelledby="forYouTitle" data-for-you-view hidden>
+        <section class="for-you-panel for-you-custom-panel" aria-labelledby="forYouCustomTitle">
+          <header>
+            <div>
+              <span class="for-you-icon for-you-custom-icon" aria-hidden="true">≡</span>
+              <h2 id="forYouCustomTitle">All issues by anyone</h2>
+            </div>
+            <span id="forYouCustomCount" class="count">0</span>
+          </header>
+          <div class="for-you-custom-controls" aria-label="Configure issue table">
+            <label>Assigned to<select id="forYouCustomAssignee"></select></label>
+            <label>State<select id="forYouCustomState"></select></label>
+            <label>Type<select id="forYouCustomType"></select></label>
+          </div>
+          <div id="forYouCustomStatus" class="for-you-status" aria-live="polite"></div>
+          <div class="for-you-custom-table-wrap">
+            <table class="for-you-custom-table">
+              <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>State</th><th>Assigned to</th><th>Updated</th></tr></thead>
+              <tbody id="forYouCustomRows"></tbody>
+            </table>
+          </div>
+          <button id="forYouCustomShowAll" class="for-you-show-all" type="button" aria-controls="forYouCustomRows" aria-expanded="false" hidden>Show all</button>
+        </section>
         <section id="githubPrPanel" class="for-you-panel github-pr-panel" aria-labelledby="githubPrTitle" hidden>
           <header>
             <div>
@@ -442,6 +464,10 @@
             <section id="workItemSystemInfoSection" class="issue-section" aria-labelledby="workItemSystemInfoHeading" hidden>
               <div class="section-heading-row description-heading-row">
                 <h3 id="workItemSystemInfoHeading">System info</h3>
+                <button id="systemInfoEditButton" class="description-edit-button" type="button" title="Edit system info">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.4-10.4a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"></path><path d="m14.5 6.5 3 3"></path></svg>
+                  <span>Edit</span>
+                </button>
               </div>
               <div id="workItemSystemInfo" class="issue-description rich-content">No system information added.</div>
             </section>

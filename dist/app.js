@@ -11,7 +11,8 @@ const STORAGE = {
   githubRepos: "wish-board.github-repositories",
   githubAllRepos: "wish-board.github-all-repositories",
   boardGroupBy: "wish-board.board-group-by",
-  wiki: "wish-board.wiki-id"
+  wiki: "wish-board.wiki-id",
+  forYouCustom: "wish-board.for-you-custom-table"
 };
 
 const DEFAULT_URL = "https://dev.azure.com/organization/project/";
@@ -106,6 +107,10 @@ const state = {
   wikiLoadToken: 0,
   wikiRequestToken: 0,
   forYouProjectName: "",
+  forYouCustomItems: [],
+  forYouCustomConfig: readJson(STORAGE.forYouCustom, { assignee: "anyone", state: "all", type: "all" }),
+  forYouCustomError: "",
+  forYouCustomRequestToken: 0,
   forYouWorkItems: [],
   forYouMentions: [],
   forYouActivity: [],
@@ -116,7 +121,7 @@ const state = {
   githubPullRequestsKey: "",
   githubPullRequestsError: "",
   forYouErrors: {},
-  forYouExpanded: { work: false, mentions: false, activity: false, created: false, updated: false, completed: false },
+  forYouExpanded: { custom: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false },
   forYouSelectedUser: null,
   forYouUserKey: "",
   forYouRequestToken: 0,
@@ -231,6 +236,14 @@ const els = {
   githubPrStatus: document.querySelector("#githubPrStatus"),
   githubPrTableWrap: document.querySelector("#githubPrTableWrap"),
   githubPrRows: document.querySelector("#githubPrRows"),
+  forYouCustomTitle: document.querySelector("#forYouCustomTitle"),
+  forYouCustomAssignee: document.querySelector("#forYouCustomAssignee"),
+  forYouCustomState: document.querySelector("#forYouCustomState"),
+  forYouCustomType: document.querySelector("#forYouCustomType"),
+  forYouCustomStatus: document.querySelector("#forYouCustomStatus"),
+  forYouCustomCount: document.querySelector("#forYouCustomCount"),
+  forYouCustomRows: document.querySelector("#forYouCustomRows"),
+  forYouCustomShowAll: document.querySelector("#forYouCustomShowAll"),
   backlogView: document.querySelector("#backlogView"),
   backlogSidebar: document.querySelector("#backlogSidebar"),
   backlogSidebarStatus: document.querySelector("#backlogSidebarStatus"),
@@ -312,6 +325,7 @@ const els = {
   descriptionEditorStatus: document.querySelector("#descriptionEditorStatus"),
   workItemSystemInfoSection: document.querySelector("#workItemSystemInfoSection"),
   workItemSystemInfo: document.querySelector("#workItemSystemInfo"),
+  systemInfoEditButton: document.querySelector("#systemInfoEditButton"),
   workItemAssignee: document.querySelector("#workItemAssignee"),
   workItemAssigneeControl: document.querySelector("#workItemAssigneeControl"),
   workItemAssigneeMenu: document.querySelector("#workItemAssigneeMenu"),
@@ -1025,7 +1039,7 @@ async function showMainView(view) {
     if (enteringForYou) {
       state.forYouSelectedUser = null;
       state.forYouUserKey = "";
-      state.forYouExpanded = { work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
+      state.forYouExpanded = { custom: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
     }
     await loadForYou();
     return;
@@ -1097,6 +1111,71 @@ function githubPullRequestsCacheKey() {
   return repositories;
 }
 
+function normalizedForYouCustomConfig() {
+  const config = state.forYouCustomConfig || {};
+  return {
+    assignee: String(config.assignee || "anyone"),
+    state: String(config.state || "all"),
+    type: String(config.type || "all")
+  };
+}
+
+function forYouCustomAssigneeChoices() {
+  const choices = [
+    { value: "anyone", label: "Anyone" },
+    { value: "me", label: "Me" }
+  ];
+  const seen = new Set(choices.map(choice => choice.value));
+  state.teamMembers.forEach(member => {
+    const identity = member.uniqueName || member.name;
+    if (!identity) return;
+    const value = `user:${identity}`;
+    if (seen.has(value)) return;
+    seen.add(value);
+    choices.push({ value, label: member.name || identity });
+  });
+  return choices;
+}
+
+function forYouCustomStateChoices() {
+  return ["all", ...[...state.knownStates].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }))];
+}
+
+function forYouCustomTypeChoices() {
+  const types = new Set(["Bug", "User Story", "Task", "Feature", "Epic"]);
+  knownWorkItems().forEach(item => { if (item.type) types.add(item.type); });
+  return ["all", ...[...types].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }))];
+}
+
+function forYouCustomTitle() {
+  const config = normalizedForYouCustomConfig();
+  const stateLabel = config.state === "all" ? "All" : config.state;
+  const typeLabel = config.type === "all" ? "issues" : ({
+    Bug: "bugs", "User Story": "user stories", Task: "tasks", Feature: "features", Epic: "epics"
+  }[config.type] || `${config.type.toLocaleLowerCase("en")} items`);
+  const assigneeChoice = forYouCustomAssigneeChoices().find(choice => choice.value === config.assignee);
+  const assigneeLabel = config.assignee === "anyone" ? "anyone"
+    : config.assignee === "me" ? "me"
+      : assigneeChoice?.label || config.assignee.replace(/^user:/, "");
+  return `${stateLabel} ${typeLabel} by ${assigneeLabel}`;
+}
+
+async function loadForYouCustomItems() {
+  const config = normalizedForYouCustomConfig();
+  const conditions = ["[System.TeamProject] = @project"];
+  if (config.assignee === "me") conditions.push("[System.AssignedTo] = @Me");
+  else if (config.assignee.startsWith("user:")) conditions.push(`[System.AssignedTo] = '${wiqlText(config.assignee.slice(5))}'`);
+  if (config.state !== "all") conditions.push(`[System.State] = '${wiqlText(config.state)}'`);
+  if (config.type !== "all") conditions.push(`[System.WorkItemType] = '${wiqlText(config.type)}'`);
+  const ids = await queryWorkItemIds(`
+    SELECT [System.Id]
+    FROM WorkItems
+    WHERE ${conditions.join("\n      AND ")}
+    ORDER BY [System.ChangedDate] DESC
+  `, 100);
+  return fetchWorkItems(ids);
+}
+
 async function github(path) {
   const response = await fetch(`https://api.github.com${path}`, {
     headers: {
@@ -1146,6 +1225,8 @@ async function loadGithubPullRequests() {
 async function loadForYou(force = false) {
   if (!state.projectName) {
     state.forYouProjectName = "";
+    state.forYouCustomItems = [];
+    state.forYouCustomError = "";
     state.forYouWorkItems = [];
     state.forYouMentions = [];
     state.forYouActivity = [];
@@ -1172,6 +1253,7 @@ async function loadForYou(force = false) {
   els.refresh.disabled = true;
   els.refresh.classList.add("is-spinning");
   const sections = await Promise.allSettled([
+    loadForYouCustomItems(),
     loadForYouWorkItems(user, isSelf),
     loadForYouMentions(user),
     loadForYouActivity(user, isSelf),
@@ -1181,7 +1263,15 @@ async function loadForYou(force = false) {
     state.githubToken ? loadGithubPullRequests() : Promise.resolve([])
   ]);
   if (requestToken !== state.forYouRequestToken) return;
-  const [work, mentions, activity, created, updated, completed, pullRequests] = sections;
+  const [custom, work, mentions, activity, created, updated, completed, pullRequests] = sections;
+  if (custom.status === "fulfilled") {
+    state.forYouCustomItems = custom.value;
+    state.forYouCustomError = "";
+  } else {
+    console.error(custom.reason);
+    state.forYouCustomItems = [];
+    state.forYouCustomError = custom.reason?.message || "The custom issue table could not be loaded.";
+  }
   if (work.status === "fulfilled") state.forYouWorkItems = work.value;
   else {
     console.error(work.reason);
@@ -1539,14 +1629,123 @@ async function selectForYouUser(choice) {
     uniqueName: choice.uniqueName || choice.displayName
   };
   state.forYouUserKey = "";
-  state.forYouExpanded = { work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
+  state.forYouExpanded = { custom: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
   closeForYouPersonMenu();
   renderForYouIdentity();
   await loadForYou(true);
 }
 
+function replaceSelectOptions(select, choices, selectedValue) {
+  const normalizedChoices = choices.map(choice => typeof choice === "string"
+    ? { value: choice, label: choice === "all" ? "All" : choice }
+    : choice);
+  if (!normalizedChoices.some(choice => choice.value === selectedValue)) {
+    normalizedChoices.push({ value: selectedValue, label: selectedValue.replace(/^user:/, "") });
+  }
+  select.replaceChildren(...normalizedChoices.map(choice => {
+    const option = document.createElement("option");
+    option.value = choice.value;
+    option.textContent = choice.label;
+    option.selected = choice.value === selectedValue;
+    return option;
+  }));
+}
+
+function renderForYouCustomControls() {
+  const config = normalizedForYouCustomConfig();
+  replaceSelectOptions(els.forYouCustomAssignee, forYouCustomAssigneeChoices(), config.assignee);
+  replaceSelectOptions(els.forYouCustomState, forYouCustomStateChoices(), config.state);
+  replaceSelectOptions(els.forYouCustomType, forYouCustomTypeChoices(), config.type);
+  els.forYouCustomTitle.textContent = forYouCustomTitle();
+}
+
+function createForYouCustomRow(item) {
+  const row = document.createElement("tr");
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.setAttribute("aria-label", `Open ${item.type} ${workItemKey(item.id)}: ${item.title}`);
+  const type = document.createElement("td");
+  const typeBadge = document.createElement("span");
+  typeBadge.className = `backlog-type ${item.type.toLocaleLowerCase("en") === "bug" ? "is-bug" : ""}`;
+  typeBadge.textContent = item.type;
+  type.append(typeBadge);
+  const key = document.createElement("td");
+  key.className = "backlog-key";
+  key.textContent = workItemKey(item.id);
+  const summary = document.createElement("td");
+  summary.className = "backlog-summary";
+  summary.textContent = item.title;
+  const itemState = document.createElement("td");
+  const stateBadge = document.createElement("span");
+  stateBadge.className = "card-state";
+  stateBadge.dataset.stateTone = stateTone(item.state);
+  stateBadge.textContent = item.state;
+  itemState.append(stateBadge);
+  const assignee = document.createElement("td");
+  assignee.textContent = item.assignee || "Unassigned";
+  const updated = document.createElement("td");
+  updated.textContent = formatDateTime(item.changedDate);
+  row.append(type, key, summary, itemState, assignee, updated);
+  row.addEventListener("click", () => showWorkItem(item));
+  row.addEventListener("keydown", event => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    showWorkItem(item);
+  });
+  return row;
+}
+
+function renderForYouCustomTable() {
+  renderForYouCustomControls();
+  const error = state.forYouCustomError;
+  const expanded = state.forYouExpanded.custom;
+  const visibleItems = expanded ? state.forYouCustomItems : state.forYouCustomItems.slice(0, 5);
+  els.forYouCustomCount.textContent = String(state.forYouCustomItems.length);
+  els.forYouCustomStatus.classList.toggle("is-error", Boolean(error));
+  els.forYouCustomStatus.textContent = error || (!state.forYouCustomItems.length ? "No work items match these filters." : "");
+  els.forYouCustomRows.replaceChildren(...visibleItems.map(createForYouCustomRow));
+  els.forYouCustomShowAll.hidden = state.forYouCustomItems.length <= 5;
+  els.forYouCustomShowAll.textContent = expanded ? "Show less" : "Show all";
+  els.forYouCustomShowAll.setAttribute("aria-expanded", String(expanded));
+}
+
+async function refreshForYouCustomTable() {
+  const requestToken = ++state.forYouCustomRequestToken;
+  state.forYouCustomConfig = {
+    assignee: els.forYouCustomAssignee.value,
+    state: els.forYouCustomState.value,
+    type: els.forYouCustomType.value
+  };
+  state.forYouExpanded.custom = false;
+  localStorage.setItem(STORAGE.forYouCustom, JSON.stringify(state.forYouCustomConfig));
+  renderForYouCustomControls();
+  els.forYouCustomCount.textContent = "—";
+  els.forYouCustomStatus.textContent = "Loading matching work items…";
+  els.forYouCustomStatus.classList.remove("is-error");
+  els.forYouCustomRows.replaceChildren();
+  els.forYouCustomShowAll.hidden = true;
+  try {
+    const items = await loadForYouCustomItems();
+    if (requestToken !== state.forYouCustomRequestToken) return;
+    state.forYouCustomItems = items;
+    state.forYouCustomError = "";
+  } catch (error) {
+    if (requestToken !== state.forYouCustomRequestToken) return;
+    console.error(error);
+    state.forYouCustomItems = [];
+    state.forYouCustomError = error.message || "The custom issue table could not be loaded.";
+  }
+  renderForYouCustomTable();
+}
+
 function renderForYouLoading() {
   renderForYouIdentity();
+  renderForYouCustomControls();
+  els.forYouCustomCount.textContent = "—";
+  els.forYouCustomStatus.textContent = "Loading matching work items…";
+  els.forYouCustomStatus.classList.remove("is-error");
+  els.forYouCustomRows.replaceChildren();
+  els.forYouCustomShowAll.hidden = true;
   els.githubPrPanel.hidden = !state.githubToken;
   if (state.githubToken) {
     els.githubPrCount.textContent = "—";
@@ -1580,6 +1779,7 @@ function renderForYou() {
   const isSelf = !state.forYouSelectedUser;
   const displayName = user?.displayName || "the selected user";
   renderForYouIdentity();
+  renderForYouCustomTable();
   renderGithubPullRequests();
   renderForYouSection("work", state.forYouWorkItems, createForYouWorkItem,
     isSelf ? "No open work items are assigned to you." : `No open work items are assigned to ${displayName}.`);
@@ -3076,6 +3276,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   renderWorkItemAttachments(detail?.attachments || []);
   renderWorkItemSubtasks(detail?.subtasks || [], detail?.subtasksError || "");
   els.descriptionEditButton.disabled = loading;
+  els.systemInfoEditButton.disabled = loading;
   els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Unassigned";
   els.workItemAssignee.setAttribute("aria-label", `Assigned to ${detail?.assignee || item.assignee || "Unassigned"}. Click to change.`);
   els.workItemReporter.textContent = detail?.reporter || "—";
@@ -3967,6 +4168,7 @@ function knownWorkItems() {
   const items = [
     ...state.stories,
     ...state.backlogItems,
+    ...state.forYouCustomItems,
     ...state.forYouWorkItems,
     ...state.forYouCreated,
     ...state.forYouUpdated,
@@ -4145,17 +4347,23 @@ function handleMentionKeydown(kind, event) {
   return false;
 }
 
-function workItemContentField(item) {
+function workItemContentField(item, editorMode = "content") {
+  if (editorMode === "system-info") return "Microsoft.VSTS.TCM.SystemInfo";
   return isBugWorkItem(item) ? "Microsoft.VSTS.TCM.ReproSteps" : "System.Description";
 }
 
-function workItemContentLabel(item) {
+function workItemContentLabel(item, editorMode = "content") {
+  if (editorMode === "system-info") return "system info";
   return isBugWorkItem(item) ? "repro steps" : "description";
 }
 
-function openDescriptionEditor() {
+let descriptionEditorMode = "content";
+
+function openDescriptionEditor(editorMode = "content") {
   const item = selectedWorkItem();
-  if (!item || els.descriptionEditButton.disabled) return;
+  const systemInfo = editorMode === "system-info";
+  const editButton = systemInfo ? els.systemInfoEditButton : els.descriptionEditButton;
+  if (!item || editButton.disabled) return;
   closeWorkItemStateMenu();
   closeWorkItemAssigneeMenu();
   closeWorkItemTagsMenu();
@@ -4163,14 +4371,22 @@ function openDescriptionEditor() {
   closeMentionMenu("comment");
   const detail = state.detailsCache.get(item.id);
   const bug = isBugWorkItem(item);
-  const html = (bug ? detail?.reproStepsHtml : detail?.descriptionHtml) || "";
+  const html = (systemInfo ? detail?.systemInfoHtml : bug ? detail?.reproStepsHtml : detail?.descriptionHtml) || "";
+  descriptionEditorMode = editorMode;
   els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
-  els.descriptionEditor.setAttribute("aria-label", bug ? "Repro steps" : "Description");
-  els.descriptionEditor.dataset.placeholder = bug ? "Add repro steps…" : "Add a description…";
+  els.descriptionEditor.setAttribute("aria-label", systemInfo ? "System info" : bug ? "Repro steps" : "Description");
+  els.descriptionEditor.dataset.placeholder = systemInfo ? "Add system information…" : bug ? "Add repro steps…" : "Add a description…";
   els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
   hydrateRichTextImages(els.descriptionEditor);
-  els.workItemDescription.hidden = true;
+  if (systemInfo) {
+    els.workItemSystemInfo.hidden = true;
+    els.workItemSystemInfo.after(els.descriptionEditorForm);
+  } else {
+    els.workItemDescription.hidden = true;
+    els.workItemDescription.after(els.descriptionEditorForm);
+  }
   els.descriptionEditButton.hidden = true;
+  els.systemInfoEditButton.hidden = true;
   els.descriptionEditorForm.hidden = false;
   els.descriptionEditorStatus.textContent = "";
   els.descriptionEditorStatus.classList.remove("is-error");
@@ -4181,11 +4397,15 @@ function resetDescriptionEditor() {
   closeMentionMenu("description");
   els.descriptionEditorForm.hidden = true;
   els.workItemDescription.hidden = false;
+  els.workItemSystemInfo.hidden = false;
   els.descriptionEditButton.hidden = false;
+  els.systemInfoEditButton.hidden = false;
+  els.workItemDescription.after(els.descriptionEditorForm);
   els.descriptionEditor.replaceChildren();
   els.descriptionEditorStatus.textContent = "";
   els.descriptionEditorStatus.classList.remove("is-error");
   setDescriptionEditorBusy(false);
+  descriptionEditorMode = "content";
 }
 
 function setDescriptionEditorBusy(busy) {
@@ -4229,8 +4449,9 @@ async function submitDescriptionEditor(event) {
   const item = selectedWorkItem();
   if (!item) return;
   const descriptionHtml = descriptionEditorHtml();
-  const contentField = workItemContentField(item);
-  const contentLabel = workItemContentLabel(item);
+  const editorMode = descriptionEditorMode;
+  const contentField = workItemContentField(item, editorMode);
+  const contentLabel = workItemContentLabel(item, editorMode);
   setDescriptionEditorBusy(true);
   els.descriptionEditorStatus.textContent = `Saving ${contentLabel}…`;
   els.descriptionEditorStatus.classList.remove("is-error");
@@ -4688,6 +4909,8 @@ function renderEmptyBoard() {
   state.wikiRoot = null;
   state.wikiPage = null;
   state.forYouProjectName = "";
+  state.forYouCustomItems = [];
+  state.forYouCustomError = "";
   state.forYouWorkItems = [];
   state.forYouMentions = [];
   state.forYouActivity = [];
@@ -4946,7 +5169,8 @@ els.workItemIterationSearch.addEventListener("input", async () => {
   event.stopPropagation();
   closeWorkItemDetailFieldMenus();
 }));
-els.descriptionEditButton.addEventListener("click", openDescriptionEditor);
+els.descriptionEditButton.addEventListener("click", () => openDescriptionEditor());
+els.systemInfoEditButton.addEventListener("click", () => openDescriptionEditor("system-info"));
 els.descriptionEditorCancel.addEventListener("click", resetDescriptionEditor);
 els.descriptionEditorForm.addEventListener("submit", submitDescriptionEditor);
 document.querySelectorAll("[data-description-command]").forEach(button => {
@@ -4958,8 +5182,9 @@ els.descriptionEditor.addEventListener("keydown", event => {
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
+    const editButton = descriptionEditorMode === "system-info" ? els.systemInfoEditButton : els.descriptionEditButton;
     resetDescriptionEditor();
-    els.descriptionEditButton.focus();
+    editButton.focus();
   } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
     els.descriptionEditorForm.requestSubmit();
@@ -5081,6 +5306,13 @@ els.forYouPersonSearch.addEventListener("keydown", event => {
   event.stopPropagation();
   closeForYouPersonMenu();
   els.forYouPerson.focus();
+});
+[els.forYouCustomAssignee, els.forYouCustomState, els.forYouCustomType]
+  .forEach(select => select.addEventListener("change", refreshForYouCustomTable));
+els.forYouCustomShowAll.addEventListener("click", () => {
+  state.forYouExpanded.custom = !state.forYouExpanded.custom;
+  renderForYouCustomTable();
+  if (!state.forYouExpanded.custom) els.forYouCustomShowAll.scrollIntoView({ block: "nearest" });
 });
 els.forYouWorkShowAll.addEventListener("click", () => toggleForYouSection("work"));
 els.forYouMentionsShowAll.addEventListener("click", () => toggleForYouSection("mentions"));
