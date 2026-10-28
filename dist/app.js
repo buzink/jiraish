@@ -9,7 +9,8 @@ const STORAGE = {
   theme: "wish-board.theme",
   githubToken: "wish-board.github-token",
   githubRepos: "wish-board.github-repositories",
-  githubAllRepos: "wish-board.github-all-repositories"
+  githubAllRepos: "wish-board.github-all-repositories",
+  boardGroupBy: "wish-board.board-group-by"
 };
 
 const DEFAULT_URL = "https://dev.azure.com/organization/project/";
@@ -75,6 +76,8 @@ const state = {
   knownStates: new Set(Object.keys(DEFAULT_MAPPING)),
   mapping: readMapping(),
   search: "",
+  boardGroupBy: ["none", "state", "assignee"].includes(localStorage.getItem(STORAGE.boardGroupBy))
+    ? localStorage.getItem(STORAGE.boardGroupBy) : "none",
   filters: {
     type: new Set(),
     assignee: new Set(),
@@ -229,6 +232,9 @@ const els = {
   theme: document.querySelector("#themeButton"),
   refresh: document.querySelector("#refreshButton"),
   search: document.querySelector("#searchInput"),
+  boardGroupControl: document.querySelector("#boardGroupControl"),
+  boardGroupLabel: document.querySelector("#boardGroupLabel"),
+  boardGroupOptions: [...document.querySelectorAll("[data-board-group]")],
   filterControls: document.querySelector("#filterControls"),
   activeFilters: document.querySelector("#activeFilters"),
   clearFilters: document.querySelector("#clearFilters"),
@@ -742,6 +748,71 @@ function addSmartMappings() {
   localStorage.setItem(STORAGE.mapping, JSON.stringify(state.mapping));
 }
 
+function boardGroupLabel(value = state.boardGroupBy) {
+  return { none: "None", state: "State", assignee: "Assigned to" }[value] || "None";
+}
+
+function renderBoardGroupControl() {
+  els.boardGroupLabel.textContent = boardGroupLabel();
+  els.boardGroupOptions.forEach(option => {
+    const selected = option.dataset.boardGroup === state.boardGroupBy;
+    option.classList.toggle("is-selected", selected);
+    option.setAttribute("aria-selected", String(selected));
+  });
+}
+
+function boardGroupValue(item) {
+  if (state.boardGroupBy === "state") return item.state || "Unknown state";
+  if (state.boardGroupBy === "assignee") return item.assignee || "Unassigned";
+  return "";
+}
+
+function createBoardGroup(title, stories) {
+  const section = document.createElement("section");
+  section.className = "board-item-group";
+  const header = document.createElement("header");
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  const count = document.createElement("span");
+  count.className = "count";
+  count.textContent = String(stories.length);
+  header.append(heading, count);
+  const cards = document.createElement("div");
+  cards.className = "board-group-cards";
+  cards.replaceChildren(...stories.map(createCard));
+  section.append(header, cards);
+  return section;
+}
+
+function compareBoardGroups([left], [right]) {
+  if (state.boardGroupBy === "assignee") {
+    if (left === "Unassigned") return right === "Unassigned" ? 0 : 1;
+    if (right === "Unassigned") return -1;
+  }
+  return left.localeCompare(right, "en", { numeric: true, sensitivity: "base" });
+}
+
+function renderBoardColumn(list, stories) {
+  const grouped = state.boardGroupBy !== "none" && stories.length;
+  list.classList.toggle("is-grouped", Boolean(grouped));
+  if (!stories.length) {
+    list.replaceChildren(emptyNode());
+    return;
+  }
+  if (!grouped) {
+    list.replaceChildren(...stories.map(createCard));
+    return;
+  }
+  const groups = new Map();
+  stories.forEach(story => {
+    const value = boardGroupValue(story);
+    if (!groups.has(value)) groups.set(value, []);
+    groups.get(value).push(story);
+  });
+  const orderedGroups = [...groups].sort(compareBoardGroups);
+  list.replaceChildren(...orderedGroups.map(([title, groupStories]) => createBoardGroup(title, groupStories)));
+}
+
 function render() {
   const team = state.teams.find(item => item.id === state.teamId);
   const filteredIterations = selectedSprintIterations();
@@ -769,6 +840,7 @@ function render() {
 
   const query = state.search.trim().toLowerCase();
   const visibleStories = state.stories.filter(item => matchesFilters(item, query));
+  renderBoardGroupControl();
   renderFilters();
   for (const column of ["todo", "active", "done"]) {
     const list = document.querySelector(`[data-list="${column}"]`);
@@ -776,7 +848,7 @@ function render() {
     document.querySelector(`[data-count="${column}"]`).textContent = stories.length;
     const mappedStates = [...state.knownStates].filter(itemState => state.mapping[itemState] === column);
     document.querySelector(`[data-states="${column}"]`).textContent = mappedStates.join(", ") || "No states configured";
-    list.replaceChildren(...(stories.length ? stories.map(createCard) : [emptyNode()]));
+    renderBoardColumn(list, stories);
   }
 }
 
@@ -4262,7 +4334,7 @@ function showSettings() {
     const select = document.createElement("select");
     select.name = `state-${itemState}`;
     select.dataset.state = itemState;
-    [["todo", "To do"], ["active", "Active"], ["done", "Done"], ["hidden", "Hide"]].forEach(([value, text]) => {
+    [["todo", "To do"], ["active", "Doing"], ["done", "Done"], ["hidden", "Hide"]].forEach(([value, text]) => {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = text;
@@ -4296,6 +4368,7 @@ function setLoading(value) {
   if (value) {
     closeSprintMenu();
     document.querySelectorAll(".card-list").forEach(list => {
+      list.classList.remove("is-grouped");
       list.replaceChildren(...Array.from({ length: 3 }, () => {
         const node = document.createElement("div");
         node.className = "skeleton";
@@ -4622,6 +4695,12 @@ els.backlogShowAllFeatures.addEventListener("click", () => {
 });
 els.refresh.addEventListener("click", () => loadBoard());
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
+els.boardGroupOptions.forEach(option => option.addEventListener("click", () => {
+  state.boardGroupBy = option.dataset.boardGroup;
+  localStorage.setItem(STORAGE.boardGroupBy, state.boardGroupBy);
+  els.boardGroupControl.open = false;
+  render();
+}));
 els.clearFilters.addEventListener("click", async () => {
   const hadSprintFilter = Boolean(state.filters.sprint.size);
   Object.values(state.filters).forEach(values => values.clear());
@@ -4645,6 +4724,7 @@ document.addEventListener("click", event => {
   if (!els.commentMentionMenu.contains(event.target) && !els.commentComposerInput.contains(event.target)) closeMentionMenu("comment");
   if (!els.forYouPersonControl.contains(event.target)) closeForYouPersonMenu();
   if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
+  if (!els.boardGroupControl.contains(event.target)) els.boardGroupControl.open = false;
   if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();
   if (!els.workItemAssigneeControl.contains(event.target)) closeWorkItemAssigneeMenu();
   if (!els.workItemTagsControl.contains(event.target)) closeWorkItemTagsMenu();

@@ -62,6 +62,18 @@
           <p id="sprintMeta" class="sprint-meta">Connect Azure DevOps to load the sprint board.</p>
         </div>
         <div class="heading-actions">
+          <details id="boardGroupControl" class="board-group-control">
+            <summary>
+              <span>Group by</span>
+              <strong id="boardGroupLabel">None</strong>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+            </summary>
+            <div class="board-group-menu" role="listbox" aria-label="Group work items by">
+              <button type="button" data-board-group="none" role="option"><span>None</span><b aria-hidden="true">✓</b></button>
+              <button type="button" data-board-group="state" role="option"><span>State</span><b aria-hidden="true">✓</b></button>
+              <button type="button" data-board-group="assignee" role="option"><span>Assigned to</span><b aria-hidden="true">✓</b></button>
+            </div>
+          </details>
           <label class="search-field">
             <span class="sr-only">Search stories</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
@@ -128,7 +140,7 @@
         </article>
         <article class="column" data-column="active">
           <header class="column-header">
-            <div><span class="column-dot active-dot"></span><h2>Active</h2><span class="count" data-count="active">0</span></div>
+            <div><span class="column-dot active-dot"></span><h2>Doing</h2><span class="count" data-count="active">0</span></div>
             <p data-states="active">No states configured</p>
           </header>
           <div class="card-list" data-list="active"></div>
