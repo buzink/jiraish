@@ -142,6 +142,8 @@ const HISTORY_FIELDS = {
   "System.IterationPath": "Sprint",
   "System.Tags": "Tags",
   "System.Description": "Description",
+  "Microsoft.VSTS.TCM.ReproSteps": "Repro steps",
+  "Microsoft.VSTS.TCM.SystemInfo": "System info",
   "System.Parent": "Parent",
   "Microsoft.VSTS.Common.Priority": "Priority",
   "Microsoft.VSTS.Scheduling.StoryPoints": "Story points",
@@ -263,6 +265,7 @@ const els = {
   workItemStateMenu: document.querySelector("#workItemStateMenu"),
   workItemStateOptions: document.querySelector("#workItemStateOptions"),
   workItemReason: document.querySelector("#workItemReason"),
+  descriptionHeading: document.querySelector("#descriptionHeading"),
   workItemDescription: document.querySelector("#workItemDescription"),
   descriptionEditButton: document.querySelector("#descriptionEditButton"),
   descriptionEditorForm: document.querySelector("#descriptionEditorForm"),
@@ -273,6 +276,8 @@ const els = {
   descriptionEditorCancel: document.querySelector("#descriptionEditorCancel"),
   descriptionEditorSubmit: document.querySelector("#descriptionEditorSubmit"),
   descriptionEditorStatus: document.querySelector("#descriptionEditorStatus"),
+  workItemSystemInfoSection: document.querySelector("#workItemSystemInfoSection"),
+  workItemSystemInfo: document.querySelector("#workItemSystemInfo"),
   workItemAssignee: document.querySelector("#workItemAssignee"),
   workItemAssigneeControl: document.querySelector("#workItemAssigneeControl"),
   workItemAssigneeMenu: document.querySelector("#workItemAssigneeMenu"),
@@ -311,6 +316,9 @@ const els = {
   workItemChanged: document.querySelector("#workItemChanged"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
+  workItemAttachmentsSection: document.querySelector("#workItemAttachmentsSection"),
+  workItemAttachmentCount: document.querySelector("#workItemAttachmentCount"),
+  workItemAttachments: document.querySelector("#workItemAttachments"),
   workItemAllPanel: document.querySelector("#workItemAllPanel"),
   workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
@@ -663,6 +671,8 @@ function normalizeWorkItem(item) {
     createdDate: fields["System.CreatedDate"] || "",
     createdBy: createdBy?.displayName || createdBy?.uniqueName || "",
     descriptionHtml: fields["System.Description"] || "",
+    reproStepsHtml: fields["Microsoft.VSTS.TCM.ReproSteps"] || "",
+    systemInfoHtml: fields["Microsoft.VSTS.TCM.SystemInfo"] || "",
     pointsField: storyPoints !== undefined ? "Microsoft.VSTS.Scheduling.StoryPoints"
       : effort !== undefined ? "Microsoft.VSTS.Scheduling.Effort" : ""
   };
@@ -677,7 +687,7 @@ async function fetchWorkItems(ids, { includeDescription = false } = {}) {
     "System.ChangedBy", "System.CreatedDate", "System.CreatedBy", "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints",
     "Microsoft.VSTS.Scheduling.Effort"
   ];
-  if (includeDescription) fields.push("System.Description");
+  if (includeDescription) fields.push("System.Description", "Microsoft.VSTS.TCM.ReproSteps", "Microsoft.VSTS.TCM.SystemInfo");
   for (let index = 0; index < uniqueIds.length; index += 200) {
     const chunk = uniqueIds.slice(index, index + 200);
     const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields.join(","))}&errorPolicy=Omit&api-version=7.1`);
@@ -1148,16 +1158,21 @@ async function loadForYouMentions(user) {
   const items = await fetchWorkItems(ids, { includeDescription: true });
   const mentionGroups = await mapWithConcurrency(items, 6, async item => {
     const mentions = [];
-    if (htmlMentionsUser(item.descriptionHtml, user)) {
+    for (const [html, kind] of [
+      [item.descriptionHtml, "Description"],
+      [item.reproStepsHtml, "Repro steps"],
+      [item.systemInfoHtml, "System info"]
+    ]) {
+      if (!htmlMentionsUser(html, user)) continue;
       mentions.push({
         item,
         mention: {
           author: item.changedBy || "Unknown user",
           authorId: item.changedById,
           authorUniqueName: item.changedByUniqueName,
-          html: item.descriptionHtml,
+          html,
           createdDate: item.changedDate,
-          kind: "Description"
+          kind
         }
       });
     }
@@ -2041,6 +2056,32 @@ function isSelectedWorkItem(itemId) {
   return state.selectedItemId === itemId && els.workItemDialog.open;
 }
 
+function normalizeWorkItemAttachments(item) {
+  if (!Array.isArray(item.relations)) return state.detailsCache.get(item.id)?.attachments || [];
+  return item.relations.filter(relation => relation.rel === "AttachedFile").map(relation => {
+    const attributes = relation.attributes || {};
+    let url = "";
+    let fallbackName = "";
+    try {
+      const attachmentUrl = new URL(relation.url);
+      fallbackName = attachmentUrl.searchParams.get("fileName") || "";
+      if (!attachmentUrl.searchParams.has("api-version")) attachmentUrl.searchParams.set("api-version", "7.1");
+      if (!attachmentUrl.searchParams.has("fileName") && attributes.name) attachmentUrl.searchParams.set("fileName", attributes.name);
+      attachmentUrl.searchParams.set("download", "true");
+      url = isConfiguredAzureUrl(attachmentUrl.href) ? attachmentUrl.href : "";
+    } catch {}
+    const name = String(attributes.name || fallbackName || "Attachment");
+    return {
+      id: String(attributes.id || relation.url || name),
+      name,
+      url,
+      size: Number(attributes.resourceSize) || 0,
+      createdDate: attributes.resourceCreatedDate || attributes.authorizedDate || "",
+      comment: String(attributes.comment || "")
+    };
+  }).filter(attachment => attachment.url);
+}
+
 function normalizeWorkItemDetail(item) {
   const fields = item.fields || {};
   const assigned = fields["System.AssignedTo"];
@@ -2049,6 +2090,8 @@ function normalizeWorkItemDetail(item) {
   const effort = fields["Microsoft.VSTS.Scheduling.Effort"];
   return {
     descriptionHtml: fields["System.Description"] || "",
+    reproStepsHtml: fields["Microsoft.VSTS.TCM.ReproSteps"] || "",
+    systemInfoHtml: fields["Microsoft.VSTS.TCM.SystemInfo"] || "",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
     assigneeUniqueName: assigned?.uniqueName || assigned?.displayName || "",
     assigneeId: assigned?.id || "",
@@ -2061,7 +2104,8 @@ function normalizeWorkItemDetail(item) {
     iteration: fields["System.IterationPath"] || "",
     reason: fields["System.Reason"] || "",
     tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
-    changedDate: fields["System.ChangedDate"] || ""
+    changedDate: fields["System.ChangedDate"] || "",
+    attachments: normalizeWorkItemAttachments(item)
   };
 }
 
@@ -2094,7 +2138,7 @@ function normalizeHistoryUpdate(update) {
     if (!label) return [];
     return [{
       label,
-      compact: field === "System.Description",
+      compact: ["System.Description", "Microsoft.VSTS.TCM.ReproSteps", "Microsoft.VSTS.TCM.SystemInfo"].includes(field),
       oldValue: formatHistoryValue(change.oldValue),
       newValue: formatHistoryValue(change.newValue)
     }];
@@ -2133,8 +2177,67 @@ function humanizeField(value) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[._-]+/g, " ");
 }
 
+function formatAttachmentSize(bytes) {
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  const digits = unit && value < 10 ? 1 : 0;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+function attachmentType(name) {
+  const extension = String(name).split(".").pop()?.toLocaleUpperCase("en") || "";
+  return extension && extension !== String(name).toLocaleUpperCase("en") && extension.length <= 5 ? extension : "FILE";
+}
+
+function isBugWorkItem(item) {
+  return String(item?.type || "").trim().toLocaleLowerCase("en") === "bug";
+}
+
+function renderWorkItemAttachments(attachments = []) {
+  els.workItemAttachmentsSection.hidden = !attachments.length;
+  els.workItemAttachmentCount.textContent = String(attachments.length);
+  if (!attachments.length) return els.workItemAttachments.replaceChildren();
+  els.workItemAttachments.replaceChildren(...attachments.map(attachment => {
+    const link = document.createElement("a");
+    link.className = "work-item-attachment";
+    link.href = attachment.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.setAttribute("aria-label", `${attachment.name}. Open attachment in Azure DevOps.`);
+    const icon = document.createElement("span");
+    icon.className = "work-item-attachment-icon";
+    icon.textContent = attachmentType(attachment.name);
+    const body = document.createElement("span");
+    body.className = "work-item-attachment-body";
+    const name = document.createElement("strong");
+    name.textContent = attachment.name;
+    const metadata = document.createElement("small");
+    metadata.textContent = [formatAttachmentSize(attachment.size), formatDateTime(attachment.createdDate)].filter(Boolean).join(" · ") || "Stored in Azure DevOps";
+    body.append(name, metadata);
+    if (attachment.comment) {
+      const comment = document.createElement("span");
+      comment.className = "work-item-attachment-comment";
+      comment.textContent = attachment.comment;
+      body.append(comment);
+    }
+    const external = document.createElement("span");
+    external.className = "work-item-attachment-external";
+    external.textContent = "↗";
+    external.setAttribute("aria-hidden", "true");
+    link.append(icon, body, external);
+    return link;
+  }));
+}
+
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
   const { webBase } = activeAzureContext();
+  const bug = isBugWorkItem(item);
   els.workItemType.textContent = item.type;
   els.workItemKey.textContent = workItemKey(item.id);
   els.workItemTitle.textContent = item.title;
@@ -2143,7 +2246,17 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemState.setAttribute("aria-label", `State ${item.state}. Click to change.`);
   els.workItemReason.textContent = detail?.reason || "";
   els.workItemReason.hidden = !detail?.reason;
-  setRichContent(els.workItemDescription, detail?.descriptionHtml, loading ? "Loading description…" : "No description added.");
+  els.descriptionHeading.textContent = bug ? "Repro steps" : "Description";
+  els.descriptionEditButton.title = bug ? "Edit repro steps" : "Edit description";
+  els.descriptionEditButton.setAttribute("aria-label", bug ? "Edit repro steps" : "Edit description");
+  setRichContent(
+    els.workItemDescription,
+    bug ? detail?.reproStepsHtml : detail?.descriptionHtml,
+    loading ? `Loading ${bug ? "repro steps" : "description"}…` : bug ? "No repro steps added." : "No description added."
+  );
+  els.workItemSystemInfoSection.hidden = !bug;
+  if (bug) setRichContent(els.workItemSystemInfo, detail?.systemInfoHtml, loading ? "Loading system information…" : "No system information added.");
+  renderWorkItemAttachments(detail?.attachments || []);
   els.descriptionEditButton.disabled = loading;
   els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Unassigned";
   els.workItemAssignee.setAttribute("aria-label", `Assigned to ${detail?.assignee || item.assignee || "Unassigned"}. Click to change.`);
@@ -3214,6 +3327,14 @@ function handleMentionKeydown(kind, event) {
   return false;
 }
 
+function workItemContentField(item) {
+  return isBugWorkItem(item) ? "Microsoft.VSTS.TCM.ReproSteps" : "System.Description";
+}
+
+function workItemContentLabel(item) {
+  return isBugWorkItem(item) ? "repro steps" : "description";
+}
+
 function openDescriptionEditor() {
   const item = selectedWorkItem();
   if (!item || els.descriptionEditButton.disabled) return;
@@ -3222,8 +3343,12 @@ function openDescriptionEditor() {
   closeWorkItemTagsMenu();
   closeWorkItemDetailFieldMenus();
   closeMentionMenu("comment");
-  const html = state.detailsCache.get(item.id)?.descriptionHtml || "";
+  const detail = state.detailsCache.get(item.id);
+  const bug = isBugWorkItem(item);
+  const html = (bug ? detail?.reproStepsHtml : detail?.descriptionHtml) || "";
   els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
+  els.descriptionEditor.setAttribute("aria-label", bug ? "Repro steps" : "Description");
+  els.descriptionEditor.dataset.placeholder = bug ? "Add repro steps…" : "Add a description…";
   els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
   hydrateRichTextImages(els.descriptionEditor);
   els.workItemDescription.hidden = true;
@@ -3286,14 +3411,16 @@ async function submitDescriptionEditor(event) {
   const item = selectedWorkItem();
   if (!item) return;
   const descriptionHtml = descriptionEditorHtml();
+  const contentField = workItemContentField(item);
+  const contentLabel = workItemContentLabel(item);
   setDescriptionEditorBusy(true);
-  els.descriptionEditorStatus.textContent = "Saving description…";
+  els.descriptionEditorStatus.textContent = `Saving ${contentLabel}…`;
   els.descriptionEditorStatus.classList.remove("is-error");
   try {
     await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json-patch+json" },
-      body: JSON.stringify([{ op: "add", path: "/fields/System.Description", value: descriptionHtml }])
+      body: JSON.stringify([{ op: "add", path: `/fields/${contentField}`, value: descriptionHtml }])
     });
     state.detailsRequestTokens.set(item.id, (state.detailsRequestTokens.get(item.id) || 0) + 1);
     const verifiedItem = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`);
@@ -3304,7 +3431,7 @@ async function submitDescriptionEditor(event) {
     resetDescriptionEditor();
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemDetail(item, detail, false);
-      els.workItemLoadStatus.textContent = "Description saved.";
+      els.workItemLoadStatus.textContent = `${contentLabel[0].toLocaleUpperCase("en")}${contentLabel.slice(1)} saved.`;
       renderHistory([], true);
       renderCombinedActivity();
       loadWorkItemHistory(item);
@@ -3312,8 +3439,8 @@ async function submitDescriptionEditor(event) {
   } catch (error) {
     console.error(error);
     els.descriptionEditorStatus.textContent = error.auth
-      ? "The description could not be saved. The PAT requires ‘Work Items: Read & write’."
-      : error.message || "The description could not be saved.";
+      ? `The ${contentLabel} could not be saved. The PAT requires ‘Work Items: Read & write’.`
+      : error.message || `The ${contentLabel} could not be saved.`;
     els.descriptionEditorStatus.classList.add("is-error");
     setDescriptionEditorBusy(false);
     els.descriptionEditor.focus();
