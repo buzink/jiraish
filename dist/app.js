@@ -319,6 +319,11 @@ const els = {
   workItemAttachmentsSection: document.querySelector("#workItemAttachmentsSection"),
   workItemAttachmentCount: document.querySelector("#workItemAttachmentCount"),
   workItemAttachments: document.querySelector("#workItemAttachments"),
+  workItemSubtasksSection: document.querySelector("#workItemSubtasksSection"),
+  workItemSubtasksProgress: document.querySelector("#workItemSubtasksProgress"),
+  workItemSubtasksProgressLabel: document.querySelector("#workItemSubtasksProgressLabel"),
+  workItemSubtasksStatus: document.querySelector("#workItemSubtasksStatus"),
+  workItemSubtasks: document.querySelector("#workItemSubtasks"),
   workItemAllPanel: document.querySelector("#workItemAllPanel"),
   workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
@@ -1997,8 +2002,20 @@ async function loadWorkItemDetail(item) {
   state.detailsRequestTokens.set(item.id, requestToken);
   try {
     const result = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
-    if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
     const detail = normalizeWorkItemDetail(result);
+    if (detail.childIds.length) {
+      try {
+        const children = await fetchWorkItems(detail.childIds);
+        const childrenById = new Map(children.map(child => [Number(child.id), child]));
+        detail.subtasks = detail.childIds.map(id => childrenById.get(Number(id)))
+          .filter(child => child?.type?.trim().toLocaleLowerCase("en") === "task");
+      } catch (error) {
+        console.error("Child tasks could not be loaded.", error);
+        detail.subtasks = [];
+        detail.subtasksError = "Subtasks could not be loaded.";
+      }
+    }
+    if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
     state.detailsCache.set(item.id, detail);
     if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, detail, false);
   } catch (error) {
@@ -2082,6 +2099,14 @@ function normalizeWorkItemAttachments(item) {
   }).filter(attachment => attachment.url);
 }
 
+function normalizeWorkItemChildIds(item) {
+  if (!Array.isArray(item.relations)) return state.detailsCache.get(item.id)?.childIds || [];
+  return item.relations.filter(relation => relation.rel === "System.LinkTypes.Hierarchy-Forward").map(relation => {
+    const match = String(relation.url || "").match(/\/workitems\/(\d+)(?:[/?]|$)/i);
+    return match ? Number(match[1]) : null;
+  }).filter(Boolean);
+}
+
 function normalizeWorkItemDetail(item) {
   const fields = item.fields || {};
   const assigned = fields["System.AssignedTo"];
@@ -2105,7 +2130,10 @@ function normalizeWorkItemDetail(item) {
     reason: fields["System.Reason"] || "",
     tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
     changedDate: fields["System.ChangedDate"] || "",
-    attachments: normalizeWorkItemAttachments(item)
+    attachments: normalizeWorkItemAttachments(item),
+    childIds: normalizeWorkItemChildIds(item),
+    subtasks: state.detailsCache.get(item.id)?.subtasks || [],
+    subtasksError: ""
   };
 }
 
@@ -2235,6 +2263,58 @@ function renderWorkItemAttachments(attachments = []) {
   }));
 }
 
+function subtaskPriority(priority) {
+  if (priority === 1) return { symbol: "↑↑", label: "Priority 1", tone: "highest" };
+  if (priority === 2) return { symbol: "↑", label: "Priority 2", tone: "high" };
+  if (priority === 3) return { symbol: "→", label: "Priority 3", tone: "medium" };
+  if (priority === 4) return { symbol: "↓", label: "Priority 4", tone: "low" };
+  return { symbol: "—", label: "No priority", tone: "none" };
+}
+
+function renderWorkItemSubtasks(subtasks = [], error = "") {
+  const visible = Boolean(subtasks.length || error);
+  els.workItemSubtasksSection.hidden = !visible;
+  if (!visible) {
+    els.workItemSubtasks.replaceChildren();
+    els.workItemSubtasksStatus.textContent = "";
+    return;
+  }
+  const done = subtasks.filter(isFinishedWorkItem).length;
+  const percentage = subtasks.length ? Math.round((done / subtasks.length) * 100) : 0;
+  els.workItemSubtasksProgress.style.width = `${percentage}%`;
+  els.workItemSubtasksProgressLabel.textContent = `${percentage}% Done`;
+  els.workItemSubtasksStatus.classList.toggle("is-error", Boolean(error));
+  els.workItemSubtasksStatus.textContent = error;
+  els.workItemSubtasks.replaceChildren(...subtasks.map(task => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "work-item-subtask";
+    row.setAttribute("aria-label", `Open subtask ${workItemKey(task.id)}: ${task.title}`);
+    const icon = document.createElement("span");
+    icon.className = "work-item-subtask-icon";
+    icon.textContent = "▣";
+    const key = document.createElement("span");
+    key.className = "work-item-subtask-key";
+    key.textContent = workItemKey(task.id);
+    const title = document.createElement("span");
+    title.className = "work-item-subtask-title";
+    title.textContent = task.title;
+    const priorityValue = subtaskPriority(task.priority);
+    const priority = document.createElement("span");
+    priority.className = "work-item-subtask-priority";
+    priority.dataset.priorityTone = priorityValue.tone;
+    priority.textContent = priorityValue.symbol;
+    priority.title = priorityValue.label;
+    const taskState = document.createElement("span");
+    taskState.className = "card-state work-item-subtask-state";
+    taskState.dataset.stateTone = stateTone(task.state);
+    taskState.textContent = task.state;
+    row.append(icon, key, title, priority, taskState);
+    row.addEventListener("click", () => showWorkItem(task));
+    return row;
+  }));
+}
+
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
   const { webBase } = activeAzureContext();
   const bug = isBugWorkItem(item);
@@ -2257,6 +2337,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemSystemInfoSection.hidden = !bug;
   if (bug) setRichContent(els.workItemSystemInfo, detail?.systemInfoHtml, loading ? "Loading system information…" : "No system information added.");
   renderWorkItemAttachments(detail?.attachments || []);
+  renderWorkItemSubtasks(detail?.subtasks || [], detail?.subtasksError || "");
   els.descriptionEditButton.disabled = loading;
   els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Unassigned";
   els.workItemAssignee.setAttribute("aria-label", `Assigned to ${detail?.assignee || item.assignee || "Unassigned"}. Click to change.`);
