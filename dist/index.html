@@ -203,7 +203,7 @@
           <header>
             <div>
               <span class="for-you-icon for-you-custom-icon" aria-hidden="true">≡</span>
-              <h2 id="forYouCustomTitle">All issues by anyone</h2>
+              <h2 id="forYouCustomTitle">Any issues by anyone tagged with anything</h2>
             </div>
             <span id="forYouCustomCount" class="count">0</span>
           </header>
@@ -211,6 +211,14 @@
             <label>Assigned to<select id="forYouCustomAssignee"></select></label>
             <label>State<select id="forYouCustomState"></select></label>
             <label>Type<select id="forYouCustomType"></select></label>
+            <div class="for-you-custom-field for-you-custom-tags-field">
+              <span>Tags</span>
+              <details id="forYouCustomTags">
+                <summary id="forYouCustomTagsSummary">Anything</summary>
+                <div id="forYouCustomTagOptions" class="for-you-custom-tag-options" role="group" aria-label="Filter by tags"></div>
+              </details>
+            </div>
+            <label>Match<select id="forYouCustomTagMode"><option value="or">OR — any selected tag</option><option value="and">AND — all selected tags</option></select></label>
           </div>
           <div id="forYouCustomStatus" class="for-you-status" aria-live="polite"></div>
           <div class="for-you-custom-table-wrap">

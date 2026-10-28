@@ -12,6 +12,7 @@ const STORAGE = {
   githubAllRepos: "wish-board.github-all-repositories",
   boardGroupBy: "wish-board.board-group-by",
   wiki: "wish-board.wiki-id",
+  wikiExpandedItems: "wish-board.wiki-expanded-items",
   forYouCustom: "wish-board.for-you-custom-table"
 };
 
@@ -104,10 +105,12 @@ const state = {
   wikiRoot: null,
   wikiPage: null,
   wikiQuery: "",
+  wikiExpandedItems: readStringSet(STORAGE.wikiExpandedItems),
   wikiLoadToken: 0,
   wikiRequestToken: 0,
   forYouProjectName: "",
   forYouCustomItems: [],
+  forYouCustomTagChoices: [],
   forYouCustomConfig: readJson(STORAGE.forYouCustom, { assignee: "anyone", state: "all", type: "all" }),
   forYouCustomError: "",
   forYouCustomRequestToken: 0,
@@ -240,6 +243,10 @@ const els = {
   forYouCustomAssignee: document.querySelector("#forYouCustomAssignee"),
   forYouCustomState: document.querySelector("#forYouCustomState"),
   forYouCustomType: document.querySelector("#forYouCustomType"),
+  forYouCustomTags: document.querySelector("#forYouCustomTags"),
+  forYouCustomTagsSummary: document.querySelector("#forYouCustomTagsSummary"),
+  forYouCustomTagOptions: document.querySelector("#forYouCustomTagOptions"),
+  forYouCustomTagMode: document.querySelector("#forYouCustomTagMode"),
   forYouCustomStatus: document.querySelector("#forYouCustomStatus"),
   forYouCustomCount: document.querySelector("#forYouCustomCount"),
   forYouCustomRows: document.querySelector("#forYouCustomRows"),
@@ -402,6 +409,11 @@ const mentionState = {
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; }
   catch { return fallback; }
+}
+
+function readStringSet(key) {
+  const values = readJson(key, []);
+  return new Set(Array.isArray(values) ? values.filter(value => typeof value === "string") : []);
 }
 
 function readMapping() {
@@ -1121,10 +1133,15 @@ function githubPullRequestsCacheKey() {
 
 function normalizedForYouCustomConfig() {
   const config = state.forYouCustomConfig || {};
+  const tags = Array.isArray(config.tags)
+    ? [...new Set(config.tags.map(tag => String(tag || "").trim()).filter(Boolean))]
+    : [];
   return {
     assignee: String(config.assignee || "anyone"),
     state: String(config.state || "all"),
-    type: String(config.type || "all")
+    type: String(config.type || "all"),
+    tags,
+    tagMode: config.tagMode === "and" ? "and" : "or"
   };
 }
 
@@ -1155,9 +1172,16 @@ function forYouCustomTypeChoices() {
   return ["all", ...[...types].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }))];
 }
 
+function availableForYouCustomTags() {
+  const tags = new Set(state.forYouCustomTagChoices);
+  knownWorkItems().forEach(item => (item.tags || []).forEach(tag => tags.add(tag)));
+  normalizedForYouCustomConfig().tags.forEach(tag => tags.add(tag));
+  return [...tags].filter(Boolean).sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+}
+
 function forYouCustomTitle() {
   const config = normalizedForYouCustomConfig();
-  const stateLabel = config.state === "all" ? "All" : config.state;
+  const stateLabel = config.state === "all" ? "Any" : config.state;
   const typeLabel = config.type === "all" ? "issues" : ({
     Bug: "bugs", "User Story": "user stories", Task: "tasks", Feature: "features", Epic: "epics"
   }[config.type] || `${config.type.toLocaleLowerCase("en")} items`);
@@ -1165,7 +1189,17 @@ function forYouCustomTitle() {
   const assigneeLabel = config.assignee === "anyone" ? "anyone"
     : config.assignee === "me" ? "me"
       : assigneeChoice?.label || config.assignee.replace(/^user:/, "");
-  return `${stateLabel} ${typeLabel} by ${assigneeLabel}`;
+  const tagJoiner = config.tagMode === "and" ? " and " : " or ";
+  const tagLabel = config.tags.length
+    ? config.tags.map(tag => `“${tag}”`).join(tagJoiner)
+    : "anything";
+  return `${stateLabel} ${typeLabel} by ${assigneeLabel} tagged with ${tagLabel}`;
+}
+
+async function loadForYouCustomTagChoices() {
+  const result = await azure("/_apis/wit/tags?api-version=7.1");
+  return [...new Set((result.value || []).map(tag => String(tag.name || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
 }
 
 async function loadForYouCustomItems() {
@@ -1175,6 +1209,10 @@ async function loadForYouCustomItems() {
   else if (config.assignee.startsWith("user:")) conditions.push(`[System.AssignedTo] = '${wiqlText(config.assignee.slice(5))}'`);
   if (config.state !== "all") conditions.push(`[System.State] = '${wiqlText(config.state)}'`);
   if (config.type !== "all") conditions.push(`[System.WorkItemType] = '${wiqlText(config.type)}'`);
+  if (config.tags.length) {
+    const tagConditions = config.tags.map(tag => `[System.Tags] CONTAINS '${wiqlText(tag)}'`);
+    conditions.push(`(${tagConditions.join(config.tagMode === "and" ? " AND " : " OR ")})`);
+  }
   const ids = await queryWorkItemIds(`
     SELECT [System.Id]
     FROM WorkItems
@@ -1234,6 +1272,7 @@ async function loadForYou(force = false) {
   if (!state.projectName) {
     state.forYouProjectName = "";
     state.forYouCustomItems = [];
+    state.forYouCustomTagChoices = [];
     state.forYouCustomError = "";
     state.forYouWorkItems = [];
     state.forYouMentions = [];
@@ -1262,6 +1301,7 @@ async function loadForYou(force = false) {
   els.refresh.classList.add("is-spinning");
   const sections = await Promise.allSettled([
     loadForYouCustomItems(),
+    loadForYouCustomTagChoices(),
     loadForYouWorkItems(user, isSelf),
     loadForYouMentions(user),
     loadForYouActivity(user, isSelf),
@@ -1271,7 +1311,7 @@ async function loadForYou(force = false) {
     state.githubToken ? loadGithubPullRequests() : Promise.resolve([])
   ]);
   if (requestToken !== state.forYouRequestToken) return;
-  const [custom, work, mentions, activity, created, updated, completed, pullRequests] = sections;
+  const [custom, customTags, work, mentions, activity, created, updated, completed, pullRequests] = sections;
   if (custom.status === "fulfilled") {
     state.forYouCustomItems = custom.value;
     state.forYouCustomError = "";
@@ -1279,6 +1319,11 @@ async function loadForYou(force = false) {
     console.error(custom.reason);
     state.forYouCustomItems = [];
     state.forYouCustomError = custom.reason?.message || "The custom issue table could not be loaded.";
+  }
+  if (customTags.status === "fulfilled") state.forYouCustomTagChoices = customTags.value;
+  else {
+    console.warn("Azure DevOps tags could not be loaded; using tags from loaded work items instead.", customTags.reason);
+    state.forYouCustomTagChoices = [];
   }
   if (work.status === "fulfilled") state.forYouWorkItems = work.value;
   else {
@@ -1661,9 +1706,34 @@ function replaceSelectOptions(select, choices, selectedValue) {
 
 function renderForYouCustomControls() {
   const config = normalizedForYouCustomConfig();
+  const tagsOpen = els.forYouCustomTags.open;
   replaceSelectOptions(els.forYouCustomAssignee, forYouCustomAssigneeChoices(), config.assignee);
   replaceSelectOptions(els.forYouCustomState, forYouCustomStateChoices(), config.state);
   replaceSelectOptions(els.forYouCustomType, forYouCustomTypeChoices(), config.type);
+  els.forYouCustomTagMode.value = config.tagMode;
+  els.forYouCustomTagsSummary.textContent = !config.tags.length
+    ? "Anything"
+    : config.tags.length === 1 ? config.tags[0] : `${config.tags.length} tags selected`;
+  const tagOptions = availableForYouCustomTags().map(tag => {
+    const label = document.createElement("label");
+    label.className = "for-you-custom-tag-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = tag;
+    checkbox.checked = config.tags.includes(tag);
+    const name = document.createElement("span");
+    name.textContent = tag;
+    label.append(checkbox, name);
+    return label;
+  });
+  if (tagOptions.length) els.forYouCustomTagOptions.replaceChildren(...tagOptions);
+  else {
+    const empty = document.createElement("p");
+    empty.className = "for-you-custom-tags-empty";
+    empty.textContent = "No project tags found.";
+    els.forYouCustomTagOptions.replaceChildren(empty);
+  }
+  els.forYouCustomTags.open = tagsOpen;
   els.forYouCustomTitle.textContent = forYouCustomTitle();
 }
 
@@ -1722,7 +1792,9 @@ async function refreshForYouCustomTable() {
   state.forYouCustomConfig = {
     assignee: els.forYouCustomAssignee.value,
     state: els.forYouCustomState.value,
-    type: els.forYouCustomType.value
+    type: els.forYouCustomType.value,
+    tags: [...els.forYouCustomTagOptions.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value),
+    tagMode: els.forYouCustomTagMode.value
   };
   state.forYouExpanded.custom = false;
   localStorage.setItem(STORAGE.forYouCustom, JSON.stringify(state.forYouCustomConfig));
@@ -2352,6 +2424,24 @@ function flattenWikiPages(page, result = []) {
   return result;
 }
 
+function wikiTreeItemKey(page) {
+  const context = parseAzureUrl(state.orgUrl);
+  return [context.organization, state.projectName, state.wikiId, page.path]
+    .map(value => encodeURIComponent(String(value || "").toLocaleLowerCase("en")))
+    .join("|");
+}
+
+function wikiTreeItemExpanded(page) {
+  return state.wikiExpandedItems.has(wikiTreeItemKey(page));
+}
+
+function setWikiTreeItemExpanded(page, expanded) {
+  const key = wikiTreeItemKey(page);
+  if (expanded) state.wikiExpandedItems.add(key);
+  else state.wikiExpandedItems.delete(key);
+  localStorage.setItem(STORAGE.wikiExpandedItems, JSON.stringify([...state.wikiExpandedItems]));
+}
+
 function renderWikiTreeBranch(page, depth = 0) {
   const wrapper = document.createElement("div");
   wrapper.className = "wiki-tree-branch";
@@ -2360,22 +2450,25 @@ function renderWikiTreeBranch(page, depth = 0) {
   row.className = "wiki-tree-row";
   row.style.setProperty("--wiki-depth", String(depth));
   if (children.length) {
+    const expanded = wikiTreeItemExpanded(page);
     const toggle = document.createElement("button");
     toggle.type = "button";
-    toggle.className = "wiki-tree-toggle";
+    toggle.className = `wiki-tree-toggle${expanded ? "" : " is-collapsed"}`;
     toggle.textContent = "⌄";
-    toggle.setAttribute("aria-label", `Collapse ${wikiPageTitle(page)}`);
-    toggle.setAttribute("aria-expanded", "true");
+    toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${wikiPageTitle(page)}`);
+    toggle.setAttribute("aria-expanded", String(expanded));
     row.append(toggle);
     const childList = document.createElement("div");
     childList.className = "wiki-tree-children";
+    childList.hidden = !expanded;
     childList.replaceChildren(...children.map(child => renderWikiTreeBranch(child, depth + 1)));
     toggle.addEventListener("click", () => {
-      const expanded = toggle.getAttribute("aria-expanded") === "true";
-      toggle.setAttribute("aria-expanded", String(!expanded));
-      toggle.setAttribute("aria-label", `${expanded ? "Expand" : "Collapse"} ${wikiPageTitle(page)}`);
-      toggle.classList.toggle("is-collapsed", expanded);
-      childList.hidden = expanded;
+      const nextExpanded = toggle.getAttribute("aria-expanded") !== "true";
+      setWikiTreeItemExpanded(page, nextExpanded);
+      toggle.setAttribute("aria-expanded", String(nextExpanded));
+      toggle.setAttribute("aria-label", `${nextExpanded ? "Collapse" : "Expand"} ${wikiPageTitle(page)}`);
+      toggle.classList.toggle("is-collapsed", !nextExpanded);
+      childList.hidden = !nextExpanded;
     });
     const button = createWikiPageButton(page);
     row.append(button);
@@ -5368,8 +5461,11 @@ els.forYouPersonSearch.addEventListener("keydown", event => {
   closeForYouPersonMenu();
   els.forYouPerson.focus();
 });
-[els.forYouCustomAssignee, els.forYouCustomState, els.forYouCustomType]
+[els.forYouCustomAssignee, els.forYouCustomState, els.forYouCustomType, els.forYouCustomTagMode]
   .forEach(select => select.addEventListener("change", refreshForYouCustomTable));
+els.forYouCustomTagOptions.addEventListener("change", event => {
+  if (event.target.matches('input[type="checkbox"]')) refreshForYouCustomTable();
+});
 els.forYouCustomShowAll.addEventListener("click", () => {
   state.forYouExpanded.custom = !state.forYouExpanded.custom;
   renderForYouCustomTable();
@@ -5430,6 +5526,7 @@ document.addEventListener("click", event => {
   if (!els.descriptionMentionMenu.contains(event.target) && !els.descriptionEditor.contains(event.target)) closeMentionMenu("description");
   if (!els.commentMentionMenu.contains(event.target) && !els.commentComposerInput.contains(event.target)) closeMentionMenu("comment");
   if (!els.forYouPersonControl.contains(event.target)) closeForYouPersonMenu();
+  if (!els.forYouCustomTags.contains(event.target)) els.forYouCustomTags.open = false;
   if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
   if (!els.boardGroupControl.contains(event.target)) els.boardGroupControl.open = false;
   if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();
