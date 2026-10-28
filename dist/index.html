@@ -117,17 +117,22 @@
         </div>
       </section>
 
-      <section class="filter-panel" aria-label="Backlog filters" data-list-view>
-        <div class="filter-toolbar">
-          <div class="filter-toolbar-label">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.2V18l-3 1.5v-7.3L4 5Z"/></svg>
-            Filters
+      <section class="filter-panel" aria-label="Work item filters" data-list-view>
+        <button id="filterPanelToggle" class="mobile-disclosure-toggle" type="button" aria-controls="filterPanelBody" aria-expanded="true">
+          <span class="mobile-disclosure-icon" aria-hidden="true">☷</span><strong>Filters</strong><span class="mobile-disclosure-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <div id="filterPanelBody" class="mobile-disclosure-body">
+          <div class="filter-toolbar">
+            <div class="filter-toolbar-label">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.2V18l-3 1.5v-7.3L4 5Z"/></svg>
+              Filters
+            </div>
+            <div id="filterControls" class="filter-controls"></div>
+            <button id="clearFilters" class="clear-filters" type="button" hidden>Clear all</button>
+            <span id="filterResultCount" class="filter-result-count" aria-live="polite"></span>
           </div>
-          <div id="filterControls" class="filter-controls"></div>
-          <button id="clearFilters" class="clear-filters" type="button" hidden>Clear all</button>
-          <span id="filterResultCount" class="filter-result-count" aria-live="polite"></span>
+          <div id="activeFilters" class="active-filters" aria-label="Active filters" hidden></div>
         </div>
-        <div id="activeFilters" class="active-filters" aria-label="Active filters" hidden></div>
       </section>
 
       <section id="statusRegion" class="status-region" aria-live="polite" data-list-view></section>
@@ -158,6 +163,9 @@
 
       <section id="backlogView" class="backlog-view" aria-labelledby="backlogTitle" data-backlog-view hidden>
         <div class="backlog-layout">
+          <button id="backlogHierarchyToggle" class="mobile-disclosure-toggle mobile-panel-toggle" type="button" aria-controls="backlogSidebar" aria-expanded="true">
+            <span class="mobile-disclosure-icon" aria-hidden="true">◆</span><strong>Epics &amp; features</strong><span class="mobile-disclosure-chevron" aria-hidden="true">⌄</span>
+          </button>
           <aside id="backlogSidebar" class="backlog-sidebar" aria-labelledby="backlogSidebarTitle">
             <header>
               <div>
@@ -174,7 +182,10 @@
       </section>
 
       <section id="wikiView" class="wiki-view" aria-label="Azure DevOps wiki" data-wiki-view hidden>
-        <aside class="wiki-sidebar">
+        <button id="wikiNavigationToggle" class="mobile-disclosure-toggle mobile-panel-toggle wiki-navigation-toggle" type="button" aria-controls="wikiSidebar" aria-expanded="true">
+          <span class="mobile-disclosure-icon" aria-hidden="true">☰</span><strong>Wiki navigation</strong><span class="mobile-disclosure-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <aside id="wikiSidebar" class="wiki-sidebar">
           <header class="wiki-sidebar-header">
             <div class="wiki-product-title"><span aria-hidden="true">W</span><strong>Wiki</strong></div>
             <label class="sr-only" for="wikiSelect">Select wiki</label>
@@ -207,18 +218,23 @@
             </div>
             <span id="forYouCustomCount" class="count">0</span>
           </header>
-          <div class="for-you-custom-controls" aria-label="Configure issue table">
-            <label>Assigned to<select id="forYouCustomAssignee"></select></label>
-            <label>State<select id="forYouCustomState"></select></label>
-            <label>Type<select id="forYouCustomType"></select></label>
-            <div class="for-you-custom-field for-you-custom-tags-field">
-              <span>Tags</span>
-              <details id="forYouCustomTags">
-                <summary id="forYouCustomTagsSummary">Anything</summary>
-                <div id="forYouCustomTagOptions" class="for-you-custom-tag-options" role="group" aria-label="Filter by tags"></div>
-              </details>
+          <button id="forYouCustomFiltersToggle" class="mobile-disclosure-toggle" type="button" aria-controls="forYouCustomFiltersBody" aria-expanded="true">
+            <span class="mobile-disclosure-icon" aria-hidden="true">☷</span><strong>Filters</strong><span class="mobile-disclosure-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div id="forYouCustomFiltersBody" class="mobile-disclosure-body">
+            <div class="for-you-custom-controls" aria-label="Configure issue table">
+              <label>Assigned to<select id="forYouCustomAssignee"></select></label>
+              <label>State<select id="forYouCustomState"></select></label>
+              <label>Type<select id="forYouCustomType"></select></label>
+              <div class="for-you-custom-field for-you-custom-tags-field">
+                <span>Tags</span>
+                <details id="forYouCustomTags">
+                  <summary id="forYouCustomTagsSummary">Anything</summary>
+                  <div id="forYouCustomTagOptions" class="for-you-custom-tag-options" role="group" aria-label="Filter by tags"></div>
+                </details>
+              </div>
+              <label>Match<select id="forYouCustomTagMode"><option value="or">OR — any selected tag</option><option value="and">AND — all selected tags</option></select></label>
             </div>
-            <label>Match<select id="forYouCustomTagMode"><option value="or">OR — any selected tag</option><option value="and">AND — all selected tags</option></select></label>
           </div>
           <div id="forYouCustomStatus" class="for-you-status" aria-live="polite"></div>
           <div class="for-you-custom-table-wrap">

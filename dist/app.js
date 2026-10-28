@@ -240,6 +240,8 @@ const els = {
   githubPrTableWrap: document.querySelector("#githubPrTableWrap"),
   githubPrRows: document.querySelector("#githubPrRows"),
   forYouCustomTitle: document.querySelector("#forYouCustomTitle"),
+  forYouCustomFiltersToggle: document.querySelector("#forYouCustomFiltersToggle"),
+  forYouCustomFiltersBody: document.querySelector("#forYouCustomFiltersBody"),
   forYouCustomAssignee: document.querySelector("#forYouCustomAssignee"),
   forYouCustomState: document.querySelector("#forYouCustomState"),
   forYouCustomType: document.querySelector("#forYouCustomType"),
@@ -252,6 +254,7 @@ const els = {
   forYouCustomRows: document.querySelector("#forYouCustomRows"),
   forYouCustomShowAll: document.querySelector("#forYouCustomShowAll"),
   backlogView: document.querySelector("#backlogView"),
+  backlogHierarchyToggle: document.querySelector("#backlogHierarchyToggle"),
   backlogSidebar: document.querySelector("#backlogSidebar"),
   backlogSidebarStatus: document.querySelector("#backlogSidebarStatus"),
   backlogHierarchy: document.querySelector("#backlogHierarchy"),
@@ -259,6 +262,8 @@ const els = {
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
   wikiSelect: document.querySelector("#wikiSelect"),
+  wikiNavigationToggle: document.querySelector("#wikiNavigationToggle"),
+  wikiSidebar: document.querySelector("#wikiSidebar"),
   wikiSearch: document.querySelector("#wikiSearch"),
   wikiTreeStatus: document.querySelector("#wikiTreeStatus"),
   wikiTree: document.querySelector("#wikiTree"),
@@ -275,6 +280,8 @@ const els = {
   boardGroupControl: document.querySelector("#boardGroupControl"),
   boardGroupLabel: document.querySelector("#boardGroupLabel"),
   boardGroupOptions: [...document.querySelectorAll("[data-board-group]")],
+  filterPanelToggle: document.querySelector("#filterPanelToggle"),
+  filterPanelBody: document.querySelector("#filterPanelBody"),
   filterControls: document.querySelector("#filterControls"),
   activeFilters: document.querySelector("#activeFilters"),
   clearFilters: document.querySelector("#clearFilters"),
@@ -405,6 +412,30 @@ const mentionState = {
   description: { mode: "mention", query: "", range: null, activeIndex: 0, choices: [], loading: false, requestToken: 0, timer: null },
   comment: { mode: "mention", query: "", range: null, activeIndex: 0, choices: [], loading: false, requestToken: 0, timer: null }
 };
+
+const mobileLayoutQuery = matchMedia("(max-width: 560px)");
+
+function setMobileDisclosure(button, content, expanded) {
+  button.setAttribute("aria-expanded", String(expanded));
+  const chevron = button.querySelector(".mobile-disclosure-chevron");
+  if (chevron) chevron.textContent = expanded ? "⌃" : "⌄";
+  content.hidden = !expanded;
+}
+
+function toggleMobileDisclosure(button, content) {
+  setMobileDisclosure(button, content, button.getAttribute("aria-expanded") !== "true");
+}
+
+function applyMobileDisclosures(mobile) {
+  const expanded = !mobile;
+  for (const [button, content] of [
+    [els.filterPanelToggle, els.filterPanelBody],
+    [els.forYouCustomFiltersToggle, els.forYouCustomFiltersBody],
+    [els.backlogHierarchyToggle, els.backlogSidebar],
+    [els.wikiNavigationToggle, els.wikiSidebar]
+  ]) setMobileDisclosure(button, content, expanded);
+  if (mobile) els.forYouCustomTags.open = false;
+}
 
 function readJson(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; }
@@ -2137,6 +2168,7 @@ function selectBacklogFeature(feature) {
   const alreadySelected = state.filters.feature.size === 1 && state.filters.feature.has(label);
   state.filters.feature.clear();
   if (!alreadySelected) state.filters.feature.add(label);
+  if (mobileLayoutQuery.matches) setMobileDisclosure(els.backlogHierarchyToggle, els.backlogSidebar, false);
   renderBacklog();
 }
 
@@ -2171,29 +2203,25 @@ function createBacklogFeatureCard(feature) {
 
   const heading = document.createElement("div");
   heading.className = "backlog-feature-heading";
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "backlog-collapse-toggle";
-  toggle.setAttribute("aria-expanded", String(!collapsed));
-  toggle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} feature ${feature.title}`);
+  const headerButton = document.createElement("button");
+  headerButton.type = "button";
+  headerButton.className = "backlog-feature-toggle";
+  headerButton.setAttribute("aria-expanded", String(!collapsed));
+  headerButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} feature ${feature.title}`);
+  const title = document.createElement("span");
+  title.className = "backlog-feature-title";
+  title.textContent = feature.title;
   const chevron = document.createElement("span");
   chevron.className = "backlog-chevron";
-  chevron.textContent = "⌄";
-  toggle.append(chevron);
-  toggle.addEventListener("click", () => {
+  chevron.textContent = collapsed ? "⌄" : "⌃";
+  headerButton.append(title, chevron);
+  headerButton.addEventListener("click", () => {
     if (collapsed) state.backlogCollapsedFeatures.delete(Number(feature.id));
     else state.backlogCollapsedFeatures.add(Number(feature.id));
     renderBacklogSidebar();
   });
-  const title = document.createElement("button");
-  title.type = "button";
-  title.className = "backlog-feature-filter";
-  title.textContent = feature.title;
-  title.setAttribute("aria-pressed", String(selected));
-  title.setAttribute("aria-label", `${selected ? "Remove" : "Apply"} backlog filter for ${feature.title}`);
-  title.addEventListener("click", () => selectBacklogFeature(feature));
   const menu = createBacklogCardMenu(feature, "feature");
-  heading.append(toggle, title, menu);
+  heading.append(headerButton, menu);
 
   const body = document.createElement("div");
   body.className = "backlog-feature-body";
@@ -2253,7 +2281,7 @@ function createBacklogEpicGroup(epic, features) {
   headerButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} epic ${epic?.title || "Features without epic"}`);
   const chevron = document.createElement("span");
   chevron.className = "backlog-chevron";
-  chevron.textContent = "⌄";
+  chevron.textContent = collapsed ? "⌄" : "⌃";
   const icon = document.createElement("span");
   icon.className = "backlog-epic-icon";
   icon.textContent = "⚡";
@@ -2269,7 +2297,7 @@ function createBacklogEpicGroup(epic, features) {
   const count = document.createElement("span");
   count.className = "count";
   count.textContent = String(features.length);
-  headerButton.append(chevron, icon, label, count);
+  headerButton.append(icon, label, count, chevron);
   headerButton.addEventListener("click", () => {
     if (collapsed) state.backlogCollapsedEpics.delete(epicKey);
     else state.backlogCollapsedEpics.add(epicKey);
@@ -2453,11 +2481,10 @@ function renderWikiTreeBranch(page, depth = 0) {
     const expanded = wikiTreeItemExpanded(page);
     const toggle = document.createElement("button");
     toggle.type = "button";
-    toggle.className = `wiki-tree-toggle${expanded ? "" : " is-collapsed"}`;
-    toggle.textContent = "⌄";
+    toggle.className = "wiki-tree-toggle";
+    toggle.textContent = expanded ? "⌃" : "⌄";
     toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${wikiPageTitle(page)}`);
     toggle.setAttribute("aria-expanded", String(expanded));
-    row.append(toggle);
     const childList = document.createElement("div");
     childList.className = "wiki-tree-children";
     childList.hidden = !expanded;
@@ -2467,17 +2494,17 @@ function renderWikiTreeBranch(page, depth = 0) {
       setWikiTreeItemExpanded(page, nextExpanded);
       toggle.setAttribute("aria-expanded", String(nextExpanded));
       toggle.setAttribute("aria-label", `${nextExpanded ? "Collapse" : "Expand"} ${wikiPageTitle(page)}`);
-      toggle.classList.toggle("is-collapsed", !nextExpanded);
+      toggle.textContent = nextExpanded ? "⌃" : "⌄";
       childList.hidden = !nextExpanded;
     });
     const button = createWikiPageButton(page);
-    row.append(button);
+    row.append(button, toggle);
     wrapper.append(row, childList);
     return wrapper;
   }
   const spacer = document.createElement("span");
   spacer.className = "wiki-tree-spacer";
-  row.append(spacer, createWikiPageButton(page));
+  row.append(createWikiPageButton(page), spacer);
   wrapper.append(row);
   return wrapper;
 }
@@ -2708,6 +2735,7 @@ function renderWikiMarkdown(markdown, page) {
 async function loadWikiPage(page) {
   const wiki = state.wikis.find(value => value.id === state.wikiId);
   if (!wiki || !page) return;
+  if (mobileLayoutQuery.matches) setMobileDisclosure(els.wikiNavigationToggle, els.wikiSidebar, false);
   const requestToken = ++state.wikiRequestToken;
   state.wikiPage = page;
   renderWikiTree();
@@ -5447,6 +5475,17 @@ els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
 });
 els.headerAvatar.addEventListener("click", showSettings);
+for (const [button, content] of [
+  [els.filterPanelToggle, els.filterPanelBody],
+  [els.forYouCustomFiltersToggle, els.forYouCustomFiltersBody],
+  [els.backlogHierarchyToggle, els.backlogSidebar],
+  [els.wikiNavigationToggle, els.wikiSidebar]
+]) {
+  button.addEventListener("click", () => {
+    toggleMobileDisclosure(button, content);
+    if (content === els.forYouCustomFiltersBody && content.hidden) els.forYouCustomTags.open = false;
+  });
+}
 els.forYouNav.addEventListener("click", () => showMainView("for-you"));
 els.forYouPerson.addEventListener("click", event => {
   event.stopPropagation();
@@ -5494,6 +5533,7 @@ els.wikiSearch.addEventListener("input", event => {
 });
 els.backlogShowAllFeatures.addEventListener("click", () => {
   state.filters.feature.clear();
+  if (mobileLayoutQuery.matches) setMobileDisclosure(els.backlogHierarchyToggle, els.backlogSidebar, false);
   renderBacklog();
 });
 els.refresh.addEventListener("click", () => state.currentView === "wiki" ? loadWiki(true) : loadBoard());
@@ -5542,6 +5582,8 @@ const systemTheme = matchMedia("(prefers-color-scheme: dark)");
 systemTheme.addEventListener?.("change", event => {
   if (!localStorage.getItem(STORAGE.theme)) applyTheme(event.matches ? "dark" : "light");
 });
+mobileLayoutQuery.addEventListener?.("change", event => applyMobileDisclosures(event.matches));
 
 applyTheme(document.documentElement.dataset.theme || "light");
+applyMobileDisclosures(mobileLayoutQuery.matches);
 if (state.pat) loadBoard(); else { renderEmptyBoard(); showConnection(); }
