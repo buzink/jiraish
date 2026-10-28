@@ -78,7 +78,7 @@ const state = {
   knownStates: new Set(Object.keys(DEFAULT_MAPPING)),
   mapping: readMapping(),
   search: "",
-  boardGroupBy: ["none", "state", "assignee"].includes(localStorage.getItem(STORAGE.boardGroupBy))
+  boardGroupBy: ["none", "state", "assignee", "priority"].includes(localStorage.getItem(STORAGE.boardGroupBy))
     ? localStorage.getItem(STORAGE.boardGroupBy) : "none",
   filters: {
     type: new Set(),
@@ -783,7 +783,7 @@ function addSmartMappings() {
 }
 
 function boardGroupLabel(value = state.boardGroupBy) {
-  return { none: "None", state: "State", assignee: "Assigned to" }[value] || "None";
+  return { none: "None", state: "State", assignee: "Assigned to", priority: "Priority" }[value] || "None";
 }
 
 function renderBoardGroupControl() {
@@ -798,6 +798,7 @@ function renderBoardGroupControl() {
 function boardGroupValue(item) {
   if (state.boardGroupBy === "state") return item.state || "Unknown state";
   if (state.boardGroupBy === "assignee") return item.assignee || "Unassigned";
+  if (state.boardGroupBy === "priority") return item.priority == null || item.priority === "" ? "No priority" : `Priority ${item.priority}`;
   return "";
 }
 
@@ -822,6 +823,13 @@ function compareBoardGroups([left], [right]) {
   if (state.boardGroupBy === "assignee") {
     if (left === "Unassigned") return right === "Unassigned" ? 0 : 1;
     if (right === "Unassigned") return -1;
+  }
+  if (state.boardGroupBy === "priority") {
+    if (left === "No priority") return right === "No priority" ? 0 : 1;
+    if (right === "No priority") return -1;
+    const leftPriority = Number(left.replace(/^Priority\s+/i, ""));
+    const rightPriority = Number(right.replace(/^Priority\s+/i, ""));
+    if (Number.isFinite(leftPriority) && Number.isFinite(rightPriority)) return leftPriority - rightPriority;
   }
   return left.localeCompare(right, "en", { numeric: true, sensitivity: "base" });
 }
