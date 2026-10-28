@@ -4434,6 +4434,48 @@ function richEditorHtml(editor) {
   return html === "<br>" ? "" : html;
 }
 
+function embeddedRichTextImages(editor) {
+  return [...editor.querySelectorAll("img:not([data-auth-src])")].filter(image => {
+    const source = image.getAttribute("src") || "";
+    return /^data:image\/(png|gif|jpe?g|webp);base64,/i.test(source) || /^blob:/i.test(source);
+  });
+}
+
+async function persistEmbeddedRichTextImages(editor) {
+  const images = embeddedRichTextImages(editor);
+  for (const [index, image] of images.entries()) {
+    const response = await fetch(image.getAttribute("src"));
+    if (!response.ok) throw new Error(`The pasted image could not be read (${response.status}).`);
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/")) throw new Error("The pasted content is not an image.");
+    const fileName = richTextImageFileName(image, blob, index);
+    const attachment = await azure(`/_apis/wit/attachments?fileName=${encodeURIComponent(fileName)}&api-version=7.1`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: blob
+    });
+    if (!attachment?.url) throw new Error("Azure DevOps did not return a URL for the pasted image.");
+    image.dataset.authSrc = attachment.url;
+    if (!image.alt) image.alt = fileName;
+  }
+}
+
+function richTextImageFileName(image, blob, index) {
+  const extensions = {
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp"
+  };
+  const extension = extensions[blob.type.toLocaleLowerCase("en")] || "png";
+  const label = (image.alt || "pasted-image")
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "pasted-image";
+  return `${label}-${Date.now()}-${index + 1}.${extension}`;
+}
+
 function restoreAuthenticatedImageSources(container) {
   container.querySelectorAll("img[data-auth-src]").forEach(image => {
     image.src = image.dataset.authSrc;
@@ -4448,14 +4490,19 @@ async function submitDescriptionEditor(event) {
   event.preventDefault();
   const item = selectedWorkItem();
   if (!item) return;
-  const descriptionHtml = descriptionEditorHtml();
   const editorMode = descriptionEditorMode;
   const contentField = workItemContentField(item, editorMode);
   const contentLabel = workItemContentLabel(item, editorMode);
   setDescriptionEditorBusy(true);
-  els.descriptionEditorStatus.textContent = `Saving ${contentLabel}…`;
   els.descriptionEditorStatus.classList.remove("is-error");
   try {
+    const embeddedImageCount = embeddedRichTextImages(els.descriptionEditor).length;
+    els.descriptionEditorStatus.textContent = embeddedImageCount
+      ? `Uploading ${embeddedImageCount === 1 ? "image" : `${embeddedImageCount} images`}…`
+      : `Saving ${contentLabel}…`;
+    await persistEmbeddedRichTextImages(els.descriptionEditor);
+    const descriptionHtml = descriptionEditorHtml();
+    els.descriptionEditorStatus.textContent = `Saving ${contentLabel}…`;
     await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json-patch+json" },
@@ -4531,12 +4578,18 @@ function setCommentComposerBusy(busy) {
 async function submitWorkItemComment(event) {
   event.preventDefault();
   const item = selectedWorkItem();
-  const text = richEditorHtml(els.commentComposerInput);
-  if (!item || !htmlToText(text).trim()) return;
+  let text = richEditorHtml(els.commentComposerInput);
+  if (!item || (!htmlToText(text).trim() && !/<img\b/i.test(text))) return;
   setCommentComposerBusy(true);
-  els.commentComposerStatus.textContent = "Posting comment…";
   els.commentComposerStatus.classList.remove("is-error");
   try {
+    const embeddedImageCount = embeddedRichTextImages(els.commentComposerInput).length;
+    els.commentComposerStatus.textContent = embeddedImageCount
+      ? `Uploading ${embeddedImageCount === 1 ? "image" : `${embeddedImageCount} images`}…`
+      : "Posting comment…";
+    await persistEmbeddedRichTextImages(els.commentComposerInput);
+    text = richEditorHtml(els.commentComposerInput);
+    els.commentComposerStatus.textContent = "Posting comment…";
     const result = await azure(`/_apis/wit/workItems/${item.id}/comments?api-version=7.1-preview.4`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
