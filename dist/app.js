@@ -88,7 +88,11 @@ const state = {
   detailsCache: new Map(),
   iterationStoriesCache: new Map(),
   backlogItems: [],
+  backlogEpics: [],
+  backlogFeatures: [],
   backlogTeamId: "",
+  backlogCollapsedEpics: new Set(),
+  backlogCollapsedFeatures: new Set(),
   forYouProjectName: "",
   forYouWorkItems: [],
   forYouMentions: [],
@@ -214,6 +218,10 @@ const els = {
   githubPrTableWrap: document.querySelector("#githubPrTableWrap"),
   githubPrRows: document.querySelector("#githubPrRows"),
   backlogView: document.querySelector("#backlogView"),
+  backlogSidebar: document.querySelector("#backlogSidebar"),
+  backlogSidebarStatus: document.querySelector("#backlogSidebarStatus"),
+  backlogHierarchy: document.querySelector("#backlogHierarchy"),
+  backlogShowAllFeatures: document.querySelector("#backlogShowAllFeatures"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
   board: document.querySelector("#board"),
@@ -1661,7 +1669,11 @@ async function loadBacklog(force = false) {
       || (levels.value || []).find(level => /requirement/i.test(level.id || ""))
       || (levels.value || []).find(level => !level.isHidden && level.type !== "task");
     if (!backlog) throw new Error("No requirement backlog was found for this team.");
-    const result = await azure(`/${teamSegment}/_apis/work/backlogs/${encodeURIComponent(backlog.id)}/workItems?api-version=7.1`);
+    const portfolioBacklogs = (levels.value || []).filter(level => String(level.type).toLocaleLowerCase("en") === "portfolio");
+    const [result, ...portfolioResults] = await Promise.all([
+      azure(`/${teamSegment}/_apis/work/backlogs/${encodeURIComponent(backlog.id)}/workItems?api-version=7.1`),
+      ...portfolioBacklogs.map(level => azure(`/${teamSegment}/_apis/work/backlogs/${encodeURIComponent(level.id)}/workItems?api-version=7.1`))
+    ]);
     const ids = (result.workItems || []).map(link => link.target?.id).filter(Boolean);
     const itemsById = new Map();
     for (let index = 0; index < ids.length; index += 200) {
@@ -1675,7 +1687,13 @@ async function loadBacklog(force = false) {
       (batch.value || []).forEach(workItem => itemsById.set(workItem.id, normalizeWorkItem(workItem)));
     }
     state.backlogItems = ids.map(id => itemsById.get(id)).filter(Boolean);
-    await loadParentDetails(state.backlogItems);
+    const portfolioIds = [...new Set(portfolioResults.flatMap(value => (value.workItems || []).map(link => link.target?.id).filter(Boolean)))];
+    const portfolioItems = await fetchWorkItems(portfolioIds);
+    const portfolioItemsById = new Map(portfolioItems.map(item => [Number(item.id), item]));
+    const orderedPortfolioItems = portfolioIds.map(id => portfolioItemsById.get(Number(id))).filter(Boolean);
+    state.backlogEpics = orderedPortfolioItems.filter(item => item.type.trim().toLocaleLowerCase("en") === "epic");
+    state.backlogFeatures = orderedPortfolioItems.filter(item => item.type.trim().toLocaleLowerCase("en") === "feature");
+    await loadParentDetails([...state.backlogItems, ...orderedPortfolioItems]);
     pruneFilters(state.backlogItems);
     state.backlogTeamId = team.id;
     renderBacklog();
@@ -1686,6 +1704,9 @@ async function loadBacklog(force = false) {
     message.className = "backlog-error";
     message.textContent = error.message || "The backlog could not be loaded.";
     els.backlogContent.replaceChildren(message);
+    els.backlogSidebarStatus.textContent = "Epic and feature hierarchy could not be loaded.";
+    els.backlogSidebarStatus.classList.add("is-error");
+    els.backlogHierarchy.replaceChildren();
   } finally {
     els.refresh.disabled = false;
     els.refresh.classList.remove("is-spinning");
@@ -1693,6 +1714,13 @@ async function loadBacklog(force = false) {
 }
 
 function renderBacklogLoading() {
+  els.backlogSidebarStatus.textContent = "Loading epics and features…";
+  els.backlogSidebarStatus.classList.remove("is-error");
+  els.backlogHierarchy.replaceChildren(...Array.from({ length: 3 }, () => {
+    const skeleton = document.createElement("div");
+    skeleton.className = "backlog-sidebar-skeleton";
+    return skeleton;
+  }));
   els.backlogContent.replaceChildren(...Array.from({ length: 3 }, () => {
     const section = document.createElement("div");
     section.className = "backlog-skeleton";
@@ -1700,10 +1728,217 @@ function renderBacklogLoading() {
   }));
 }
 
+function backlogFeatureLabel(feature) {
+  return `${feature.title} (#${feature.id})`;
+}
+
+function backlogFeatureMetrics(feature) {
+  const issues = state.backlogItems.filter(item => {
+    if (Number(item.parentId) !== Number(feature.id)) return false;
+    const type = item.type.trim().toLocaleLowerCase("en");
+    return type === "bug" || type === "story" || type === "user story" || type === "product backlog item";
+  });
+  const completed = issues.filter(isFinishedWorkItem).length;
+  return {
+    issues: issues.length,
+    completed,
+    unestimated: issues.filter(item => item.points === null || item.points === undefined).length,
+    estimate: issues.reduce((total, item) => total + (Number(item.points) || 0), 0),
+    progress: issues.length ? Math.round((completed / issues.length) * 100) : 0
+  };
+}
+
+function formatEstimate(value) {
+  return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(value);
+}
+
+function selectBacklogFeature(feature) {
+  const label = backlogFeatureLabel(feature);
+  const alreadySelected = state.filters.feature.size === 1 && state.filters.feature.has(label);
+  state.filters.feature.clear();
+  if (!alreadySelected) state.filters.feature.add(label);
+  renderBacklog();
+}
+
+function createBacklogCardMenu(item, type) {
+  const menu = document.createElement("details");
+  menu.className = "backlog-card-menu";
+  const trigger = document.createElement("summary");
+  trigger.setAttribute("aria-label", `More actions for ${item.title}`);
+  trigger.textContent = "•••";
+  const options = document.createElement("div");
+  options.className = "backlog-card-menu-options";
+  const view = document.createElement("button");
+  view.type = "button";
+  view.textContent = `View ${type}`;
+  view.addEventListener("click", event => {
+    event.stopPropagation();
+    menu.open = false;
+    showWorkItem(item);
+  });
+  options.append(view);
+  menu.append(trigger, options);
+  return menu;
+}
+
+function createBacklogFeatureCard(feature) {
+  const metrics = backlogFeatureMetrics(feature);
+  const label = backlogFeatureLabel(feature);
+  const selected = state.filters.feature.has(label);
+  const collapsed = state.backlogCollapsedFeatures.has(Number(feature.id));
+  const card = document.createElement("article");
+  card.className = `backlog-feature${selected ? " is-active" : ""}${collapsed ? " is-collapsed" : ""}`;
+
+  const heading = document.createElement("div");
+  heading.className = "backlog-feature-heading";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "backlog-collapse-toggle";
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} feature ${feature.title}`);
+  const chevron = document.createElement("span");
+  chevron.className = "backlog-chevron";
+  chevron.textContent = "⌄";
+  toggle.append(chevron);
+  toggle.addEventListener("click", () => {
+    if (collapsed) state.backlogCollapsedFeatures.delete(Number(feature.id));
+    else state.backlogCollapsedFeatures.add(Number(feature.id));
+    renderBacklogSidebar();
+  });
+  const title = document.createElement("button");
+  title.type = "button";
+  title.className = "backlog-feature-filter";
+  title.textContent = feature.title;
+  title.setAttribute("aria-pressed", String(selected));
+  title.setAttribute("aria-label", `${selected ? "Remove" : "Apply"} backlog filter for ${feature.title}`);
+  title.addEventListener("click", () => selectBacklogFeature(feature));
+  const menu = createBacklogCardMenu(feature, "feature");
+  heading.append(toggle, title, menu);
+
+  const body = document.createElement("div");
+  body.className = "backlog-feature-body";
+  body.hidden = collapsed;
+  const reference = document.createElement("div");
+  reference.className = "backlog-feature-reference";
+  const key = document.createElement("span");
+  key.textContent = workItemKey(feature.id);
+  reference.append(key);
+  const stats = document.createElement("div");
+  stats.className = "backlog-feature-stats";
+  for (const [name, value] of [
+    ["Issues", metrics.issues],
+    ["Completed", metrics.completed],
+    ["Unestimated", metrics.unestimated],
+    ["Estimate", formatEstimate(metrics.estimate)]
+  ]) {
+    const stat = document.createElement("div");
+    stat.className = "backlog-feature-stat";
+    const statLabel = document.createElement("small");
+    statLabel.textContent = name;
+    const statValue = document.createElement("b");
+    statValue.textContent = String(value);
+    stat.append(statLabel, statValue);
+    stats.append(stat);
+  }
+  const progress = document.createElement("div");
+  progress.className = "backlog-feature-progress";
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-label", `${metrics.completed} of ${metrics.issues} stories and bugs completed`);
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  progress.setAttribute("aria-valuenow", String(metrics.progress));
+  const progressValue = document.createElement("span");
+  progressValue.style.width = `${metrics.progress}%`;
+  progress.append(progressValue);
+  body.append(reference, stats, progress);
+  card.append(heading, body);
+  card.addEventListener("click", event => {
+    if (event.target.closest("button, summary, details")) return;
+    selectBacklogFeature(feature);
+  });
+  return card;
+}
+
+function createBacklogEpicGroup(epic, features) {
+  const epicKey = epic ? String(epic.id) : "without-epic";
+  const collapsed = state.backlogCollapsedEpics.has(epicKey);
+  const group = document.createElement("section");
+  group.className = `backlog-epic${collapsed ? " is-collapsed" : ""}`;
+  const header = document.createElement("div");
+  header.className = "backlog-epic-heading";
+  const headerButton = document.createElement("button");
+  headerButton.type = "button";
+  headerButton.className = "backlog-epic-toggle";
+  headerButton.setAttribute("aria-expanded", String(!collapsed));
+  headerButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} epic ${epic?.title || "Features without epic"}`);
+  const chevron = document.createElement("span");
+  chevron.className = "backlog-chevron";
+  chevron.textContent = "⌄";
+  const icon = document.createElement("span");
+  icon.className = "backlog-epic-icon";
+  icon.textContent = "⚡";
+  const label = document.createElement("span");
+  const title = document.createElement("strong");
+  title.textContent = epic?.title || "Features without epic";
+  label.append(title);
+  if (epic) {
+    const key = document.createElement("small");
+    key.textContent = workItemKey(epic.id);
+    label.append(key);
+  }
+  const count = document.createElement("span");
+  count.className = "count";
+  count.textContent = String(features.length);
+  headerButton.append(chevron, icon, label, count);
+  headerButton.addEventListener("click", () => {
+    if (collapsed) state.backlogCollapsedEpics.delete(epicKey);
+    else state.backlogCollapsedEpics.add(epicKey);
+    renderBacklogSidebar();
+  });
+  header.append(headerButton);
+  if (epic) header.append(createBacklogCardMenu(epic, "epic"));
+  const featureList = document.createElement("div");
+  featureList.className = "backlog-epic-features";
+  featureList.hidden = collapsed;
+  if (features.length) featureList.replaceChildren(...features.map(createBacklogFeatureCard));
+  else {
+    const empty = document.createElement("p");
+    empty.className = "backlog-epic-empty";
+    empty.textContent = "No features.";
+    featureList.append(empty);
+  }
+  group.append(header, featureList);
+  return group;
+}
+
+function renderBacklogSidebar() {
+  els.backlogSidebarStatus.classList.remove("is-error");
+  els.backlogShowAllFeatures.classList.toggle("is-active", !state.filters.feature.size);
+  els.backlogShowAllFeatures.setAttribute("aria-pressed", String(!state.filters.feature.size));
+  if (!state.backlogEpics.length && !state.backlogFeatures.length) {
+    els.backlogSidebarStatus.textContent = "No epics or features were found for this team.";
+    els.backlogHierarchy.replaceChildren();
+    return;
+  }
+  els.backlogSidebarStatus.textContent = "";
+  const featuresByEpic = new Map();
+  state.backlogFeatures.forEach(feature => {
+    const parentId = Number(feature.parentId) || 0;
+    if (!featuresByEpic.has(parentId)) featuresByEpic.set(parentId, []);
+    featuresByEpic.get(parentId).push(feature);
+  });
+  const epicIds = new Set(state.backlogEpics.map(epic => Number(epic.id)));
+  const groups = state.backlogEpics.map(epic => createBacklogEpicGroup(epic, featuresByEpic.get(Number(epic.id)) || []));
+  const ungrouped = state.backlogFeatures.filter(feature => !epicIds.has(Number(feature.parentId)));
+  if (ungrouped.length) groups.push(createBacklogEpicGroup(null, ungrouped));
+  els.backlogHierarchy.replaceChildren(...groups);
+}
+
 function renderBacklog() {
   const team = state.teams.find(value => value.id === state.teamId);
   const visibleItems = state.backlogItems.filter(item => matchesFilters(item));
   els.backlogMeta.textContent = `${team?.name || "Team"} · ${visibleItems.length}${visibleItems.length !== state.backlogItems.length ? ` of ${state.backlogItems.length}` : ""} items`;
+  renderBacklogSidebar();
   renderFilters();
   const assignedIds = new Set();
   const sections = [];
@@ -2003,16 +2238,33 @@ async function loadWorkItemDetail(item) {
   try {
     const result = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
     const detail = normalizeWorkItemDetail(result);
+    detail.parentId ||= item.parentId || null;
+    if (detail.parentId) {
+      try {
+        const [parent] = await fetchWorkItems([detail.parentId]);
+        detail.parent = parent || null;
+        if (parent) {
+          item.parentId = parent.id;
+          item.featureLabel = `${parent.title} (#${parent.id})`;
+        }
+      } catch (error) {
+        console.error("Parent work item could not be loaded.", error);
+        detail.parent = null;
+        detail.parentError = "Parent details could not be loaded.";
+      }
+    }
     if (detail.childIds.length) {
       try {
         const children = await fetchWorkItems(detail.childIds);
         const childrenById = new Map(children.map(child => [Number(child.id), child]));
+        const type = item.type.trim().toLocaleLowerCase("en");
+        const showAllChildren = type === "epic" || type === "feature";
         detail.subtasks = detail.childIds.map(id => childrenById.get(Number(id)))
-          .filter(child => child?.type?.trim().toLocaleLowerCase("en") === "task");
+          .filter(child => child && (showAllChildren || child.type.trim().toLocaleLowerCase("en") === "task"));
       } catch (error) {
-        console.error("Child tasks could not be loaded.", error);
+        console.error("Child work items could not be loaded.", error);
         detail.subtasks = [];
-        detail.subtasksError = "Subtasks could not be loaded.";
+        detail.subtasksError = "Child work items could not be loaded.";
       }
     }
     if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
@@ -2130,6 +2382,9 @@ function normalizeWorkItemDetail(item) {
     reason: fields["System.Reason"] || "",
     tags: String(fields["System.Tags"] || "").split(";").map(tag => tag.trim()).filter(Boolean),
     changedDate: fields["System.ChangedDate"] || "",
+    parentId: fields["System.Parent"] || null,
+    parent: state.detailsCache.get(item.id)?.parent || null,
+    parentError: "",
     attachments: normalizeWorkItemAttachments(item),
     childIds: normalizeWorkItemChildIds(item),
     subtasks: state.detailsCache.get(item.id)?.subtasks || [],
@@ -2289,7 +2544,7 @@ function renderWorkItemSubtasks(subtasks = [], error = "") {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "work-item-subtask";
-    row.setAttribute("aria-label", `Open subtask ${workItemKey(task.id)}: ${task.title}`);
+    row.setAttribute("aria-label", `Open child work item ${workItemKey(task.id)}: ${task.title}`);
     const icon = document.createElement("span");
     icon.className = "work-item-subtask-icon";
     icon.textContent = "▣";
@@ -2313,6 +2568,25 @@ function renderWorkItemSubtasks(subtasks = [], error = "") {
     row.addEventListener("click", () => showWorkItem(task));
     return row;
   }));
+}
+
+function renderWorkItemParent(item, detail) {
+  const parent = detail?.parent || null;
+  const parentId = detail?.parentId || item.parentId;
+  if (!parentId) {
+    els.workItemParent.textContent = "No parent";
+    return;
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "work-item-parent-link";
+  button.textContent = parent
+    ? `${parent.type} ${workItemKey(parent.id)} · ${parent.title}`
+    : item.featureLabel || workItemKey(parentId);
+  button.setAttribute("aria-label", `Open parent work item ${workItemKey(parentId)}${parent ? `: ${parent.title}` : ""}`);
+  button.title = detail?.parentError || "Open parent work item";
+  button.addEventListener("click", () => parent ? showWorkItem(parent) : showLinkedWorkItem(parentId));
+  els.workItemParent.replaceChildren(button);
 }
 
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
@@ -2350,7 +2624,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemPoints.setAttribute("aria-label", `Story points ${detail?.points ?? item.points ?? "not set"}. Click to change.`);
   els.workItemArea.setAttribute("aria-label", `Area ${detail?.area || item.area || "not set"}. Click to change.`);
   els.workItemIteration.setAttribute("aria-label", `Sprint ${detail?.iteration || state.iteration?.name || "not set"}. Click to change.`);
-  els.workItemParent.textContent = item.featureLabel || "No parent";
+  renderWorkItemParent(item, detail);
   renderDetailTags(detail?.tags || item.tags);
   els.workItemTags.setAttribute("aria-label", `Tags: ${(detail?.tags || item.tags || []).join(", ") || "none"}. Click to change.`);
   els.workItemChanged.textContent = detail?.changedDate ? formatDateTime(detail.changedDate) : "—";
@@ -3941,7 +4215,11 @@ function renderEmptyBoard() {
   state.stories = [];
   state.iterationStoriesCache.clear();
   state.backlogItems = [];
+  state.backlogEpics = [];
+  state.backlogFeatures = [];
   state.backlogTeamId = "";
+  state.backlogCollapsedEpics.clear();
+  state.backlogCollapsedFeatures.clear();
   state.forYouProjectName = "";
   state.forYouWorkItems = [];
   state.forYouMentions = [];
@@ -3961,6 +4239,8 @@ function renderEmptyBoard() {
   if (state.currentView === "backlog") {
     els.backlogMeta.textContent = "Connect Azure DevOps to load the backlog.";
     els.backlogContent.replaceChildren();
+    els.backlogSidebarStatus.textContent = "Connect Azure DevOps to load epics and features.";
+    els.backlogHierarchy.replaceChildren();
   }
   if (state.currentView === "for-you") renderForYou();
 }
@@ -4102,7 +4382,11 @@ els.settingsForm.addEventListener("submit", async event => {
   if (previousTeam !== state.teamId) {
     state.filters.sprint.clear();
     state.backlogItems = [];
+    state.backlogEpics = [];
+    state.backlogFeatures = [];
     state.backlogTeamId = "";
+    state.backlogCollapsedEpics.clear();
+    state.backlogCollapsedFeatures.clear();
     loadBoard();
   } else if (previousGithubKey !== githubPullRequestsCacheKey() && state.currentView === "for-you") {
     state.githubPullRequestsKey = "";
@@ -4332,6 +4616,10 @@ els.forYouUpdatedShowAll.addEventListener("click", () => toggleForYouSection("up
 els.forYouCompletedShowAll.addEventListener("click", () => toggleForYouSection("completed"));
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
+els.backlogShowAllFeatures.addEventListener("click", () => {
+  state.filters.feature.clear();
+  renderBacklog();
+});
 els.refresh.addEventListener("click", () => loadBoard());
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
 els.clearFilters.addEventListener("click", async () => {

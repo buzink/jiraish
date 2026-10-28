@@ -143,7 +143,20 @@
       </section>
 
       <section id="backlogView" class="backlog-view" aria-labelledby="backlogTitle" data-backlog-view hidden>
-        <div id="backlogContent" class="backlog-content"></div>
+        <div class="backlog-layout">
+          <aside id="backlogSidebar" class="backlog-sidebar" aria-labelledby="backlogSidebarTitle">
+            <header>
+              <div>
+                <span class="backlog-sidebar-icon" aria-hidden="true">◆</span>
+                <h2 id="backlogSidebarTitle">Epics &amp; features</h2>
+              </div>
+              <button id="backlogShowAllFeatures" class="backlog-show-all" type="button">All work items</button>
+            </header>
+            <div id="backlogSidebarStatus" class="backlog-sidebar-status" aria-live="polite"></div>
+            <div id="backlogHierarchy" class="backlog-hierarchy"></div>
+          </aside>
+          <div id="backlogContent" class="backlog-content"></div>
+        </div>
       </section>
 
       <section id="forYouView" class="for-you-view" aria-labelledby="forYouTitle" data-for-you-view hidden>
@@ -487,7 +500,7 @@
               <div><dt>Story points</dt><dd><div id="workItemPointsControl" class="issue-detail-field-control"><button id="workItemPoints" class="issue-detail-field-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" title="Change story points">—</button><div id="workItemPointsMenu" class="issue-detail-field-menu" hidden><div class="issue-detail-field-title">Change story points</div><div id="workItemPointsQuick" class="issue-points-quick"></div><form id="workItemPointsForm" class="issue-points-form"><label class="sr-only" for="workItemPointsInput">Story points</label><input id="workItemPointsInput" type="number" min="0" step="0.5" inputmode="decimal" placeholder="E.g. 5" required><button class="primary-button" type="submit">Save</button></form></div></div></dd></div>
               <div><dt>Area</dt><dd><div id="workItemAreaControl" class="issue-detail-field-control"><button id="workItemArea" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Change area">—</button><div id="workItemAreaMenu" class="issue-detail-field-menu issue-detail-search-menu" hidden><label class="issue-detail-field-search"><span class="sr-only">Search areas</span><input id="workItemAreaSearch" type="search" placeholder="Search areas…" autocomplete="off"></label><div id="workItemAreaOptions" class="issue-detail-field-options"></div></div></div></dd></div>
               <div><dt>Sprint</dt><dd><div id="workItemIterationControl" class="issue-detail-field-control"><button id="workItemIteration" class="issue-detail-field-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="Change sprint">—</button><div id="workItemIterationMenu" class="issue-detail-field-menu issue-detail-search-menu" hidden><label class="issue-detail-field-search"><span class="sr-only">Search sprints</span><input id="workItemIterationSearch" type="search" placeholder="Search sprints…" autocomplete="off"></label><div id="workItemIterationOptions" class="issue-detail-field-options"></div></div></div></dd></div>
-              <div><dt>Feature / parent</dt><dd id="workItemParent">No parent</dd></div>
+              <div><dt>Parent</dt><dd id="workItemParent">No parent</dd></div>
               <div>
                 <dt>Tags</dt>
                 <dd>
