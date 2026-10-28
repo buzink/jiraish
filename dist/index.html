@@ -28,6 +28,7 @@
         <button id="forYouNav" class="nav-item" type="button">For you</button>
         <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint board</button>
         <button id="backlogNav" class="nav-item" type="button">Backlog</button>
+        <button id="wikiNav" class="nav-item" type="button">Wiki</button>
       </nav>
       <div class="topbar-actions">
         <button id="themeButton" class="icon-button theme-button" type="button" aria-label="Switch to dark mode" title="Dark mode">
@@ -169,6 +170,31 @@
           </aside>
           <div id="backlogContent" class="backlog-content"></div>
         </div>
+      </section>
+
+      <section id="wikiView" class="wiki-view" aria-label="Azure DevOps wiki" data-wiki-view hidden>
+        <aside class="wiki-sidebar">
+          <header class="wiki-sidebar-header">
+            <div class="wiki-product-title"><span aria-hidden="true">W</span><strong>Wiki</strong></div>
+            <label class="sr-only" for="wikiSelect">Select wiki</label>
+            <select id="wikiSelect" aria-label="Select wiki"></select>
+            <label class="wiki-search" for="wikiSearch">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+              <input id="wikiSearch" type="search" placeholder="Search pages" autocomplete="off">
+            </label>
+          </header>
+          <div id="wikiTreeStatus" class="wiki-tree-status" aria-live="polite"></div>
+          <nav id="wikiTree" class="wiki-tree" aria-label="Wiki pages"></nav>
+        </aside>
+        <article class="wiki-page">
+          <div id="wikiBreadcrumbs" class="wiki-breadcrumbs" aria-label="Breadcrumb"></div>
+          <header class="wiki-page-header">
+            <h1 id="wikiPageTitle">Wiki</h1>
+            <a id="wikiOpenAzure" class="secondary-button wiki-open-azure" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in Azure DevOps ↗</a>
+          </header>
+          <div id="wikiPageStatus" class="wiki-page-status" aria-live="polite">Select a page from the sidebar.</div>
+          <div id="wikiPageContent" class="wiki-content"></div>
+        </article>
       </section>
 
       <section id="forYouView" class="for-you-view" aria-labelledby="forYouTitle" data-for-you-view hidden>

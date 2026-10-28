@@ -10,7 +10,8 @@ const STORAGE = {
   githubToken: "wish-board.github-token",
   githubRepos: "wish-board.github-repositories",
   githubAllRepos: "wish-board.github-all-repositories",
-  boardGroupBy: "wish-board.board-group-by"
+  boardGroupBy: "wish-board.board-group-by",
+  wiki: "wish-board.wiki-id"
 };
 
 const DEFAULT_URL = "https://dev.azure.com/organization/project/";
@@ -96,6 +97,14 @@ const state = {
   backlogTeamId: "",
   backlogCollapsedEpics: new Set(),
   backlogCollapsedFeatures: new Set(),
+  wikis: [],
+  wikiId: localStorage.getItem(STORAGE.wiki) || "",
+  wikiProjectName: "",
+  wikiRoot: null,
+  wikiPage: null,
+  wikiQuery: "",
+  wikiLoadToken: 0,
+  wikiRequestToken: 0,
   forYouProjectName: "",
   forYouWorkItems: [],
   forYouMentions: [],
@@ -175,10 +184,12 @@ const els = {
   forYouNav: document.querySelector("#forYouNav"),
   sprintBoardNav: document.querySelector("#sprintBoardNav"),
   backlogNav: document.querySelector("#backlogNav"),
+  wikiNav: document.querySelector("#wikiNav"),
   listViews: [...document.querySelectorAll("[data-list-view]")],
   boardViews: [...document.querySelectorAll("[data-board-view]")],
   backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
   forYouViews: [...document.querySelectorAll("[data-for-you-view]")],
+  wikiViews: [...document.querySelectorAll("[data-wiki-view]")],
   forYouTitle: document.querySelector("#forYouTitle"),
   forYouMeta: document.querySelector("#forYouMeta"),
   forYouPersonControl: document.querySelector("#forYouPersonControl"),
@@ -227,6 +238,15 @@ const els = {
   backlogShowAllFeatures: document.querySelector("#backlogShowAllFeatures"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
+  wikiSelect: document.querySelector("#wikiSelect"),
+  wikiSearch: document.querySelector("#wikiSearch"),
+  wikiTreeStatus: document.querySelector("#wikiTreeStatus"),
+  wikiTree: document.querySelector("#wikiTree"),
+  wikiBreadcrumbs: document.querySelector("#wikiBreadcrumbs"),
+  wikiPageTitle: document.querySelector("#wikiPageTitle"),
+  wikiPageStatus: document.querySelector("#wikiPageStatus"),
+  wikiPageContent: document.querySelector("#wikiPageContent"),
+  wikiOpenAzure: document.querySelector("#wikiOpenAzure"),
   board: document.querySelector("#board"),
   status: document.querySelector("#statusRegion"),
   theme: document.querySelector("#themeButton"),
@@ -986,16 +1006,20 @@ async function showMainView(view) {
   const showForYou = view === "for-you";
   const showBacklog = view === "backlog";
   const showBoard = view === "board";
-  els.listViews.forEach(element => { element.hidden = showForYou; });
+  const showWiki = view === "wiki";
+  els.listViews.forEach(element => { element.hidden = showForYou || showWiki; });
   els.boardViews.forEach(element => { element.hidden = !showBoard; });
   els.backlogViews.forEach(element => { element.hidden = !showBacklog; });
   els.forYouViews.forEach(element => { element.hidden = !showForYou; });
+  els.wikiViews.forEach(element => { element.hidden = !showWiki; });
   els.forYouNav.classList.toggle("is-active", showForYou);
   els.sprintBoardNav.classList.toggle("is-active", showBoard);
   els.backlogNav.classList.toggle("is-active", showBacklog);
+  els.wikiNav.classList.toggle("is-active", showWiki);
   els.forYouNav.toggleAttribute("aria-current", showForYou);
   els.sprintBoardNav.toggleAttribute("aria-current", showBoard);
   els.backlogNav.toggleAttribute("aria-current", showBacklog);
+  els.wikiNav.toggleAttribute("aria-current", showWiki);
   if (!showForYou) closeForYouPersonMenu();
   if (showForYou) {
     if (enteringForYou) {
@@ -1008,6 +1032,10 @@ async function showMainView(view) {
   }
   if (showBacklog) {
     await loadBacklog();
+    return;
+  }
+  if (showWiki) {
+    await loadWiki();
     return;
   }
   if (state.filters.sprint.size) {
@@ -2095,6 +2123,369 @@ function createBacklogRow(item) {
     showWorkItem(item);
   });
   return row;
+}
+
+function wikiPageTitle(pageOrPath) {
+  const path = typeof pageOrPath === "string" ? pageOrPath : pageOrPath?.path || "";
+  const segment = path.split("/").filter(Boolean).pop() || "Home";
+  try { return decodeURIComponent(segment).replace(/-/g, " "); }
+  catch { return segment.replace(/-/g, " "); }
+}
+
+function orderedWikiPages(pages = []) {
+  return [...pages].sort((left, right) => (Number(left.order) || 0) - (Number(right.order) || 0)
+    || wikiPageTitle(left).localeCompare(wikiPageTitle(right), "en", { numeric: true, sensitivity: "base" }));
+}
+
+function flattenWikiPages(page, result = []) {
+  if (!page) return result;
+  if (page.path && page.path !== "/") result.push(page);
+  orderedWikiPages(page.subPages).forEach(child => flattenWikiPages(child, result));
+  return result;
+}
+
+function renderWikiTreeBranch(page, depth = 0) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "wiki-tree-branch";
+  const children = orderedWikiPages(page.subPages);
+  const row = document.createElement("div");
+  row.className = "wiki-tree-row";
+  row.style.setProperty("--wiki-depth", String(depth));
+  if (children.length) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "wiki-tree-toggle";
+    toggle.textContent = "⌄";
+    toggle.setAttribute("aria-label", `Collapse ${wikiPageTitle(page)}`);
+    toggle.setAttribute("aria-expanded", "true");
+    row.append(toggle);
+    const childList = document.createElement("div");
+    childList.className = "wiki-tree-children";
+    childList.replaceChildren(...children.map(child => renderWikiTreeBranch(child, depth + 1)));
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      toggle.setAttribute("aria-label", `${expanded ? "Expand" : "Collapse"} ${wikiPageTitle(page)}`);
+      toggle.classList.toggle("is-collapsed", expanded);
+      childList.hidden = expanded;
+    });
+    const button = createWikiPageButton(page);
+    row.append(button);
+    wrapper.append(row, childList);
+    return wrapper;
+  }
+  const spacer = document.createElement("span");
+  spacer.className = "wiki-tree-spacer";
+  row.append(spacer, createWikiPageButton(page));
+  wrapper.append(row);
+  return wrapper;
+}
+
+function createWikiPageButton(page) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wiki-tree-page";
+  button.classList.toggle("is-active", page.path === state.wikiPage?.path);
+  button.textContent = wikiPageTitle(page);
+  button.title = page.path;
+  button.addEventListener("click", () => loadWikiPage(page));
+  return button;
+}
+
+function renderWikiTree() {
+  const pages = flattenWikiPages(state.wikiRoot);
+  const query = state.wikiQuery.trim().toLocaleLowerCase("en");
+  if (!pages.length) {
+    els.wikiTree.replaceChildren();
+    els.wikiTreeStatus.textContent = state.wikiRoot ? "This wiki has no pages." : "";
+    return;
+  }
+  els.wikiTreeStatus.textContent = query ? `${pages.filter(page => `${wikiPageTitle(page)} ${page.path}`.toLocaleLowerCase("en").includes(query)).length} results` : "";
+  if (query) {
+    const matches = pages.filter(page => `${wikiPageTitle(page)} ${page.path}`.toLocaleLowerCase("en").includes(query));
+    els.wikiTree.replaceChildren(...matches.map(page => {
+      const button = createWikiPageButton(page);
+      button.classList.add("wiki-search-result");
+      const path = document.createElement("small");
+      path.textContent = page.path;
+      button.append(path);
+      return button;
+    }));
+    return;
+  }
+  els.wikiTree.replaceChildren(...orderedWikiPages(state.wikiRoot?.subPages).map(page => renderWikiTreeBranch(page)));
+}
+
+function renderWikiBreadcrumbs(page) {
+  const segments = String(page?.path || "").split("/").filter(Boolean);
+  const pages = new Map(flattenWikiPages(state.wikiRoot).map(value => [value.path, value]));
+  const crumbs = [];
+  segments.forEach((segment, index) => {
+    if (index) {
+      const separator = document.createElement("span");
+      separator.textContent = "/";
+      crumbs.push(separator);
+    }
+    const path = `/${segments.slice(0, index + 1).join("/")}`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = wikiPageTitle(path);
+    button.disabled = index === segments.length - 1;
+    const target = pages.get(path);
+    if (target) button.addEventListener("click", () => loadWikiPage(target));
+    crumbs.push(button);
+  });
+  els.wikiBreadcrumbs.replaceChildren(...crumbs);
+}
+
+function normalizedWikiPath(href, currentPath) {
+  const clean = String(href || "").split("#")[0].split("?")[0];
+  if (!clean || /^(https?:|mailto:|#)/i.test(href) || clean.includes(".attachments/")) return "";
+  const base = clean.startsWith("/") ? [] : String(currentPath || "/").split("/").filter(Boolean).slice(0, -1);
+  for (const segment of clean.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") base.pop();
+    else base.push(segment.replace(/\.md$/i, ""));
+  }
+  return `/${base.join("/")}`;
+}
+
+function appendWikiInline(parent, text, page) {
+  const pattern = /(!?\[([^\]]*)\]\(([^)]+)\)|\[\[([^\]]+)\]\]|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) parent.append(document.createTextNode(text.slice(cursor, match.index)));
+    if (match[0].startsWith("![")) {
+      const src = match[3].trim().split(/\s+/)[0];
+      if (/^https?:\/\//i.test(src)) {
+        const image = document.createElement("img");
+        image.src = src;
+        image.alt = match[2] || "";
+        image.loading = "lazy";
+        parent.append(image);
+      } else {
+        const fallback = document.createElement("span");
+        fallback.className = "wiki-image-placeholder";
+        fallback.textContent = match[2] || "Attached image";
+        parent.append(fallback);
+      }
+    } else if (match[3] !== undefined || match[4] !== undefined) {
+      const label = match[2] || match[4];
+      const href = match[3]?.trim().split(/\s+/)[0] || match[4];
+      const wikiPath = normalizedWikiPath(href, page?.path);
+      const linkedPage = wikiPath && flattenWikiPages(state.wikiRoot).find(value => value.path.toLocaleLowerCase("en") === wikiPath.toLocaleLowerCase("en"));
+      if (linkedPage) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "wiki-inline-link";
+        button.textContent = label;
+        button.addEventListener("click", () => loadWikiPage(linkedPage));
+        parent.append(button);
+      } else {
+        const link = document.createElement("a");
+        link.textContent = label;
+        try {
+          const url = new URL(href, page?.remoteUrl || activeAzureContext().webBase);
+          if (["https:", "http:", "mailto:"].includes(url.protocol)) {
+            link.href = url.href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+          }
+        } catch {}
+        parent.append(link);
+      }
+    } else if (match[5] !== undefined) {
+      const code = document.createElement("code");
+      code.textContent = match[5];
+      parent.append(code);
+    } else {
+      const emphasis = document.createElement(match[6] !== undefined ? "strong" : "em");
+      emphasis.textContent = match[6] ?? match[7];
+      parent.append(emphasis);
+    }
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) parent.append(document.createTextNode(text.slice(cursor)));
+}
+
+function renderWikiMarkdown(markdown, page) {
+  const fragment = document.createDocumentFragment();
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim() || /^\[\[_TOC_\]\]$/i.test(line.trim())) { index += 1; continue; }
+    if (/^```/.test(line.trim())) {
+      const language = line.trim().slice(3).trim();
+      const content = [];
+      index += 1;
+      while (index < lines.length && !/^```/.test(lines[index].trim())) content.push(lines[index++]);
+      index += 1;
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      if (language) code.dataset.language = language;
+      code.textContent = content.join("\n");
+      pre.append(code);
+      fragment.append(pre);
+      continue;
+    }
+    if (line.includes("|") && /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[index + 1] || "")) {
+      const cells = value => value.trim().replace(/^\||\|$/g, "").split("|").map(cell => cell.trim());
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      cells(line).forEach(value => {
+        const cell = document.createElement("th");
+        appendWikiInline(cell, value, page);
+        headRow.append(cell);
+      });
+      head.append(headRow);
+      const body = document.createElement("tbody");
+      index += 2;
+      while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
+        const row = document.createElement("tr");
+        cells(lines[index++]).forEach(value => {
+          const cell = document.createElement("td");
+          appendWikiInline(cell, value, page);
+          row.append(cell);
+        });
+        body.append(row);
+      }
+      table.append(head, body);
+      fragment.append(table);
+      continue;
+    }
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const heading = document.createElement(`h${headingMatch[1].length}`);
+      appendWikiInline(heading, headingMatch[2], page);
+      fragment.append(heading);
+      index += 1;
+      continue;
+    }
+    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+      fragment.append(document.createElement("hr"));
+      index += 1;
+      continue;
+    }
+    const listMatch = line.match(/^\s*(?:([-+*])|(\d+)\.)\s+(.+)$/);
+    if (listMatch) {
+      const ordered = Boolean(listMatch[2]);
+      const list = document.createElement(ordered ? "ol" : "ul");
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*(?:([-+*])|(\d+)\.)\s+(.+)$/);
+        if (!match || Boolean(match[2]) !== ordered) break;
+        const item = document.createElement("li");
+        appendWikiInline(item, match[3], page);
+        list.append(item);
+        index += 1;
+      }
+      fragment.append(list);
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const quote = document.createElement("blockquote");
+      const content = [];
+      while (index < lines.length && /^>\s?/.test(lines[index])) content.push(lines[index++].replace(/^>\s?/, ""));
+      appendWikiInline(quote, content.join(" "), page);
+      fragment.append(quote);
+      continue;
+    }
+    const paragraphLines = [];
+    while (index < lines.length && lines[index].trim()
+      && !/^(#{1,6})\s+/.test(lines[index]) && !/^```/.test(lines[index].trim())
+      && !/^\s*(?:[-+*]|\d+\.)\s+/.test(lines[index]) && !/^>\s?/.test(lines[index])) {
+      paragraphLines.push(lines[index++].trim());
+    }
+    const paragraph = document.createElement("p");
+    appendWikiInline(paragraph, paragraphLines.join(" "), page);
+    fragment.append(paragraph);
+  }
+  els.wikiPageContent.replaceChildren(fragment);
+}
+
+async function loadWikiPage(page) {
+  const wiki = state.wikis.find(value => value.id === state.wikiId);
+  if (!wiki || !page) return;
+  const requestToken = ++state.wikiRequestToken;
+  state.wikiPage = page;
+  renderWikiTree();
+  renderWikiBreadcrumbs(page);
+  els.wikiPageTitle.textContent = wikiPageTitle(page);
+  els.wikiPageStatus.textContent = "Loading page…";
+  els.wikiPageStatus.classList.remove("is-error");
+  els.wikiPageContent.replaceChildren();
+  els.wikiOpenAzure.hidden = true;
+  try {
+    const loaded = await azure(`/_apis/wiki/wikis/${encodeURIComponent(wiki.id)}/pages?path=${encodeURIComponent(page.path)}&includeContent=true&api-version=7.1`);
+    if (requestToken !== state.wikiRequestToken) return;
+    state.wikiPage = { ...page, ...loaded };
+    els.wikiPageStatus.textContent = loaded.content ? "" : "This page is empty.";
+    els.wikiOpenAzure.href = loaded.remoteUrl || page.remoteUrl || "#";
+    els.wikiOpenAzure.hidden = !loaded.remoteUrl && !page.remoteUrl;
+    renderWikiMarkdown(loaded.content, state.wikiPage);
+    renderWikiBreadcrumbs(state.wikiPage);
+    renderWikiTree();
+  } catch (error) {
+    if (requestToken !== state.wikiRequestToken) return;
+    console.error(error);
+    els.wikiPageStatus.textContent = error.message || "The wiki page could not be loaded.";
+    els.wikiPageStatus.classList.add("is-error");
+  }
+}
+
+async function loadWiki(force = false) {
+  if (!state.pat) {
+    els.wikiTreeStatus.textContent = "Connect Azure DevOps to load the wiki.";
+    return;
+  }
+  if (!force && state.wikiProjectName === state.projectName && state.wikiRoot) {
+    renderWikiTree();
+    return;
+  }
+  const loadToken = ++state.wikiLoadToken;
+  els.wikiTreeStatus.textContent = "Loading wikis…";
+  els.wikiTreeStatus.classList.remove("is-error");
+  els.wikiTree.replaceChildren();
+  els.wikiPageStatus.textContent = "Loading wiki…";
+  els.wikiPageContent.replaceChildren();
+  try {
+    const result = await azure("/_apis/wiki/wikis?api-version=7.1");
+    if (loadToken !== state.wikiLoadToken) return;
+    state.wikis = result.value || [];
+    state.wikiProjectName = state.projectName;
+    if (!state.wikis.length) {
+      state.wikiRoot = null;
+      state.wikiPage = null;
+      els.wikiSelect.replaceChildren();
+      els.wikiTreeStatus.textContent = "No Azure DevOps wikis were found in this project.";
+      els.wikiPageStatus.textContent = "Create a wiki in Azure DevOps to see it here.";
+      return;
+    }
+    if (!state.wikis.some(wiki => wiki.id === state.wikiId)) state.wikiId = state.wikis[0].id;
+    els.wikiSelect.replaceChildren(...state.wikis.map(wiki => {
+      const option = document.createElement("option");
+      option.value = wiki.id;
+      option.textContent = wiki.name;
+      option.selected = wiki.id === state.wikiId;
+      return option;
+    }));
+    localStorage.setItem(STORAGE.wiki, state.wikiId);
+    const root = await azure(`/_apis/wiki/wikis/${encodeURIComponent(state.wikiId)}/pages?path=%2F&recursionLevel=full&api-version=7.1`);
+    if (loadToken !== state.wikiLoadToken) return;
+    state.wikiRoot = root;
+    els.wikiTreeStatus.textContent = "";
+    renderWikiTree();
+    const pages = flattenWikiPages(root);
+    const selected = pages.find(page => page.path === state.wikiPage?.path) || pages[0];
+    if (selected) await loadWikiPage(selected);
+    else els.wikiPageStatus.textContent = "This wiki has no pages.";
+  } catch (error) {
+    console.error(error);
+    els.wikiTreeStatus.textContent = error.message || "The Azure DevOps wiki could not be loaded.";
+    els.wikiTreeStatus.classList.add("is-error");
+    els.wikiPageStatus.textContent = "Wiki unavailable.";
+  }
 }
 
 function matchesFilters(item, query = "") {
@@ -4292,6 +4683,10 @@ function renderEmptyBoard() {
   state.backlogTeamId = "";
   state.backlogCollapsedEpics.clear();
   state.backlogCollapsedFeatures.clear();
+  state.wikis = [];
+  state.wikiProjectName = "";
+  state.wikiRoot = null;
+  state.wikiPage = null;
   state.forYouProjectName = "";
   state.forYouWorkItems = [];
   state.forYouMentions = [];
@@ -4315,6 +4710,12 @@ function renderEmptyBoard() {
     els.backlogHierarchy.replaceChildren();
   }
   if (state.currentView === "for-you") renderForYou();
+  if (state.currentView === "wiki") {
+    els.wikiTreeStatus.textContent = "Connect Azure DevOps to load the wiki.";
+    els.wikiTree.replaceChildren();
+    els.wikiPageStatus.textContent = "Wiki unavailable.";
+    els.wikiPageContent.replaceChildren();
+  }
 }
 
 function showSettings() {
@@ -4689,11 +5090,24 @@ els.forYouUpdatedShowAll.addEventListener("click", () => toggleForYouSection("up
 els.forYouCompletedShowAll.addEventListener("click", () => toggleForYouSection("completed"));
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
+els.wikiNav.addEventListener("click", () => showMainView("wiki"));
+els.wikiSelect.addEventListener("change", async () => {
+  state.wikiId = els.wikiSelect.value;
+  localStorage.setItem(STORAGE.wiki, state.wikiId);
+  state.wikiRoot = null;
+  state.wikiPage = null;
+  state.wikiProjectName = "";
+  await loadWiki(true);
+});
+els.wikiSearch.addEventListener("input", event => {
+  state.wikiQuery = event.target.value;
+  renderWikiTree();
+});
 els.backlogShowAllFeatures.addEventListener("click", () => {
   state.filters.feature.clear();
   renderBacklog();
 });
-els.refresh.addEventListener("click", () => loadBoard());
+els.refresh.addEventListener("click", () => state.currentView === "wiki" ? loadWiki(true) : loadBoard());
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
 els.boardGroupOptions.forEach(option => option.addEventListener("click", () => {
   state.boardGroupBy = option.dataset.boardGroup;
