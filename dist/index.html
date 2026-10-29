@@ -517,7 +517,15 @@
               <p id="workItemTitleStatus" class="work-item-title-status" role="alert"></p>
             </form>
           </div>
-          <button class="close-button" type="button" data-close-work-item aria-label="Close">×</button>
+          <div class="work-item-header-actions">
+            <details id="workItemActions" class="work-item-actions">
+              <summary aria-label="More work item actions" title="More actions">•••</summary>
+              <div class="work-item-actions-menu" role="menu">
+                <button id="deleteWorkItem" class="work-item-delete-action" type="button" role="menuitem">Delete</button>
+              </div>
+            </details>
+            <button class="close-button" type="button" data-close-work-item aria-label="Close">×</button>
+          </div>
         </header>
 
         <div class="work-item-content">

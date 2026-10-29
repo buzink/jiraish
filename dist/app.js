@@ -153,6 +153,7 @@ const state = {
   historyErrors: new Map(),
   selectedItemId: null,
   selectedItem: null,
+  pendingWorkItemWrites: 0,
   loading: false
 };
 
@@ -350,6 +351,8 @@ const els = {
   createWorkItemError: document.querySelector("#createWorkItemError"),
   createWorkItemSubmit: document.querySelector("#createWorkItemSubmit"),
   workItemDialog: document.querySelector("#workItemDialog"),
+  workItemActions: document.querySelector("#workItemActions"),
+  deleteWorkItem: document.querySelector("#deleteWorkItem"),
   workItemLoading: document.querySelector("#workItemLoading"),
   workItemType: document.querySelector("#workItemType"),
   workItemKey: document.querySelector("#workItemKey"),
@@ -613,25 +616,35 @@ async function azure(path, options = {}, scope = "project") {
   const parsed = activeAzureContext();
   if (scope === "project" && !parsed.project) throw new Error("No Azure DevOps project has been selected yet.");
   const apiBase = scope === "organization" ? parsed.orgBase : parsed.base;
-  const response = await fetch(`${apiBase}${path}`, {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      Authorization: `Basic ${btoa(`:${state.pat}`)}`,
-      ...options.headers
+  const method = String(options.method || "GET").toUpperCase();
+  const protectsWork = ["POST", "PATCH", "DELETE"].includes(method)
+    && /\/_apis\/wit\/(?:workitems|attachments)/i.test(path);
+  if (protectsWork) state.pendingWorkItemWrites++;
+  try {
+    const response = await fetch(`${apiBase}${path}`, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Basic ${btoa(`:${state.pat}`)}`,
+        ...options.headers
+      }
+    });
+    if (response.status === 401 || response.status === 403) {
+      const error = new Error("The PAT is invalid, expired, or does not have the required read permissions.");
+      error.auth = true;
+      throw error;
     }
-  });
-  if (response.status === 401 || response.status === 403) {
-    const error = new Error("The PAT is invalid, expired, or does not have the required read permissions.");
-    error.auth = true;
-    throw error;
+    if (!response.ok) {
+      let detail = "";
+      try { detail = (await response.json())?.message || ""; } catch {}
+      throw new Error(detail || `Azure DevOps returned error ${response.status}.`);
+    }
+    if (response.status === 204) return null;
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  } finally {
+    if (protectsWork) state.pendingWorkItemWrites = Math.max(0, state.pendingWorkItemWrites - 1);
   }
-  if (!response.ok) {
-    let detail = "";
-    try { detail = (await response.json())?.message || ""; } catch {}
-    throw new Error(detail || `Azure DevOps returned error ${response.status}.`);
-  }
-  return response.json();
 }
 
 const WORK_ITEM_TYPE_ORDER = ["Epic", "Feature", "User Story", "Product Backlog Item", "Bug", "Task", "Issue"];
@@ -3294,6 +3307,7 @@ function pruneFilters(items = activeFilterItems()) {
 function renderCurrentView() {
   if (state.currentView === "for-you") renderForYou();
   else if (state.currentView === "backlog") renderBacklog();
+  else if (state.currentView === "search") renderGlobalSearch();
   else render();
 }
 
@@ -3319,9 +3333,93 @@ function createCard(item) {
   return card;
 }
 
+function workItemTitleHasUnsavedChanges() {
+  const item = selectedWorkItem();
+  return Boolean(item && !els.workItemTitleForm.hidden && els.workItemTitleInput.value.trim() !== item.title);
+}
+
+function descriptionHasUnsavedChanges() {
+  if (els.descriptionEditorForm.hidden) return false;
+  return descriptionEditorRevision > 0
+    || sanitizedRichHtmlString(currentDescriptionEditorHtml()) !== descriptionEditorInitialHtml;
+}
+
+function commentHasUnsavedChanges() {
+  if (els.commentComposerForm.hidden) return false;
+  const html = richEditorHtml(els.commentComposerInput);
+  return Boolean(htmlToText(html).trim() || /<img\b/i.test(html));
+}
+
+function pointsHaveUnsavedChanges() {
+  const item = selectedWorkItem();
+  if (!item || els.workItemPointsMenu.hidden) return false;
+  const current = state.detailsCache.get(item.id)?.points ?? item.points ?? "";
+  return String(els.workItemPointsInput.value).trim() !== String(current);
+}
+
+function workItemHasUnsavedChanges() {
+  return els.workItemDialog.open && (
+    workItemTitleHasUnsavedChanges()
+    || descriptionHasUnsavedChanges()
+    || commentHasUnsavedChanges()
+    || pointsHaveUnsavedChanges()
+    || state.pendingWorkItemWrites > 0
+  );
+}
+
+function createWorkItemHasUnsavedChanges() {
+  return els.createWorkItemDialog.open && Boolean(els.createWorkItemTitle.value.trim());
+}
+
+function hasUnsavedChanges() {
+  return workItemHasUnsavedChanges()
+    || state.pendingWorkItemWrites > 0
+    || createWorkItemHasUnsavedChanges();
+}
+
+function confirmDiscardChanges(message = "You have unsaved changes. Discard them?") {
+  return window.confirm(message);
+}
+
+function requestCloseWorkItemDialog() {
+  if (!els.workItemDialog.open) return true;
+  if (workItemHasUnsavedChanges() && !confirmDiscardChanges()) return false;
+  els.workItemDialog.close();
+  return true;
+}
+
+function requestCloseCreateWorkItemDialog() {
+  if (!els.createWorkItemDialog.open) return true;
+  if (createWorkItemHasUnsavedChanges() && !confirmDiscardChanges("Discard this unsaved work item?")) return false;
+  els.createWorkItemDialog.close();
+  return true;
+}
+
+function discardWorkItemTitleEditor() {
+  if (workItemTitleHasUnsavedChanges() && !confirmDiscardChanges("Discard the unsaved title changes?")) return false;
+  resetWorkItemTitleEditor();
+  return true;
+}
+
+function discardDescriptionEditor() {
+  if (descriptionHasUnsavedChanges() && !confirmDiscardChanges("Discard the unsaved content changes?")) return false;
+  resetDescriptionEditor();
+  return true;
+}
+
+function discardCommentComposer() {
+  if (commentHasUnsavedChanges() && !confirmDiscardChanges("Discard this unsaved comment?")) return false;
+  resetCommentComposer();
+  return true;
+}
+
 async function showWorkItem(item) {
+  if (els.workItemDialog.open && workItemHasUnsavedChanges() && !confirmDiscardChanges(
+    `Discard your unsaved changes and open ${workItemKey(item.id)}?`
+  )) return;
   state.selectedItemId = item.id;
   state.selectedItem = item;
+  els.workItemActions.open = false;
   closeWorkItemStateMenu();
   closeWorkItemAssigneeMenu();
   closeWorkItemTagsMenu();
@@ -3369,6 +3467,57 @@ async function showLinkedWorkItem(itemId) {
     console.error(error);
     els.workItemLoadStatus.textContent = error.message || "The linked work item could not be opened.";
     els.workItemLoadStatus.classList.add("is-error");
+  }
+}
+
+function removeDeletedWorkItem(itemId) {
+  const keep = item => Number(item.id) !== Number(itemId);
+  state.stories = state.stories.filter(keep);
+  state.backlogItems = state.backlogItems.filter(keep);
+  state.backlogEpics = state.backlogEpics.filter(keep);
+  state.backlogFeatures = state.backlogFeatures.filter(keep);
+  state.forYouCustomItems = state.forYouCustomItems.filter(keep);
+  state.forYouWorkItems = state.forYouWorkItems.filter(keep);
+  state.forYouCreated = state.forYouCreated.filter(keep);
+  state.forYouUpdated = state.forYouUpdated.filter(keep);
+  state.forYouCompleted = state.forYouCompleted.filter(keep);
+  state.forYouMentions = state.forYouMentions.filter(entry => keep(entry.item));
+  state.forYouActivity = state.forYouActivity.filter(entry => keep(entry.item));
+  state.globalSearchResults = state.globalSearchResults.filter(keep);
+  state.iterationStoriesCache.clear();
+  state.detailsCache.delete(Number(itemId));
+  state.detailsRequestTokens.delete(Number(itemId));
+  state.commentsCache.delete(Number(itemId));
+  state.commentsRequestTokens.delete(Number(itemId));
+  state.commentsErrors.delete(Number(itemId));
+  state.historyCache.delete(Number(itemId));
+  state.historyErrors.delete(Number(itemId));
+}
+
+async function deleteSelectedWorkItem() {
+  const item = selectedWorkItem();
+  if (!item) return;
+  els.workItemActions.open = false;
+  const unsavedWarning = workItemHasUnsavedChanges() ? " Any unsaved changes will also be lost." : "";
+  if (!window.confirm(`Delete ${workItemKey(item.id)} “${item.title}”?${unsavedWarning}\n\nThe work item will be moved to the Azure DevOps recycle bin.`)) return;
+  els.deleteWorkItem.disabled = true;
+  els.workItemLoading.classList.add("is-active");
+  els.workItemLoadStatus.textContent = "Deleting work item…";
+  els.workItemLoadStatus.classList.remove("is-error");
+  try {
+    await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, { method: "DELETE" });
+    removeDeletedWorkItem(item.id);
+    els.workItemDialog.close();
+    renderCurrentView();
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.auth
+      ? "The work item could not be deleted. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The work item could not be deleted.";
+    els.workItemLoadStatus.classList.add("is-error");
+  } finally {
+    els.deleteWorkItem.disabled = false;
+    els.workItemLoading.classList.remove("is-active");
   }
 }
 
@@ -4871,6 +5020,7 @@ function workItemContentLabel(item, editorMode = "content") {
 }
 
 let descriptionEditorMode = "content";
+let descriptionEditorInitialHtml = "";
 
 function openDescriptionEditor(editorMode = "content") {
   const item = selectedWorkItem();
@@ -4890,6 +5040,7 @@ function openDescriptionEditor(editorMode = "content") {
   const html = (systemInfo
     ? detail?.systemInfoHtml
     : acceptanceCriteria ? detail?.acceptanceCriteriaHtml : bug ? detail?.reproStepsHtml : detail?.descriptionHtml) || "";
+  descriptionEditorInitialHtml = sanitizedRichHtmlString(html);
   descriptionEditorMode = editorMode;
   descriptionEditorView = "preview";
   descriptionEditorRevision = 0;
@@ -4940,6 +5091,7 @@ function resetDescriptionEditor() {
   els.descriptionEditorStatus.classList.remove("is-error");
   setDescriptionEditorBusy(false);
   descriptionEditorMode = "content";
+  descriptionEditorInitialHtml = "";
   descriptionEditorView = "preview";
   descriptionEditorRevision = 0;
   descriptionMarkdownDraft = null;
@@ -6074,8 +6226,9 @@ els.settingsForm.addEventListener("submit", async event => {
 });
 
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
-document.querySelectorAll("[data-close-create-work-item]").forEach(button => button.addEventListener("click", () => els.createWorkItemDialog.close()));
-document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", () => els.workItemDialog.close()));
+document.querySelectorAll("[data-close-create-work-item]").forEach(button => button.addEventListener("click", requestCloseCreateWorkItemDialog));
+document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", requestCloseWorkItemDialog));
+els.deleteWorkItem.addEventListener("click", deleteSelectedWorkItem);
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
 els.workItemState.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemStateMenu(); });
 els.workItemStateMenu.addEventListener("click", event => event.stopPropagation());
@@ -6155,7 +6308,7 @@ els.workItemIterationSearch.addEventListener("input", async () => {
 els.descriptionEditButton.addEventListener("click", () => openDescriptionEditor());
 els.acceptanceCriteriaEditButton.addEventListener("click", () => openDescriptionEditor("acceptance-criteria"));
 els.systemInfoEditButton.addEventListener("click", () => openDescriptionEditor("system-info"));
-els.descriptionEditorCancel.addEventListener("click", resetDescriptionEditor);
+els.descriptionEditorCancel.addEventListener("click", discardDescriptionEditor);
 els.descriptionEditorForm.addEventListener("submit", submitDescriptionEditor);
 els.descriptionViewTabs.forEach(tab => tab.addEventListener("click", () => setDescriptionEditorView(tab.dataset.descriptionView)));
 document.querySelectorAll("[data-description-command]").forEach(button => {
@@ -6170,8 +6323,7 @@ els.descriptionEditor.addEventListener("keydown", event => {
     const editButton = descriptionEditorMode === "system-info"
       ? els.systemInfoEditButton
       : descriptionEditorMode === "acceptance-criteria" ? els.acceptanceCriteriaEditButton : els.descriptionEditButton;
-    resetDescriptionEditor();
-    editButton.focus();
+    if (discardDescriptionEditor()) editButton.focus();
   } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
     els.descriptionEditorForm.requestSubmit();
@@ -6181,6 +6333,7 @@ els.descriptionEditor.addEventListener("input", () => {
   descriptionEditorRevision++;
   updateMentionSuggestions("description");
 });
+els.descriptionEditor.addEventListener("change", () => { descriptionEditorRevision++; });
 els.descriptionSourceEditor.addEventListener("input", () => { descriptionEditorRevision++; });
 els.descriptionSourceEditor.addEventListener("keydown", event => {
   if (event.key === "Escape") {
@@ -6189,8 +6342,7 @@ els.descriptionSourceEditor.addEventListener("keydown", event => {
     const editButton = descriptionEditorMode === "system-info"
       ? els.systemInfoEditButton
       : descriptionEditorMode === "acceptance-criteria" ? els.acceptanceCriteriaEditButton : els.descriptionEditButton;
-    resetDescriptionEditor();
-    editButton.focus();
+    if (discardDescriptionEditor()) editButton.focus();
   } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
     els.descriptionEditorForm.requestSubmit();
@@ -6202,14 +6354,13 @@ els.workItemTitle.addEventListener("keydown", event => {
   event.preventDefault();
   openWorkItemTitleEditor();
 });
-els.workItemTitleCancel.addEventListener("click", resetWorkItemTitleEditor);
+els.workItemTitleCancel.addEventListener("click", discardWorkItemTitleEditor);
 els.workItemTitleForm.addEventListener("submit", submitWorkItemTitle);
 els.workItemTitleInput.addEventListener("keydown", event => {
   if (event.key !== "Escape") return;
   event.preventDefault();
   event.stopPropagation();
-  resetWorkItemTitleEditor();
-  els.workItemTitle.focus();
+  if (discardWorkItemTitleEditor()) els.workItemTitle.focus();
 });
 els.sprintTitle.addEventListener("click", event => { event.stopPropagation(); toggleSprintMenu(); });
 els.sprintMenu.addEventListener("click", event => event.stopPropagation());
@@ -6222,14 +6373,14 @@ els.sprintMenuSearch.addEventListener("keydown", event => {
   els.sprintTitle.focus();
 });
 els.commentComposerPrompt.addEventListener("click", () => setCommentComposerExpanded(true));
-els.commentComposerCancel.addEventListener("click", resetCommentComposer);
+els.commentComposerCancel.addEventListener("click", discardCommentComposer);
 els.commentComposerForm.addEventListener("submit", submitWorkItemComment);
 els.commentComposerInput.addEventListener("keydown", event => {
   if (handleMentionKeydown("comment", event)) return;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
-    resetCommentComposer();
+    discardCommentComposer();
   } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
     els.commentComposerForm.requestSubmit();
@@ -6239,12 +6390,17 @@ els.commentComposerInput.addEventListener("input", () => updateMentionSuggestion
 els.workItemDialog.addEventListener("cancel", event => {
   if (!els.workItemTitleForm.hidden) {
     event.preventDefault();
-    resetWorkItemTitleEditor();
+    discardWorkItemTitleEditor();
     return;
   }
   if (!els.descriptionEditorForm.hidden) {
     event.preventDefault();
-    resetDescriptionEditor();
+    discardDescriptionEditor();
+    return;
+  }
+  if (!els.commentComposerForm.hidden) {
+    event.preventDefault();
+    discardCommentComposer();
     return;
   }
   if ([els.workItemPriorityMenu, els.workItemPointsMenu, els.workItemAreaMenu, els.workItemIterationMenu].some(menu => !menu.hidden)) {
@@ -6265,9 +6421,13 @@ els.workItemDialog.addEventListener("cancel", event => {
   if (!els.workItemStateMenu.hidden) {
     event.preventDefault();
     closeWorkItemStateMenu();
+    return;
   }
+  event.preventDefault();
+  requestCloseWorkItemDialog();
 });
 els.workItemDialog.addEventListener("close", () => {
+  els.workItemActions.open = false;
   closeWorkItemStateMenu();
   closeWorkItemAssigneeMenu();
   closeWorkItemTagsMenu();
@@ -6280,7 +6440,12 @@ els.workItemDialog.addEventListener("close", () => {
   state.selectedItemId = null;
   state.selectedItem = null;
 });
-els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) els.workItemDialog.close(); });
+els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) requestCloseWorkItemDialog(); });
+window.addEventListener("beforeunload", event => {
+  if (!hasUnsavedChanges()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connectionDialog.close(); });
 els.togglePat.addEventListener("click", () => {
   const show = els.pat.type === "password";
@@ -6310,6 +6475,10 @@ els.createWorkItemMenu.addEventListener("keydown", event => {
   els.createWorkItemButton.focus();
 });
 els.createWorkItemForm.addEventListener("submit", submitCreateWorkItem);
+els.createWorkItemDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  requestCloseCreateWorkItemDialog();
+});
 els.createWorkItemDialog.addEventListener("close", () => {
   els.createWorkItemTitle.value = "";
   els.createWorkItemError.textContent = "";
@@ -6318,7 +6487,7 @@ els.createWorkItemDialog.addEventListener("close", () => {
   state.createWorkItemParent = null;
 });
 els.createWorkItemDialog.addEventListener("click", event => {
-  if (event.target === els.createWorkItemDialog) els.createWorkItemDialog.close();
+  if (event.target === els.createWorkItemDialog) requestCloseCreateWorkItemDialog();
 });
 for (const [button, content] of [
   [els.filterPanelToggle, els.filterPanelBody],
@@ -6422,6 +6591,7 @@ els.clearFilters.addEventListener("click", async () => {
 });
 
 document.addEventListener("click", event => {
+  if (!els.workItemActions.contains(event.target)) els.workItemActions.open = false;
   if (event.target.closest?.("a.user-mention")) event.preventDefault();
   const workItemLink = event.target.closest?.("a.internal-work-item-link");
   if (workItemLink) {
