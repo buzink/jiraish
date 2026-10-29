@@ -181,7 +181,7 @@ const HISTORY_FIELDS = {
 
 const RICH_TEXT_TAGS = new Set([
   "a", "b", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3", "h4", "h5", "h6",
-  "hr", "i", "img", "li", "ol", "p", "pre", "s", "span", "strike", "strong", "table", "tbody",
+  "hr", "i", "img", "input", "li", "ol", "p", "pre", "s", "span", "strike", "strong", "table", "tbody",
   "td", "th", "thead", "tr", "u", "ul"
 ]);
 const RICH_TEXT_STYLES = new Set([
@@ -348,12 +348,17 @@ const els = {
   workItemDescription: document.querySelector("#workItemDescription"),
   descriptionEditButton: document.querySelector("#descriptionEditButton"),
   descriptionEditorForm: document.querySelector("#descriptionEditorForm"),
+  descriptionViewTabs: [...document.querySelectorAll("[data-description-view]")],
+  descriptionToolbar: document.querySelector("#descriptionToolbar"),
+  descriptionEditorWrap: document.querySelector("#descriptionEditorWrap"),
   descriptionEditor: document.querySelector("#descriptionEditor"),
+  descriptionSourceEditor: document.querySelector("#descriptionSourceEditor"),
   descriptionMentionMenu: document.querySelector("#descriptionMentionMenu"),
   descriptionMentionLabel: document.querySelector("#descriptionMentionLabel"),
   descriptionMentionOptions: document.querySelector("#descriptionMentionOptions"),
   descriptionEditorCancel: document.querySelector("#descriptionEditorCancel"),
   descriptionEditorSubmit: document.querySelector("#descriptionEditorSubmit"),
+  descriptionEditorHint: document.querySelector("#descriptionEditorHint"),
   descriptionEditorStatus: document.querySelector("#descriptionEditorStatus"),
   workItemAcceptanceCriteriaSection: document.querySelector("#workItemAcceptanceCriteriaSection"),
   workItemAcceptanceCriteria: document.querySelector("#workItemAcceptanceCriteria"),
@@ -4728,6 +4733,11 @@ function openDescriptionEditor(editorMode = "content") {
     ? detail?.systemInfoHtml
     : acceptanceCriteria ? detail?.acceptanceCriteriaHtml : bug ? detail?.reproStepsHtml : detail?.descriptionHtml) || "";
   descriptionEditorMode = editorMode;
+  descriptionEditorView = "preview";
+  descriptionEditorRevision = 0;
+  descriptionMarkdownDraft = null;
+  descriptionMarkdownRevision = -1;
+  els.descriptionSourceEditor.value = "";
   els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
   els.descriptionEditor.setAttribute("aria-label", systemInfo ? "System info" : acceptanceCriteria ? "Acceptance criteria" : bug ? "Repro steps" : "Description");
   els.descriptionEditor.dataset.placeholder = systemInfo
@@ -4735,6 +4745,8 @@ function openDescriptionEditor(editorMode = "content") {
     : acceptanceCriteria ? "Add acceptance criteria…" : bug ? "Add repro steps…" : "Add a description…";
   els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
   hydrateRichTextImages(els.descriptionEditor);
+  highlightCodeBlocks(els.descriptionEditor);
+  activateEditorCheckboxes(els.descriptionEditor);
   if (systemInfo) {
     els.workItemSystemInfo.hidden = true;
     els.workItemSystemInfo.after(els.descriptionEditorForm);
@@ -4751,7 +4763,7 @@ function openDescriptionEditor(editorMode = "content") {
   els.descriptionEditorForm.hidden = false;
   els.descriptionEditorStatus.textContent = "";
   els.descriptionEditorStatus.classList.remove("is-error");
-  requestAnimationFrame(() => els.descriptionEditor.focus());
+  renderDescriptionEditorView(true);
 }
 
 function resetDescriptionEditor() {
@@ -4765,14 +4777,22 @@ function resetDescriptionEditor() {
   els.systemInfoEditButton.hidden = false;
   els.workItemDescription.after(els.descriptionEditorForm);
   els.descriptionEditor.replaceChildren();
+  els.descriptionSourceEditor.value = "";
   els.descriptionEditorStatus.textContent = "";
   els.descriptionEditorStatus.classList.remove("is-error");
   setDescriptionEditorBusy(false);
   descriptionEditorMode = "content";
+  descriptionEditorView = "preview";
+  descriptionEditorRevision = 0;
+  descriptionMarkdownDraft = null;
+  descriptionMarkdownRevision = -1;
+  renderDescriptionEditorView();
 }
 
 function setDescriptionEditorBusy(busy) {
   els.descriptionEditor.contentEditable = String(!busy);
+  els.descriptionSourceEditor.readOnly = busy;
+  els.descriptionViewTabs.forEach(tab => { tab.disabled = busy; });
   els.descriptionEditorCancel.disabled = busy;
   els.descriptionEditorSubmit.disabled = busy;
   els.descriptionEditorSubmit.textContent = busy ? "Saving…" : "Save";
@@ -4787,8 +4807,332 @@ function descriptionEditorHtml() {
   return richEditorHtml(els.descriptionEditor);
 }
 
+function sanitizedRichHtmlString(html) {
+  const safe = document.createElement("div");
+  safe.append(sanitizeRichHtml(String(html || "")));
+  restoreAuthenticatedImageSources(safe);
+  return safe.innerHTML.trim();
+}
+
+function formatRichHtml(html) {
+  const container = document.createElement("div");
+  container.append(sanitizeRichHtml(String(html || "")));
+  restoreAuthenticatedImageSources(container);
+  const blockTags = new Set([
+    "blockquote", "div", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "ol", "p", "pre",
+    "table", "tbody", "td", "th", "thead", "tr", "ul"
+  ]);
+  const voidTags = new Set(["br", "hr", "img", "input"]);
+  const inlineHtml = node => node.nodeType === Node.TEXT_NODE ? escapeHtml(node.textContent || "") : node.outerHTML;
+  const formatNode = (node, depth = 0) => {
+    const indent = "  ".repeat(depth);
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = (node.textContent || "").trim();
+      return text ? `${indent}${escapeHtml(text)}` : "";
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    const tag = node.tagName.toLocaleLowerCase("en");
+    if (voidTags.has(tag) || tag === "pre") return `${indent}${node.outerHTML}`;
+    const closing = `</${tag}>`;
+    const shell = node.cloneNode(false).outerHTML;
+    const opening = shell.endsWith(closing) ? shell.slice(0, -closing.length) : `<${tag}>`;
+    const hasBlockChildren = [...node.children].some(child => blockTags.has(child.tagName.toLocaleLowerCase("en")));
+    const hasInlineContent = [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE
+      ? Boolean(child.textContent?.trim())
+      : child.nodeType === Node.ELEMENT_NODE && !blockTags.has(child.tagName.toLocaleLowerCase("en")));
+    if (!hasBlockChildren || hasInlineContent) return `${indent}${opening}${node.innerHTML.trim()}${closing}`;
+    const lines = [`${indent}${opening}`];
+    let inlineBuffer = [];
+    const flushInline = () => {
+      const content = inlineBuffer.map(inlineHtml).join("").trim();
+      if (content) lines.push(`${"  ".repeat(depth + 1)}${content}`);
+      inlineBuffer = [];
+    };
+    [...node.childNodes].forEach(child => {
+      if (child.nodeType === Node.ELEMENT_NODE && blockTags.has(child.tagName.toLocaleLowerCase("en"))) {
+        flushInline();
+        const formatted = formatNode(child, depth + 1);
+        if (formatted) lines.push(formatted);
+      } else {
+        inlineBuffer.push(child);
+      }
+    });
+    flushInline();
+    lines.push(`${indent}${closing}`);
+    return lines.join("\n");
+  };
+  return [...container.childNodes].map(node => formatNode(node)).filter(Boolean).join("\n");
+}
+
+function markdownEscapeText(value) {
+  return String(value || "").replace(/([\\`*_[\]~])/g, "\\$1");
+}
+
+function htmlToMarkdown(html) {
+  const container = document.createElement("div");
+  container.append(sanitizeRichHtml(String(html || "")));
+
+  const renderChildren = node => [...node.childNodes].map(renderNode).join("");
+  const renderList = (list, depth = 0) => {
+    const ordered = list.tagName.toLocaleLowerCase("en") === "ol";
+    const items = [...list.children].filter(child => child.tagName?.toLocaleLowerCase("en") === "li");
+    return items.map((item, index) => {
+      const nestedLists = [...item.children].filter(child => ["ul", "ol"].includes(child.tagName.toLocaleLowerCase("en")));
+      const checkbox = [...item.children].find(child => child.tagName.toLocaleLowerCase("en") === "input" && child.type === "checkbox");
+      const content = [...item.childNodes]
+        .filter(child => !(child.nodeType === Node.ELEMENT_NODE
+          && (["ul", "ol"].includes(child.tagName.toLocaleLowerCase("en")) || child === checkbox)))
+        .map(renderNode).join("").trim().replace(/\n{2,}/g, " ");
+      const marker = checkbox ? `- [${checkbox.checked ? "x" : " "}]` : ordered ? `${index + 1}.` : "-";
+      const nested = nestedLists.map(child => `\n${renderList(child, depth + 1).trimEnd()}`).join("");
+      return `${"  ".repeat(depth)}${marker} ${content}${nested}`;
+    }).join("\n") + "\n\n";
+  };
+  const renderTable = table => {
+    const rows = [...table.querySelectorAll("tr")].map(row => [...row.children]
+      .filter(cell => ["td", "th"].includes(cell.tagName.toLocaleLowerCase("en")))
+      .map(cell => renderChildren(cell).trim().replace(/\|/g, "\\|").replace(/\s*\n\s*/g, " ")));
+    if (!rows.length) return "";
+    const width = Math.max(...rows.map(row => row.length));
+    const pad = row => [...row, ...Array(Math.max(0, width - row.length)).fill("")];
+    const lines = [pad(rows[0]), Array(width).fill("---"), ...rows.slice(1).map(pad)];
+    return `${lines.map(row => `| ${row.join(" | ")} |`).join("\n")}\n\n`;
+  };
+  const renderNode = node => {
+    if (node.nodeType === Node.TEXT_NODE) return markdownEscapeText(node.nodeValue.replace(/\s+/g, " "));
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    const tag = node.tagName.toLocaleLowerCase("en");
+    const content = () => renderChildren(node);
+    if (tag === "br") return "  \n";
+    if (["p", "div"].includes(tag)) return `${content().trim()}\n\n`;
+    if (/^h[1-6]$/.test(tag)) return `${"#".repeat(Number(tag[1]))} ${content().trim()}\n\n`;
+    if (["strong", "b"].includes(tag)) return `**${content()}**`;
+    if (["em", "i"].includes(tag)) return `*${content()}*`;
+    if (["del", "s", "strike"].includes(tag)) return `~~${content()}~~`;
+    if (tag === "code" && node.parentElement?.tagName.toLocaleLowerCase("en") !== "pre") {
+      const fence = node.textContent.includes("`") ? "``" : "`";
+      return `${fence}${node.textContent}${fence}`;
+    }
+    if (tag === "pre") {
+      const code = node.firstElementChild?.tagName.toLocaleLowerCase("en") === "code" ? node.firstElementChild : node;
+      const language = String(code.className || "").match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)?.[1] || "";
+      const content = code.textContent.replace(/\n$/, "");
+      const fence = content.includes("```") ? "~~~" : "```";
+      return `${fence}${language}\n${content}\n${fence}\n\n`;
+    }
+    if (["ul", "ol"].includes(tag)) return renderList(node);
+    if (tag === "blockquote") return `${content().trim().split("\n").map(line => `> ${line}`).join("\n")}\n\n`;
+    if (tag === "hr") return "---\n\n";
+    if (tag === "table") return renderTable(node);
+    if (tag === "a") {
+      const label = content() || markdownEscapeText(node.textContent || node.href || "link");
+      if (node.classList.contains("user-mention")) {
+        const identity = String(node.getAttribute("data-vss-mention") || "").split(",").pop();
+        if (identity) return `[${label}](mention:${identity})`;
+      }
+      if (node.classList.contains("internal-work-item-link") && node.dataset.workItemId) return `[${label}](workitem:${node.dataset.workItemId})`;
+      return `[${label}](${node.getAttribute("href") || "#"})`;
+    }
+    if (tag === "img") return `![${markdownEscapeText(node.getAttribute("alt") || "image")}](${node.dataset.authSrc || node.getAttribute("src") || ""})`;
+    return content();
+  };
+
+  return [...container.childNodes].map(renderNode).join("").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function markdownAttribute(value) {
+  return escapeHtml(String(value || "")).replace(/"/g, "&quot;");
+}
+
+function markdownInline(value) {
+  const tokens = [];
+  const stash = html => `\uE000${tokens.push(html) - 1}\uE001`;
+  let text = String(value || "");
+  text = text.replace(/`([^`\n]+)`/g, (_, code) => stash(`<code>${escapeHtml(code)}</code>`));
+  text = text.replace(/!\[([^\]]*)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/g, (_, alt, source) =>
+    stash(`<img src="${markdownAttribute(source)}" alt="${markdownAttribute(alt)}">`));
+  text = text.replace(/\[([^\]]+)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/g, (_, label, target) => {
+    if (/^mention:/i.test(target)) {
+      const identity = target.slice(target.indexOf(":") + 1);
+      return stash(`<a href="#" class="user-mention" data-vss-mention="version:2.0,${markdownAttribute(identity)}">${escapeHtml(label)}</a>`);
+    }
+    if (/^workitem:\d+$/i.test(target)) {
+      const itemId = Number(target.split(":")[1]);
+      return stash(`<a href="${markdownAttribute(workItemWebUrl(itemId))}" class="internal-work-item-link" data-work-item-id="${itemId}">${escapeHtml(label)}</a>`);
+    }
+    return stash(`<a href="${markdownAttribute(target)}">${escapeHtml(label)}</a>`);
+  });
+  text = escapeHtml(text);
+  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  text = text.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  text = text.replace(/(^|[^_])_([^_\n]+)_/g, "$1<em>$2</em>");
+  return text.replace(/\uE000(\d+)\uE001/g, (_, index) => tokens[Number(index)] || "");
+}
+
+function markdownToHtml(markdown) {
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  const output = [];
+  const isTableDivider = line => /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+  const isBlockStart = (line, next = "") => /^(?: {4}|\t)/.test(line)
+    || /^\s*(?:#{1,6}\s+|```|~~~|>|[-+*]\s+|\d+\.\s+|(?:---+|___+|\*\*\*+)\s*$)/.test(line)
+    || (line.includes("|") && isTableDivider(next));
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) { index++; continue; }
+    const fence = line.match(/^\s*(```|~~~)\s*([a-z0-9_+#.-]*)\s*$/i);
+    if (fence) {
+      const content = [];
+      index++;
+      while (index < lines.length && !new RegExp(`^\\s*${fence[1]}\\s*$`).test(lines[index])) content.push(lines[index++]);
+      if (index < lines.length) index++;
+      const language = fence[2] ? ` class="language-${markdownAttribute(fence[2])}"` : "";
+      output.push(`<pre><code${language}>${escapeHtml(content.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if (/^(?: {4}|\t)/.test(line)) {
+      const content = [];
+      while (index < lines.length) {
+        if (/^(?: {4}|\t)/.test(lines[index])) {
+          content.push(lines[index].replace(/^(?: {4}|\t)/, ""));
+          index++;
+        } else if (!lines[index].trim() && /^(?: {4}|\t)/.test(lines[index + 1] || "")) {
+          content.push("");
+          index++;
+        } else break;
+      }
+      output.push(`<pre><code>${escapeHtml(content.join("\n"))}</code></pre>`);
+      continue;
+    }
+    const heading = line.match(/^\s*(#{1,6})\s+(.+)$/);
+    if (heading) { output.push(`<h${heading[1].length}>${markdownInline(heading[2])}</h${heading[1].length}>`); index++; continue; }
+    if (/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) { output.push("<hr>"); index++; continue; }
+    if (line.includes("|") && isTableDivider(lines[index + 1] || "")) {
+      const escapedPipe = "\uE100";
+      const splitRow = row => row.trim().replace(/^\||\|$/g, "").replace(/\\\|/g, escapedPipe)
+        .split("|").map(cell => cell.trim().replaceAll(escapedPipe, "|"));
+      const header = splitRow(line);
+      index += 2;
+      const rows = [];
+      while (index < lines.length && lines[index].includes("|") && lines[index].trim()) rows.push(splitRow(lines[index++]));
+      output.push(`<table><thead><tr>${header.map(cell => `<th>${markdownInline(cell)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${markdownInline(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const quote = [];
+      while (index < lines.length && /^\s*>/.test(lines[index])) quote.push(lines[index++].replace(/^\s*>\s?/, ""));
+      output.push(`<blockquote>${markdownToHtml(quote.join("\n"))}</blockquote>`);
+      continue;
+    }
+    const listMatch = line.match(/^\s*([-+*]|\d+\.)\s+(.+)$/);
+    if (listMatch) {
+      const ordered = /\d+\./.test(listMatch[1]);
+      const items = [];
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*([-+*]|\d+\.)\s+(.+)$/);
+        if (!match || /\d+\./.test(match[1]) !== ordered) break;
+        const task = match[2].match(/^\[([ xX])\]\s+(.*)$/);
+        items.push({ text: task ? task[2] : match[2], task: Boolean(task), checked: Boolean(task && /x/i.test(task[1])) });
+        index++;
+      }
+      const tag = ordered ? "ol" : "ul";
+      output.push(`<${tag}>${items.map(item => `<li>${item.task ? `<input type="checkbox"${item.checked ? " checked" : ""}> ` : ""}${markdownInline(item.text)}</li>`).join("")}</${tag}>`);
+      continue;
+    }
+    const paragraph = [line.trim()];
+    index++;
+    while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index], lines[index + 1] || "")) paragraph.push(lines[index++].trim());
+    output.push(`<p>${markdownInline(paragraph.join(" "))}</p>`);
+  }
+  return sanitizedRichHtmlString(output.join(""));
+}
+
+let descriptionEditorView = "preview";
+let descriptionEditorRevision = 0;
+let descriptionMarkdownDraft = null;
+let descriptionMarkdownRevision = -1;
+
+function renderDescriptionEditorView(focus = false) {
+  const preview = descriptionEditorView === "preview";
+  els.descriptionToolbar.hidden = !preview;
+  els.descriptionEditorWrap.hidden = !preview;
+  els.descriptionSourceEditor.hidden = preview;
+  els.descriptionSourceEditor.setAttribute("aria-label", descriptionEditorView === "markdown" ? "Markdown source" : "HTML source");
+  els.descriptionEditorHint.textContent = preview
+    ? "@ mention · # link · Ctrl + Enter to save"
+    : `${descriptionEditorView === "markdown" ? "Markdown" : "HTML source"} · Ctrl + Enter to save`;
+  els.descriptionViewTabs.forEach(tab => {
+    const selected = tab.dataset.descriptionView === descriptionEditorView;
+    tab.classList.toggle("is-active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+  });
+  if (focus) requestAnimationFrame(() => {
+    const target = preview ? els.descriptionEditor : els.descriptionSourceEditor;
+    target.focus();
+    if (!preview) {
+      target.setSelectionRange(0, 0);
+      target.scrollTop = 0;
+      target.scrollLeft = 0;
+    }
+  });
+}
+
+function currentDescriptionEditorHtml() {
+  if (descriptionEditorView === "preview") return descriptionEditorHtml();
+  if (descriptionEditorView === "markdown") return markdownToHtml(els.descriptionSourceEditor.value);
+  return sanitizedRichHtmlString(els.descriptionSourceEditor.value);
+}
+
+function setDescriptionEditorView(nextView) {
+  if (!["preview", "html", "markdown"].includes(nextView) || nextView === descriptionEditorView) return;
+  const previousView = descriptionEditorView;
+  const html = currentDescriptionEditorHtml();
+  if (previousView === "markdown") {
+    descriptionMarkdownDraft = els.descriptionSourceEditor.value;
+    descriptionMarkdownRevision = descriptionEditorRevision;
+  }
+  descriptionEditorView = nextView;
+  closeMentionMenu("description");
+  if (nextView === "preview") {
+    els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
+    els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
+    hydrateRichTextImages(els.descriptionEditor);
+    highlightCodeBlocks(els.descriptionEditor);
+    activateEditorCheckboxes(els.descriptionEditor);
+  } else {
+    if (nextView === "markdown") {
+      const reuseDraft = descriptionMarkdownDraft !== null && descriptionMarkdownRevision === descriptionEditorRevision;
+      els.descriptionSourceEditor.value = reuseDraft ? descriptionMarkdownDraft : htmlToMarkdown(html);
+      descriptionMarkdownDraft = els.descriptionSourceEditor.value;
+      descriptionMarkdownRevision = descriptionEditorRevision;
+    } else {
+      els.descriptionSourceEditor.value = formatRichHtml(html);
+    }
+  }
+  renderDescriptionEditorView(true);
+}
+
+async function preparedDescriptionEditorHtml() {
+  const html = currentDescriptionEditorHtml();
+  els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
+  els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
+  hydrateRichTextImages(els.descriptionEditor);
+  await persistEmbeddedRichTextImages(els.descriptionEditor);
+  const prepared = descriptionEditorHtml();
+  if (descriptionEditorView === "html") els.descriptionSourceEditor.value = formatRichHtml(prepared);
+  if (descriptionEditorView === "markdown") {
+    els.descriptionSourceEditor.value = htmlToMarkdown(prepared);
+    descriptionMarkdownDraft = els.descriptionSourceEditor.value;
+    descriptionMarkdownRevision = descriptionEditorRevision;
+  }
+  return prepared;
+}
+
 function richEditorHtml(editor) {
   const source = editor.cloneNode(true);
+  stripSyntaxHighlighting(source);
   restoreAuthenticatedImageSources(source);
   const safe = document.createElement("div");
   safe.append(sanitizeRichHtml(source.innerHTML));
@@ -4859,12 +5203,11 @@ async function submitDescriptionEditor(event) {
   setDescriptionEditorBusy(true);
   els.descriptionEditorStatus.classList.remove("is-error");
   try {
-    const embeddedImageCount = embeddedRichTextImages(els.descriptionEditor).length;
+    const embeddedImageCount = descriptionEditorView === "preview" ? embeddedRichTextImages(els.descriptionEditor).length : 0;
     els.descriptionEditorStatus.textContent = embeddedImageCount
       ? `Uploading ${embeddedImageCount === 1 ? "image" : `${embeddedImageCount} images`}…`
       : `Saving ${contentLabel}…`;
-    await persistEmbeddedRichTextImages(els.descriptionEditor);
-    const descriptionHtml = descriptionEditorHtml();
+    const descriptionHtml = await preparedDescriptionEditorHtml();
     els.descriptionEditorStatus.textContent = `Saving ${contentLabel}…`;
     await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
       method: "PATCH",
@@ -5126,6 +5469,57 @@ function htmlToText(value) {
   return (parsed.body.innerText || parsed.body.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function stripSyntaxHighlighting(container) {
+  container.querySelectorAll("[data-syntax-token]").forEach(token => token.replaceWith(document.createTextNode(token.textContent || "")));
+}
+
+function activateEditorCheckboxes(container) {
+  container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+    checkbox.disabled = false;
+    checkbox.addEventListener("change", () => {
+      checkbox.toggleAttribute("checked", checkbox.checked);
+      descriptionEditorRevision++;
+    });
+  });
+}
+
+function highlightCodeBlocks(container) {
+  stripSyntaxHighlighting(container);
+  const supportedLanguages = /^(?:js|javascript|jsx|ts|typescript|tsx)$/i;
+  const keywords = new Set([
+    "async", "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
+    "do", "else", "export", "extends", "finally", "for", "from", "function", "get", "if", "import", "in",
+    "instanceof", "let", "new", "of", "return", "set", "static", "super", "switch", "throw", "try", "typeof",
+    "var", "void", "while", "with", "yield"
+  ]);
+  const literals = new Set(["false", "null", "true", "undefined"]);
+  const pattern = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|export|extends|finally|for|from|function|get|if|import|in|instanceof|let|new|of|return|set|static|super|switch|throw|try|typeof|var|void|while|with|yield|false|null|true|undefined)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*(?=\s*\())/g;
+  container.querySelectorAll("pre > code").forEach(code => {
+    const language = String(code.className || "").match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)?.[1] || "";
+    if (!supportedLanguages.test(language)) return;
+    const source = code.textContent || "";
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    for (const match of source.matchAll(pattern)) {
+      if (match.index > cursor) fragment.append(document.createTextNode(source.slice(cursor, match.index)));
+      const value = match[0];
+      const token = document.createElement("span");
+      token.dataset.syntaxToken = "";
+      token.className = value.startsWith("//") || value.startsWith("/*")
+        ? "syntax-comment"
+        : /^["'`]/.test(value) ? "syntax-string"
+          : keywords.has(value) ? "syntax-keyword"
+            : literals.has(value) ? "syntax-literal"
+              : /^\d/.test(value) ? "syntax-number" : "syntax-function";
+      token.textContent = value;
+      fragment.append(token);
+      cursor = match.index + value.length;
+    }
+    if (cursor < source.length) fragment.append(document.createTextNode(source.slice(cursor)));
+    code.replaceChildren(fragment);
+  });
+}
+
 function setRichContent(element, value, fallback) {
   if (!value) {
     element.textContent = fallback;
@@ -5140,6 +5534,8 @@ function setRichContent(element, value, fallback) {
   }
   element.replaceChildren(sanitizeRichHtml(value));
   hydrateRichTextImages(element);
+  highlightCodeBlocks(element);
+  element.querySelectorAll('input[type="checkbox"]').forEach(checkbox => { checkbox.disabled = true; });
 }
 
 function sanitizeRichHtml(value) {
@@ -5160,6 +5556,7 @@ function appendSafeNode(parent, source) {
     source.childNodes.forEach(child => appendSafeNode(parent, child));
     return;
   }
+  if (tag === "input" && source.type !== "checkbox") return;
 
   const target = document.createElement(tag);
   copySafeRichTextAttributes(source, target, tag);
@@ -5201,6 +5598,15 @@ function copySafeRichTextAttributes(source, target, tag) {
     }
     target.alt = source.getAttribute("alt") || "";
     target.loading = "lazy";
+  }
+  if (tag === "input" && source.type === "checkbox") {
+    target.type = "checkbox";
+    target.checked = source.checked || source.hasAttribute("checked");
+    target.toggleAttribute("checked", target.checked);
+  }
+  if (tag === "code") {
+    const language = String(source.className || "").match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)?.[1];
+    if (language) target.className = `language-${language}`;
   }
   if (source.hasAttribute("title")) target.title = source.getAttribute("title").slice(0, 300);
   for (const attribute of ["colspan", "rowspan"]) {
@@ -5593,6 +5999,7 @@ els.acceptanceCriteriaEditButton.addEventListener("click", () => openDescription
 els.systemInfoEditButton.addEventListener("click", () => openDescriptionEditor("system-info"));
 els.descriptionEditorCancel.addEventListener("click", resetDescriptionEditor);
 els.descriptionEditorForm.addEventListener("submit", submitDescriptionEditor);
+els.descriptionViewTabs.forEach(tab => tab.addEventListener("click", () => setDescriptionEditorView(tab.dataset.descriptionView)));
 document.querySelectorAll("[data-description-command]").forEach(button => {
   button.addEventListener("mousedown", event => event.preventDefault());
   button.addEventListener("click", () => applyDescriptionCommand(button.dataset.descriptionCommand));
@@ -5612,7 +6019,25 @@ els.descriptionEditor.addEventListener("keydown", event => {
     els.descriptionEditorForm.requestSubmit();
   }
 });
-els.descriptionEditor.addEventListener("input", () => updateMentionSuggestions("description"));
+els.descriptionEditor.addEventListener("input", () => {
+  descriptionEditorRevision++;
+  updateMentionSuggestions("description");
+});
+els.descriptionSourceEditor.addEventListener("input", () => { descriptionEditorRevision++; });
+els.descriptionSourceEditor.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    const editButton = descriptionEditorMode === "system-info"
+      ? els.systemInfoEditButton
+      : descriptionEditorMode === "acceptance-criteria" ? els.acceptanceCriteriaEditButton : els.descriptionEditButton;
+    resetDescriptionEditor();
+    editButton.focus();
+  } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    els.descriptionEditorForm.requestSubmit();
+  }
+});
 els.workItemTitle.addEventListener("click", openWorkItemTitleEditor);
 els.workItemTitle.addEventListener("keydown", event => {
   if (event.key !== "Enter" && event.key !== " ") return;

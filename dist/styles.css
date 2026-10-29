@@ -545,11 +545,17 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .description-edit-button:focus-visible { outline: 2px solid #4c9aff; outline-offset: 1px; }
 .description-edit-button:disabled { cursor: default; opacity: .45; }
 .description-editor { overflow: visible; border: 1px solid #4c9aff; border-radius: 4px; background: var(--surface); box-shadow: 0 0 0 1px #4c9aff; }
+.description-view-tabs { display: flex; gap: 2px; padding: 5px 6px 0; border-bottom: 1px solid var(--line); background: var(--board-bg); }
+.description-view-tabs button { min-height: 30px; margin-bottom: -1px; padding: 4px 10px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; }
+.description-view-tabs button:hover, .description-view-tabs button:focus-visible { color: var(--navy); background: var(--surface); outline: 0; }
+.description-view-tabs button.is-active { border-bottom-color: var(--blue-600); color: var(--blue-700); background: var(--surface); }
 .description-toolbar { display: flex; gap: 2px; padding: 5px 6px; border-bottom: 1px solid var(--line); background: var(--board-bg); }
 .description-toolbar button { min-width: 30px; height: 28px; padding: 0 7px; border: 0; border-radius: 3px; color: var(--text); background: transparent; font-size: 11px; }
 .description-toolbar button:hover, .description-toolbar button:focus-visible { color: var(--navy); background: var(--surface); outline: 0; }
 .description-editor-content { min-height: 150px; max-height: 390px; overflow: auto; padding: 12px; color: var(--text); font-size: 14px; line-height: 1.65; outline: 0; }
 .description-editor-content:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
+.dialog .description-source-editor { width: 100%; height: 240px; min-height: 150px; max-height: 390px; margin: 0; padding: 12px; border: 0; border-radius: 0; color: var(--text); background: var(--surface); box-shadow: none; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; outline: 0; }
+.dialog .description-source-editor:focus { border: 0; background: var(--surface); box-shadow: inset 0 0 0 2px rgba(76,154,255,.25); }
 .mention-editor-wrap { position: relative; }
 .mention-menu { position: absolute; z-index: 16; top: 38px; left: 10px; width: min(330px, calc(100% - 20px)); overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); box-shadow: 0 8px 22px rgba(9, 30, 66, .25); }
 .mention-menu-label { padding: 8px 11px 5px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
@@ -641,10 +647,19 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .rich-content p { margin: 0 0 10px; }
 .rich-content ul, .rich-content ol { margin: 8px 0; padding-left: 24px; }
 .rich-content li + li { margin-top: 3px; }
+.rich-content li:has(> input[type="checkbox"]) { margin-left: -20px; padding-left: 0; list-style: none; }
+.rich-content input[type="checkbox"] { width: 16px; height: 16px; margin: 0 7px 0 0; vertical-align: -3px; accent-color: var(--blue-600); cursor: pointer; }
+.rich-content input[type="checkbox"]:disabled { cursor: default; opacity: 1; }
 .rich-content blockquote { margin: 10px 0; padding: 7px 12px; border-left: 3px solid #4c9aff; color: var(--muted); background: var(--board-bg); }
-.rich-content pre { max-width: 100%; overflow: auto; margin: 10px 0; padding: 11px 12px; border-radius: 4px; background: var(--board-bg); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.rich-content code { padding: 1px 4px; border-radius: 3px; background: var(--board-bg); font: .9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.rich-content pre code { padding: 0; background: transparent; }
+.rich-content pre { max-width: 100%; overflow: auto; margin: 14px 0; padding: 14px 16px; border: 1px solid #c1c7d0; border-radius: 5px; color: #172b4d; background: #f4f5f7; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; white-space: pre; }
+.rich-content code { font: .92em/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.rich-content :not(pre) > code { padding: 0 2px; border-radius: 2px; color: #c9376e; background: transparent; }
+.rich-content pre code { padding: 0; color: inherit; background: transparent; font: inherit; }
+.syntax-keyword { color: #d9293e; }
+.syntax-function { color: #6554c0; }
+.syntax-string { color: #216e4e; }
+.syntax-number, .syntax-literal { color: #0052cc; }
+.syntax-comment { color: #6b778c; font-style: italic; }
 .rich-content a { color: var(--blue-600); text-decoration: underline; overflow-wrap: anywhere; }
 .rich-content a.user-mention { display: inline; padding: 1px 3px; border-radius: 3px; color: #0052cc; background: #deebff; font-weight: 600; text-decoration: none; }
 .rich-content a.internal-work-item-link { display: inline; padding: 1px 3px; border-radius: 3px; color: #0052cc; background: #e9f2ff; font-weight: 600; text-decoration: none; }
@@ -870,6 +885,12 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 [data-theme="dark"] .issue-state-menu { border-color: #596773; background: #282e33; box-shadow: 0 8px 22px rgba(0, 0, 0, .45); }
 [data-theme="dark"] .issue-state-menu-message.is-error { color: #ff7452; }
 [data-theme="dark"] .description-editor { background: #22272b; }
+[data-theme="dark"] .rich-content pre { border-color: #596773; color: #dcdfe4; background: #22272b; }
+[data-theme="dark"] .syntax-keyword { color: #ff7b8a; }
+[data-theme="dark"] .syntax-function { color: #b8a7ff; }
+[data-theme="dark"] .syntax-string { color: #7ee2b8; }
+[data-theme="dark"] .syntax-number, [data-theme="dark"] .syntax-literal { color: #85b8ff; }
+[data-theme="dark"] .syntax-comment { color: #9fadbc; }
 [data-theme="dark"] .mention-menu { border-color: #596773; background: #282e33; box-shadow: 0 8px 22px rgba(0, 0, 0, .45); }
 [data-theme="dark"] .mention-option:hover, [data-theme="dark"] .mention-option.is-active { background: #333c43; }
 [data-theme="dark"] .description-editor-status.is-error { color: #ff7452; }

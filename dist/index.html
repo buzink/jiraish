@@ -499,21 +499,27 @@
               </div>
               <div id="workItemDescription" class="issue-description rich-content">No description added.</div>
               <form id="descriptionEditorForm" class="description-editor" hidden>
-                <div class="description-toolbar" role="toolbar" aria-label="Text formatting">
+                <div class="description-view-tabs" role="tablist" aria-label="Editor view">
+                  <button class="is-active" type="button" role="tab" aria-selected="true" data-description-view="preview">Preview</button>
+                  <button type="button" role="tab" aria-selected="false" data-description-view="html">HTML</button>
+                  <button type="button" role="tab" aria-selected="false" data-description-view="markdown">Markdown</button>
+                </div>
+                <div id="descriptionToolbar" class="description-toolbar" role="toolbar" aria-label="Text formatting">
                   <button type="button" data-description-command="bold" aria-label="Bold" title="Bold"><strong>B</strong></button>
                   <button type="button" data-description-command="italic" aria-label="Italic" title="Italic"><em>I</em></button>
                   <button type="button" data-description-command="insertUnorderedList" aria-label="Bulleted list" title="Bulleted list">• List</button>
                   <button type="button" data-description-command="insertOrderedList" aria-label="Numbered list" title="Numbered list">1. List</button>
                 </div>
-                <div class="mention-editor-wrap">
+                <div id="descriptionEditorWrap" class="mention-editor-wrap">
                   <div id="descriptionEditor" class="description-editor-content rich-content" contenteditable="true" role="textbox" aria-label="Description" aria-multiline="true" aria-expanded="false" data-placeholder="Add a description…"></div>
                   <div id="descriptionMentionMenu" class="mention-menu" role="listbox" aria-label="Insert a reference" hidden>
                     <div id="descriptionMentionLabel" class="mention-menu-label">Mention someone</div>
                     <div id="descriptionMentionOptions" class="mention-options"></div>
                   </div>
                 </div>
+                <textarea id="descriptionSourceEditor" class="description-source-editor" aria-label="HTML source" spellcheck="false" hidden></textarea>
                 <div class="description-editor-footer">
-                  <span>@ mention · # link · Ctrl + Enter to save</span>
+                  <span id="descriptionEditorHint">@ mention · # link · Ctrl + Enter to save</span>
                   <button id="descriptionEditorCancel" class="text-button" type="button">Cancel</button>
                   <button id="descriptionEditorSubmit" class="primary-button" type="submit">Save</button>
                 </div>
