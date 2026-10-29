@@ -489,9 +489,6 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .dialog input, .dialog select, .dialog textarea { width: 100%; height: 40px; padding: 0 10px; border: 1px solid #c1c7d0; border-radius: 3px; color: var(--navy); background: #fafbfc; outline: 0; }
 .dialog textarea { min-height: 76px; padding-top: 9px; padding-bottom: 9px; resize: vertical; }
 .dialog input:focus, .dialog select:focus, .dialog textarea:focus { border-color: #4c9aff; box-shadow: 0 0 0 1px #4c9aff; background: white; }
-.password-field { display: flex; }
-.password-field input { border-radius: 3px 0 0 3px; }
-.password-field button { width: 72px; border: 1px solid #c1c7d0; border-left: 0; border-radius: 0 3px 3px 0; color: var(--blue-600); background: #f4f5f7; font-size: 12px; font-weight: 700; }
 .field-help { color: var(--muted); font-size: 11px; font-weight: 400; }
 .optional-label { margin-left: 4px; color: var(--muted); font-size: 10px; font-weight: 500; }
 .privacy-note { margin-top: 20px; padding: 12px 13px; border-radius: 3px; color: #42526e; background: #f4f5f7; font-size: 12px; line-height: 1.45; }
@@ -903,7 +900,6 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 [data-theme="dark"] .create-work-item-type-icon { color: #101214; background: #579dff; }
 [data-theme="dark"] .create-work-item-menu-status.is-error { color: #ff7452; }
 [data-theme="dark"] .create-work-item-parent { color: #b6c2cf; background: #22272b; }
-[data-theme="dark"] .password-field button { border-color: #596773; color: #85b8ff; background: #333c43; }
 [data-theme="dark"] .privacy-note { color: #b6c2cf; background: #22272b; }
 [data-theme="dark"] .close-button:hover { background: #38414a; }
 [data-theme="dark"] .mapping-row { border-bottom-color: #38414a; }

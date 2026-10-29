@@ -16,7 +16,7 @@ const STORAGE = {
   forYouCustom: "wish-board.for-you-custom-table"
 };
 
-const DEFAULT_URL = "https://dev.azure.com/organization/project/";
+const DEFAULT_URL = "";
 const DEFAULT_MAPPING_VERSION = 1;
 const ACTIVE_DEFAULT_STATES = [
   "PR under review",
@@ -330,8 +330,6 @@ const els = {
   githubToken: document.querySelector("#githubTokenInput"),
   connectionError: document.querySelector("#connectionError"),
   cancelConnection: document.querySelector("#cancelConnection"),
-  togglePat: document.querySelector("#togglePat"),
-  toggleGithubToken: document.querySelector("#toggleGithubToken"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
   teamSelect: document.querySelector("#teamSelect"),
@@ -6446,17 +6444,7 @@ window.addEventListener("beforeunload", event => {
   event.preventDefault();
   event.returnValue = "";
 });
-els.cancelConnection.addEventListener("click", () => { if (state.pat) els.connectionDialog.close(); });
-els.togglePat.addEventListener("click", () => {
-  const show = els.pat.type === "password";
-  els.pat.type = show ? "text" : "password";
-  els.togglePat.textContent = show ? "Hide" : "Show";
-});
-els.toggleGithubToken.addEventListener("click", () => {
-  const show = els.githubToken.type === "password";
-  els.githubToken.type = show ? "text" : "password";
-  els.toggleGithubToken.textContent = show ? "Hide" : "Show";
-});
+els.cancelConnection.addEventListener("click", () => els.connectionDialog.close());
 els.githubAllRepos.addEventListener("change", updateGithubRepositorySettings);
 els.changeConnection.addEventListener("click", () => showConnection());
 els.theme.addEventListener("click", () => {

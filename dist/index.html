@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20261029-connection-fields" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -411,23 +411,17 @@
         </div>
         <label>
           Azure DevOps URL
-          <input id="orgUrlInput" name="orgUrl" type="url" value="https://dev.azure.com/organization/project/" required />
+          <input id="orgUrlInput" name="orgUrl" type="url" placeholder="https://dev.azure.com/organization/project/team/" required />
           <span class="field-help">Organization, project, or team URL; for example https://dev.azure.com/organization/project/team/</span>
         </label>
         <label>
           Personal Access Token
-          <div class="password-field">
-            <input id="patInput" name="pat" type="password" placeholder="Paste your PAT here" required autocomplete="off" />
-            <button id="togglePat" type="button" aria-label="Show or hide PAT">Show</button>
-          </div>
+          <input id="patInput" name="pat" type="password" placeholder="Paste your PAT here" required autocomplete="off" />
           <span class="field-help">Required: read and write access for Work Items, plus read access for Project &amp; Team.</span>
         </label>
         <label>
           <span>GitHub API key <span class="optional-label">Optional</span></span>
-          <div class="password-field">
-            <input id="githubTokenInput" name="githubToken" type="password" placeholder="Paste a GitHub token here" autocomplete="off" />
-            <button id="toggleGithubToken" type="button" aria-label="Show or hide GitHub API key">Show</button>
-          </div>
+          <input id="githubTokenInput" name="githubToken" type="password" placeholder="Paste a GitHub token here" autocomplete="off" />
           <span class="field-help">Used only to show open pull requests on the For you page.</span>
         </label>
         <div class="privacy-note"><strong>Private on this device.</strong> Your credentials are stored in local storage and sent only to Azure DevOps and GitHub respectively.</div>
@@ -731,6 +725,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js" defer></script>
+    <script src="app.js?v=20261029-connection-fields" defer></script>
   </body>
 </html>
