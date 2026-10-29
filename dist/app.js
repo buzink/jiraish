@@ -139,6 +139,7 @@ const state = {
   workItemTypes: [],
   workItemTypesProject: "",
   createWorkItemType: "",
+  createWorkItemParent: null,
   areaPathsCache: null,
   teamIterationsCache: null,
   commentsErrors: new Map(),
@@ -323,6 +324,8 @@ const els = {
   createWorkItemTypeLabel: document.querySelector("#createWorkItemTypeLabel"),
   createWorkItemHeadingType: document.querySelector("#createWorkItemHeadingType"),
   createWorkItemTitle: document.querySelector("#createWorkItemTitle"),
+  createWorkItemParent: document.querySelector("#createWorkItemParent"),
+  createWorkItemParentLabel: document.querySelector("#createWorkItemParentLabel"),
   createWorkItemError: document.querySelector("#createWorkItemError"),
   createWorkItemSubmit: document.querySelector("#createWorkItemSubmit"),
   workItemDialog: document.querySelector("#workItemDialog"),
@@ -677,11 +680,14 @@ async function toggleCreateWorkItemMenu() {
   await loadCreateWorkItemTypes();
 }
 
-function openCreateWorkItemDialog(type) {
+function openCreateWorkItemDialog(type, parent = null) {
   state.createWorkItemType = type;
+  state.createWorkItemParent = parent;
   closeCreateWorkItemMenu();
   els.createWorkItemTypeLabel.textContent = type;
   els.createWorkItemHeadingType.textContent = type.toLocaleLowerCase("en");
+  els.createWorkItemParent.hidden = !parent;
+  els.createWorkItemParentLabel.textContent = parent ? `${workItemKey(parent.id)} · ${parent.title}` : "";
   els.createWorkItemTitle.value = "";
   els.createWorkItemError.textContent = "";
   els.createWorkItemSubmit.disabled = false;
@@ -693,6 +699,7 @@ function openCreateWorkItemDialog(type) {
 async function submitCreateWorkItem(event) {
   event.preventDefault();
   const type = state.createWorkItemType;
+  const parent = state.createWorkItemParent;
   const title = els.createWorkItemTitle.value.trim();
   if (!type) return;
   if (!title) {
@@ -704,17 +711,33 @@ async function submitCreateWorkItem(event) {
   els.createWorkItemSubmit.disabled = true;
   els.createWorkItemSubmit.textContent = "Creating…";
   try {
+    const operations = [{ op: "add", path: "/fields/System.Title", value: title }];
+    if (parent) {
+      operations.push({
+        op: "add",
+        path: "/relations/-",
+        value: {
+          rel: "System.LinkTypes.Hierarchy-Reverse",
+          url: `${activeAzureContext().base}/_apis/wit/workItems/${Number(parent.id)}`
+        }
+      });
+    }
     const created = await azure(`/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`, {
       method: "POST",
       headers: { "Content-Type": "application/json-patch+json" },
-      body: JSON.stringify([{ op: "add", path: "/fields/System.Title", value: title }])
+      body: JSON.stringify(operations)
     });
     const item = normalizeWorkItem(created);
+    if (parent) {
+      item.parentId = parent.id;
+      item.featureLabel = backlogFeatureLabel(parent);
+      state.backlogItems = [...state.backlogItems.filter(existing => Number(existing.id) !== Number(item.id)), item];
+    }
     state.detailsCache.delete(item.id);
     state.commentsCache.delete(item.id);
     state.historyCache.delete(item.id);
     state.forYouProjectName = "";
-    state.backlogTeamId = "";
+    if (!parent) state.backlogTeamId = "";
     els.createWorkItemDialog.close();
     await showWorkItem(item);
   } catch (error) {
@@ -2297,6 +2320,16 @@ function backlogFeatureMetrics(feature) {
   };
 }
 
+function backlogStoryType() {
+  const preferredTypes = ["User Story", "Product Backlog Item", "Story", "Issue"];
+  const availableTypes = new Map(state.backlogItems.map(item => [item.type.trim().toLocaleLowerCase("en"), item.type.trim()]));
+  for (const preferred of preferredTypes) {
+    const available = availableTypes.get(preferred.toLocaleLowerCase("en"));
+    if (available) return available;
+  }
+  return "User Story";
+}
+
 function formatEstimate(value) {
   return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(value);
 }
@@ -2396,7 +2429,15 @@ function createBacklogFeatureCard(feature) {
   const progressValue = document.createElement("span");
   progressValue.style.width = `${metrics.progress}%`;
   progress.append(progressValue);
-  body.append(reference, stats, progress);
+  const createStory = document.createElement("button");
+  createStory.type = "button";
+  createStory.className = "backlog-create-story";
+  createStory.textContent = "Create story in feature";
+  createStory.addEventListener("click", event => {
+    event.stopPropagation();
+    openCreateWorkItemDialog(backlogStoryType(), feature);
+  });
+  body.append(reference, stats, createStory, progress);
   card.append(heading, body);
   card.addEventListener("click", event => {
     if (event.target.closest("button, summary, details")) return;
@@ -5631,6 +5672,9 @@ els.createWorkItemForm.addEventListener("submit", submitCreateWorkItem);
 els.createWorkItemDialog.addEventListener("close", () => {
   els.createWorkItemTitle.value = "";
   els.createWorkItemError.textContent = "";
+  els.createWorkItemParent.hidden = true;
+  els.createWorkItemParentLabel.textContent = "";
+  state.createWorkItemParent = null;
 });
 els.createWorkItemDialog.addEventListener("click", event => {
   if (event.target === els.createWorkItemDialog) els.createWorkItemDialog.close();
