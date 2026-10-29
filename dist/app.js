@@ -79,6 +79,8 @@ const state = {
   knownStates: new Set(Object.keys(DEFAULT_MAPPING)),
   mapping: readMapping(),
   search: "",
+  backlogSearch: "",
+  forYouSearch: "",
   boardGroupBy: ["none", "state", "assignee", "priority"].includes(localStorage.getItem(STORAGE.boardGroupBy))
     ? localStorage.getItem(STORAGE.boardGroupBy) : "none",
   filters: {
@@ -128,6 +130,11 @@ const state = {
   forYouSelectedUser: null,
   forYouUserKey: "",
   forYouRequestToken: 0,
+  globalSearchQuery: "",
+  globalSearchResults: [],
+  globalSearchError: "",
+  globalSearchLoading: false,
+  globalSearchRequestToken: 0,
   currentView: "board",
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
@@ -207,6 +214,17 @@ const els = {
   backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
   forYouViews: [...document.querySelectorAll("[data-for-you-view]")],
   wikiViews: [...document.querySelectorAll("[data-wiki-view]")],
+  searchViews: [...document.querySelectorAll("[data-search-view]")],
+  globalSearchForm: document.querySelector("#globalSearchForm"),
+  globalSearchInput: document.querySelector("#globalSearchInput"),
+  globalSearchPageForm: document.querySelector("#globalSearchPageForm"),
+  globalSearchPageInput: document.querySelector("#globalSearchPageInput"),
+  globalSearchMeta: document.querySelector("#globalSearchMeta"),
+  globalSearchStatus: document.querySelector("#globalSearchStatus"),
+  globalSearchPanel: document.querySelector("#globalSearchPanel"),
+  globalSearchRows: document.querySelector("#globalSearchRows"),
+  globalSearchActions: document.querySelector("#globalSearchActions"),
+  globalSearchExternal: document.querySelector("#globalSearchExternal"),
   forYouTitle: document.querySelector("#forYouTitle"),
   forYouMeta: document.querySelector("#forYouMeta"),
   forYouPersonControl: document.querySelector("#forYouPersonControl"),
@@ -262,12 +280,14 @@ const els = {
   forYouCustomCount: document.querySelector("#forYouCustomCount"),
   forYouCustomRows: document.querySelector("#forYouCustomRows"),
   forYouCustomShowAll: document.querySelector("#forYouCustomShowAll"),
+  forYouSearch: document.querySelector("#forYouSearchInput"),
   backlogView: document.querySelector("#backlogView"),
   backlogHierarchyToggle: document.querySelector("#backlogHierarchyToggle"),
   backlogSidebar: document.querySelector("#backlogSidebar"),
   backlogSidebarStatus: document.querySelector("#backlogSidebarStatus"),
   backlogHierarchy: document.querySelector("#backlogHierarchy"),
   backlogShowAllFeatures: document.querySelector("#backlogShowAllFeatures"),
+  backlogSearch: document.querySelector("#backlogSearchInput"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
   wikiSelect: document.querySelector("#wikiSelect"),
@@ -1243,11 +1263,13 @@ async function showMainView(view) {
   const showBacklog = view === "backlog";
   const showBoard = view === "board";
   const showWiki = view === "wiki";
-  els.listViews.forEach(element => { element.hidden = showForYou || showWiki; });
+  const showSearch = view === "search";
+  els.listViews.forEach(element => { element.hidden = showForYou || showWiki || showSearch; });
   els.boardViews.forEach(element => { element.hidden = !showBoard; });
   els.backlogViews.forEach(element => { element.hidden = !showBacklog; });
   els.forYouViews.forEach(element => { element.hidden = !showForYou; });
   els.wikiViews.forEach(element => { element.hidden = !showWiki; });
+  els.searchViews.forEach(element => { element.hidden = !showSearch; });
   els.forYouNav.classList.toggle("is-active", showForYou);
   els.sprintBoardNav.classList.toggle("is-active", showBoard);
   els.backlogNav.classList.toggle("is-active", showBacklog);
@@ -1274,6 +1296,10 @@ async function showMainView(view) {
     await loadWiki();
     return;
   }
+  if (showSearch) {
+    renderGlobalSearch();
+    return;
+  }
   if (state.filters.sprint.size) {
     setLoading(true);
     try { await applySprintFilter(); }
@@ -1290,6 +1316,117 @@ async function queryWorkItemIds(query, top = 100) {
     body: JSON.stringify({ query })
   });
   return (result.workItems || []).map(item => item.id).filter(Boolean);
+}
+
+function createGlobalSearchRow(item) {
+  const row = document.createElement("tr");
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.setAttribute("aria-label", `Open ${item.type} ${workItemKey(item.id)}: ${item.title}`);
+  const type = document.createElement("td");
+  const typeBadge = document.createElement("span");
+  typeBadge.className = `backlog-type ${item.type.toLocaleLowerCase("en") === "bug" ? "is-bug" : ""}`;
+  typeBadge.textContent = item.type;
+  type.append(typeBadge);
+  const key = document.createElement("td");
+  key.className = "backlog-key";
+  key.textContent = workItemKey(item.id);
+  const summary = document.createElement("td");
+  summary.className = "backlog-summary";
+  summary.textContent = item.title;
+  const itemState = document.createElement("td");
+  const stateBadge = document.createElement("span");
+  stateBadge.className = "card-state";
+  stateBadge.dataset.stateTone = stateTone(item.state);
+  stateBadge.textContent = item.state;
+  itemState.append(stateBadge);
+  const priority = document.createElement("td");
+  priority.textContent = item.priority ?? "—";
+  const assignee = document.createElement("td");
+  assignee.textContent = item.assignee || "Unassigned";
+  const updated = document.createElement("td");
+  updated.textContent = formatDateTime(item.changedDate);
+  row.append(type, key, summary, itemState, priority, assignee, updated);
+  row.addEventListener("click", () => showWorkItem(item));
+  row.addEventListener("keydown", event => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    showWorkItem(item);
+  });
+  return row;
+}
+
+function renderGlobalSearch() {
+  const query = state.globalSearchQuery;
+  const resultCount = state.globalSearchResults.length;
+  if (els.globalSearchPageInput.value !== query) els.globalSearchPageInput.value = query;
+  els.globalSearchMeta.textContent = state.globalSearchLoading
+    ? `Searching for “${query}”…`
+    : query ? `${resultCount} ${resultCount === 1 ? "result" : "results"} for “${query}”`
+    : "Search Azure DevOps work items by title or ID.";
+  els.globalSearchStatus.classList.toggle("is-error", Boolean(state.globalSearchError));
+  els.globalSearchStatus.classList.toggle("is-loading", state.globalSearchLoading);
+  els.globalSearchStatus.textContent = state.globalSearchLoading
+    ? "Searching work items…"
+    : state.globalSearchError || (query && !resultCount ? "No work items match this title or ID." : "");
+  els.globalSearchPanel.hidden = state.globalSearchLoading || Boolean(state.globalSearchError) || !resultCount;
+  els.globalSearchRows.replaceChildren(...state.globalSearchResults.map(createGlobalSearchRow));
+  try {
+    const { webBase } = activeAzureContext();
+    const url = new URL(`${webBase}/_search`);
+    url.searchParams.set("text", `${query}*`);
+    url.searchParams.set("type", "workitem");
+    els.globalSearchExternal.href = url.href;
+    els.globalSearchActions.hidden = !query || state.globalSearchLoading;
+  } catch {
+    els.globalSearchExternal.href = "#";
+    els.globalSearchActions.hidden = true;
+  }
+}
+
+async function runGlobalSearch(rawQuery) {
+  const query = String(rawQuery || "").trim();
+  if (!query) {
+    els.globalSearchInput.focus();
+    return;
+  }
+  state.globalSearchQuery = query;
+  state.globalSearchResults = [];
+  state.globalSearchError = "";
+  state.globalSearchLoading = true;
+  els.globalSearchInput.value = query;
+  await showMainView("search");
+  const requestToken = ++state.globalSearchRequestToken;
+  if (!state.pat) {
+    state.globalSearchLoading = false;
+    state.globalSearchError = "Connect Azure DevOps to search work items.";
+    renderGlobalSearch();
+    return;
+  }
+  try {
+    const idMatch = query.match(/^(?:#|[a-z][a-z0-9_.]*-)?(\d+)$/i);
+    const condition = idMatch
+      ? `[System.Id] = ${Number(idMatch[1])}`
+      : `[System.Title] CONTAINS '${wiqlText(query)}'`;
+    const ids = await queryWorkItemIds(`
+      SELECT [System.Id]
+      FROM WorkItems
+      WHERE [System.TeamProject] = @project
+        AND ${condition}
+      ORDER BY [System.ChangedDate] DESC
+    `, 100);
+    const results = await fetchWorkItems(ids);
+    if (requestToken !== state.globalSearchRequestToken) return;
+    const resultsById = new Map(results.map(item => [Number(item.id), item]));
+    state.globalSearchResults = ids.map(id => resultsById.get(Number(id))).filter(Boolean)
+      .sort((a, b) => new Date(b.changedDate) - new Date(a.changedDate));
+  } catch (error) {
+    if (requestToken !== state.globalSearchRequestToken) return;
+    console.error(error);
+    state.globalSearchError = error.message || "Work items could not be searched.";
+  }
+  state.globalSearchLoading = false;
+  renderGlobalSearch();
 }
 
 function wiqlText(value) {
@@ -1980,12 +2117,16 @@ function renderForYouCustomTable() {
   renderForYouCustomControls();
   const error = state.forYouCustomError;
   const expanded = state.forYouExpanded.custom;
-  const visibleItems = expanded ? state.forYouCustomItems : state.forYouCustomItems.slice(0, 5);
-  els.forYouCustomCount.textContent = String(state.forYouCustomItems.length);
+  const query = state.forYouSearch.trim().toLocaleLowerCase("en");
+  const matchingItems = state.forYouCustomItems.filter(item => matchesWorkItemQuery(item, query));
+  const visibleItems = expanded ? matchingItems : matchingItems.slice(0, 5);
+  els.forYouCustomCount.textContent = String(matchingItems.length);
   els.forYouCustomStatus.classList.toggle("is-error", Boolean(error));
-  els.forYouCustomStatus.textContent = error || (!state.forYouCustomItems.length ? "No work items match these filters." : "");
+  els.forYouCustomStatus.textContent = error || (!matchingItems.length
+    ? query && state.forYouCustomItems.length ? "No work items match this title or ID." : "No work items match these filters."
+    : "");
   els.forYouCustomRows.replaceChildren(...visibleItems.map(createForYouCustomRow));
-  els.forYouCustomShowAll.hidden = state.forYouCustomItems.length <= 5;
+  els.forYouCustomShowAll.hidden = matchingItems.length <= 5;
   els.forYouCustomShowAll.textContent = expanded ? "Show less" : "Show all";
   els.forYouCustomShowAll.setAttribute("aria-expanded", String(expanded));
 }
@@ -2120,12 +2261,19 @@ function renderForYouSection(kind, items, renderer, emptyMessage) {
   const showAll = els[`forYou${title}ShowAll`];
   const error = state.forYouErrors[kind] || "";
   const expanded = state.forYouExpanded[kind];
-  const visibleItems = expanded ? items : items.slice(0, 5);
-  count.textContent = String(items.length);
+  const query = state.forYouSearch.trim().toLocaleLowerCase("en");
+  const matchingItems = items.filter(entry => matchesWorkItemQuery(
+    kind === "mentions" || kind === "activity" ? entry.item : entry,
+    query
+  ));
+  const visibleItems = expanded ? matchingItems : matchingItems.slice(0, 5);
+  count.textContent = String(matchingItems.length);
   status.classList.toggle("is-error", Boolean(error));
-  status.textContent = error || (!items.length ? emptyMessage : "");
+  status.textContent = error || (!matchingItems.length
+    ? query && items.length ? "No work items match this title or ID." : emptyMessage
+    : "");
   list.replaceChildren(...visibleItems.map(renderer));
-  showAll.hidden = items.length <= 5;
+  showAll.hidden = matchingItems.length <= 5;
   showAll.textContent = expanded ? "Show less" : "Show all";
   showAll.setAttribute("aria-expanded", String(expanded));
   showAll.setAttribute("aria-controls", list.id);
@@ -2534,7 +2682,8 @@ function renderBacklogSidebar() {
 
 function renderBacklog() {
   const team = state.teams.find(value => value.id === state.teamId);
-  const visibleItems = state.backlogItems.filter(item => matchesFilters(item));
+  const query = state.backlogSearch.trim().toLocaleLowerCase("en");
+  const visibleItems = state.backlogItems.filter(item => matchesFilters(item, query));
   els.backlogMeta.textContent = `${team?.name || "Team"} · ${visibleItems.length}${visibleItems.length !== state.backlogItems.length ? ` of ${state.backlogItems.length}` : ""} items`;
   renderBacklogSidebar();
   renderFilters();
@@ -3007,8 +3156,15 @@ async function loadWiki(force = false) {
   }
 }
 
+function matchesWorkItemQuery(item, query = "") {
+  if (!query) return true;
+  return item.title.toLocaleLowerCase("en").includes(query)
+    || String(item.id).includes(query)
+    || workItemKey(item.id).toLocaleLowerCase("en").includes(query);
+}
+
 function matchesFilters(item, query = "") {
-  if (query && !item.title.toLowerCase().includes(query) && !String(item.id).includes(query)) return false;
+  if (!matchesWorkItemQuery(item, query)) return false;
   return FILTER_DEFINITIONS.every(definition => {
     const selected = state.filters[definition.key];
     if (!selected.size) return true;
@@ -3046,7 +3202,9 @@ function renderFilters() {
   els.clearFilters.hidden = !chips.length;
   const items = activeFilterItems();
   const availableItems = state.currentView === "backlog" ? items : items.filter(item => state.mapping[item.state] !== "hidden");
-  const query = state.currentView === "backlog" ? "" : state.search.trim().toLowerCase();
+  const query = state.currentView === "backlog"
+    ? state.backlogSearch.trim().toLocaleLowerCase("en")
+    : state.search.trim().toLocaleLowerCase("en");
   const visibleItems = availableItems.filter(item => matchesFilters(item, query));
   els.filterResultCount.textContent = chips.length || query ? `${visibleItems.length} of ${availableItems.length}` : `${availableItems.length} items`;
 }
@@ -6203,6 +6361,14 @@ els.forYouActivityShowAll.addEventListener("click", () => toggleForYouSection("a
 els.forYouCreatedShowAll.addEventListener("click", () => toggleForYouSection("created"));
 els.forYouUpdatedShowAll.addEventListener("click", () => toggleForYouSection("updated"));
 els.forYouCompletedShowAll.addEventListener("click", () => toggleForYouSection("completed"));
+els.globalSearchForm.addEventListener("submit", event => {
+  event.preventDefault();
+  runGlobalSearch(els.globalSearchInput.value);
+});
+els.globalSearchPageForm.addEventListener("submit", event => {
+  event.preventDefault();
+  runGlobalSearch(els.globalSearchPageInput.value);
+});
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
 els.wikiNav.addEventListener("click", () => showMainView("wiki"));
@@ -6223,8 +6389,20 @@ els.backlogShowAllFeatures.addEventListener("click", () => {
   if (mobileLayoutQuery.matches) setMobileDisclosure(els.backlogHierarchyToggle, els.backlogSidebar, false);
   renderBacklog();
 });
-els.refresh.addEventListener("click", () => state.currentView === "wiki" ? loadWiki(true) : loadBoard());
+els.refresh.addEventListener("click", () => {
+  if (state.currentView === "wiki") return loadWiki(true);
+  if (state.currentView === "search") return runGlobalSearch(state.globalSearchQuery);
+  return loadBoard();
+});
 els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
+els.backlogSearch.addEventListener("input", event => {
+  state.backlogSearch = event.target.value;
+  renderBacklog();
+});
+els.forYouSearch.addEventListener("input", event => {
+  state.forYouSearch = event.target.value;
+  renderForYou();
+});
 els.boardGroupOptions.forEach(option => option.addEventListener("click", () => {
   state.boardGroupBy = option.dataset.boardGroup;
   localStorage.setItem(STORAGE.boardGroupBy, state.boardGroupBy);
