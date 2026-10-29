@@ -136,6 +136,9 @@ const state = {
   richImageCache: new Map(),
   workItemTypeStatesCache: new Map(),
   workItemTypeFieldsCache: new Map(),
+  workItemTypes: [],
+  workItemTypesProject: "",
+  createWorkItemType: "",
   areaPathsCache: null,
   teamIterationsCache: null,
   commentsErrors: new Map(),
@@ -193,6 +196,10 @@ const els = {
   sprintBoardNav: document.querySelector("#sprintBoardNav"),
   backlogNav: document.querySelector("#backlogNav"),
   wikiNav: document.querySelector("#wikiNav"),
+  createWorkItemControl: document.querySelector("#createWorkItemControl"),
+  createWorkItemButton: document.querySelector("#createWorkItemButton"),
+  createWorkItemMenu: document.querySelector("#createWorkItemMenu"),
+  createWorkItemTypes: document.querySelector("#createWorkItemTypes"),
   listViews: [...document.querySelectorAll("[data-list-view]")],
   boardViews: [...document.querySelectorAll("[data-board-view]")],
   backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
@@ -311,6 +318,13 @@ const els = {
   githubReposLabel: document.querySelector("#githubReposLabel"),
   githubReposInput: document.querySelector("#githubReposInput"),
   changeConnection: document.querySelector("#changeConnection"),
+  createWorkItemDialog: document.querySelector("#createWorkItemDialog"),
+  createWorkItemForm: document.querySelector("#createWorkItemForm"),
+  createWorkItemTypeLabel: document.querySelector("#createWorkItemTypeLabel"),
+  createWorkItemHeadingType: document.querySelector("#createWorkItemHeadingType"),
+  createWorkItemTitle: document.querySelector("#createWorkItemTitle"),
+  createWorkItemError: document.querySelector("#createWorkItemError"),
+  createWorkItemSubmit: document.querySelector("#createWorkItemSubmit"),
   workItemDialog: document.querySelector("#workItemDialog"),
   workItemLoading: document.querySelector("#workItemLoading"),
   workItemType: document.querySelector("#workItemType"),
@@ -586,6 +600,130 @@ async function azure(path, options = {}, scope = "project") {
     throw new Error(detail || `Azure DevOps returned error ${response.status}.`);
   }
   return response.json();
+}
+
+const WORK_ITEM_TYPE_ORDER = ["Epic", "Feature", "User Story", "Product Backlog Item", "Bug", "Task", "Issue"];
+
+function closeCreateWorkItemMenu() {
+  els.createWorkItemMenu.hidden = true;
+  els.createWorkItemButton.setAttribute("aria-expanded", "false");
+}
+
+function workItemTypeOrder(type) {
+  const index = WORK_ITEM_TYPE_ORDER.findIndex(name => name.toLocaleLowerCase("en") === type.name.toLocaleLowerCase("en"));
+  return index < 0 ? WORK_ITEM_TYPE_ORDER.length : index;
+}
+
+function renderCreateWorkItemTypes(types) {
+  if (!types.length) {
+    const status = document.createElement("div");
+    status.className = "create-work-item-menu-status";
+    status.textContent = "No work item types are available in this project.";
+    els.createWorkItemTypes.replaceChildren(status);
+    return;
+  }
+  els.createWorkItemTypes.replaceChildren(...types.map(type => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "create-work-item-type";
+    button.setAttribute("role", "menuitem");
+    const icon = document.createElement("span");
+    icon.className = "create-work-item-type-icon";
+    icon.textContent = "+";
+    if (/^[0-9a-f]{6}$/i.test(type.color || "")) icon.style.backgroundColor = `#${type.color}`;
+    const label = document.createElement("span");
+    label.textContent = type.name;
+    button.append(icon, label);
+    button.addEventListener("click", () => openCreateWorkItemDialog(type.name));
+    return button;
+  }));
+}
+
+async function loadCreateWorkItemTypes() {
+  if (state.workItemTypesProject === state.projectName && state.workItemTypes.length) {
+    renderCreateWorkItemTypes(state.workItemTypes);
+    return;
+  }
+  const loading = document.createElement("div");
+  loading.className = "create-work-item-menu-status";
+  loading.textContent = "Loading work item types…";
+  els.createWorkItemTypes.replaceChildren(loading);
+  try {
+    const result = await azure("/_apis/wit/workitemtypes?api-version=7.1");
+    state.workItemTypes = (result.value || [])
+      .filter(type => type?.name && type.isDisabled !== true)
+      .map(type => ({ name: type.name, color: type.color || "" }))
+      .sort((left, right) => workItemTypeOrder(left) - workItemTypeOrder(right)
+        || left.name.localeCompare(right.name, "en", { sensitivity: "base" }));
+    state.workItemTypesProject = state.projectName;
+    renderCreateWorkItemTypes(state.workItemTypes);
+  } catch (error) {
+    console.error(error);
+    const status = document.createElement("div");
+    status.className = "create-work-item-menu-status is-error";
+    status.textContent = error.message || "Work item types could not be loaded.";
+    els.createWorkItemTypes.replaceChildren(status);
+  }
+}
+
+async function toggleCreateWorkItemMenu() {
+  if (!els.createWorkItemMenu.hidden) return closeCreateWorkItemMenu();
+  if (!state.pat) return showConnection();
+  closeSprintMenu();
+  closeForYouPersonMenu();
+  els.boardGroupControl.open = false;
+  els.createWorkItemMenu.hidden = false;
+  els.createWorkItemButton.setAttribute("aria-expanded", "true");
+  await loadCreateWorkItemTypes();
+}
+
+function openCreateWorkItemDialog(type) {
+  state.createWorkItemType = type;
+  closeCreateWorkItemMenu();
+  els.createWorkItemTypeLabel.textContent = type;
+  els.createWorkItemHeadingType.textContent = type.toLocaleLowerCase("en");
+  els.createWorkItemTitle.value = "";
+  els.createWorkItemError.textContent = "";
+  els.createWorkItemSubmit.disabled = false;
+  els.createWorkItemSubmit.textContent = "Create";
+  if (!els.createWorkItemDialog.open) els.createWorkItemDialog.showModal();
+  requestAnimationFrame(() => els.createWorkItemTitle.focus());
+}
+
+async function submitCreateWorkItem(event) {
+  event.preventDefault();
+  const type = state.createWorkItemType;
+  const title = els.createWorkItemTitle.value.trim();
+  if (!type) return;
+  if (!title) {
+    els.createWorkItemError.textContent = "Enter a title.";
+    els.createWorkItemTitle.focus();
+    return;
+  }
+  els.createWorkItemError.textContent = "";
+  els.createWorkItemSubmit.disabled = true;
+  els.createWorkItemSubmit.textContent = "Creating…";
+  try {
+    const created = await azure(`/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: "/fields/System.Title", value: title }])
+    });
+    const item = normalizeWorkItem(created);
+    state.detailsCache.delete(item.id);
+    state.commentsCache.delete(item.id);
+    state.historyCache.delete(item.id);
+    state.forYouProjectName = "";
+    state.backlogTeamId = "";
+    els.createWorkItemDialog.close();
+    await showWorkItem(item);
+  } catch (error) {
+    console.error(error);
+    els.createWorkItemError.textContent = error.message || "The work item could not be created.";
+  } finally {
+    els.createWorkItemSubmit.disabled = false;
+    els.createWorkItemSubmit.textContent = "Create";
+  }
 }
 
 async function loadBoard({ openSettings = false } = {}) {
@@ -5222,6 +5360,8 @@ els.connectionForm.addEventListener("submit", event => {
   try {
     parseAzureUrl(els.orgUrl.value);
     state.orgUrl = els.orgUrl.value.trim();
+    state.workItemTypes = [];
+    state.workItemTypesProject = "";
     state.authenticatedUser = null;
     state.forYouProjectName = "";
     state.forYouSelectedUser = null;
@@ -5274,6 +5414,7 @@ els.settingsForm.addEventListener("submit", async event => {
 });
 
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
+document.querySelectorAll("[data-close-create-work-item]").forEach(button => button.addEventListener("click", () => els.createWorkItemDialog.close()));
 document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", () => els.workItemDialog.close()));
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
 els.workItemState.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemStateMenu(); });
@@ -5475,6 +5616,25 @@ els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
 });
 els.headerAvatar.addEventListener("click", showSettings);
+els.createWorkItemButton.addEventListener("click", event => {
+  event.stopPropagation();
+  toggleCreateWorkItemMenu();
+});
+els.createWorkItemMenu.addEventListener("click", event => event.stopPropagation());
+els.createWorkItemMenu.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  closeCreateWorkItemMenu();
+  els.createWorkItemButton.focus();
+});
+els.createWorkItemForm.addEventListener("submit", submitCreateWorkItem);
+els.createWorkItemDialog.addEventListener("close", () => {
+  els.createWorkItemTitle.value = "";
+  els.createWorkItemError.textContent = "";
+});
+els.createWorkItemDialog.addEventListener("click", event => {
+  if (event.target === els.createWorkItemDialog) els.createWorkItemDialog.close();
+});
 for (const [button, content] of [
   [els.filterPanelToggle, els.filterPanelBody],
   [els.forYouCustomFiltersToggle, els.forYouCustomFiltersBody],
@@ -5567,6 +5727,7 @@ document.addEventListener("click", event => {
   if (!els.commentMentionMenu.contains(event.target) && !els.commentComposerInput.contains(event.target)) closeMentionMenu("comment");
   if (!els.forYouPersonControl.contains(event.target)) closeForYouPersonMenu();
   if (!els.forYouCustomTags.contains(event.target)) els.forYouCustomTags.open = false;
+  if (!els.createWorkItemControl.contains(event.target)) closeCreateWorkItemMenu();
   if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
   if (!els.boardGroupControl.contains(event.target)) els.boardGroupControl.open = false;
   if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();

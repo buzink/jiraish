@@ -11,6 +11,7 @@ Jiraish is a compact, Jira-style sprint and backlog interface for Azure DevOps. 
 - For you page with assigned work, mentions, personal activity, project-wide work item activity, and relevant open GitHub pull requests
 - Filters for type, assignee, priority, sprint, state, area, tags, and feature
 - View and edit work items directly
+- Create an empty work item of any type configured in the Azure DevOps project
 - Show and edit Repro Steps and display System Info for Azure DevOps bugs instead of an unused Description field
 - View work-item attachments as links to the files stored in Azure DevOps
 - Show child Task work items as Jira-style subtasks with completion progress

@@ -29,6 +29,15 @@
         <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint board</button>
         <button id="backlogNav" class="nav-item" type="button">Backlog</button>
         <button id="wikiNav" class="nav-item" type="button">Wiki</button>
+        <div id="createWorkItemControl" class="create-work-item-control">
+          <button id="createWorkItemButton" class="nav-item create-work-item-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="createWorkItemMenu">
+            <span class="create-work-item-label">Create</span><span class="create-work-item-symbol" aria-hidden="true">+</span>
+          </button>
+          <div id="createWorkItemMenu" class="create-work-item-menu" role="menu" aria-label="Choose a work item type" hidden>
+            <div class="create-work-item-menu-heading">Create work item</div>
+            <div id="createWorkItemTypes" class="create-work-item-types"></div>
+          </div>
+        </div>
       </nav>
       <div class="topbar-actions">
         <button id="themeButton" class="icon-button theme-button" type="button" aria-label="Switch to dark mode" title="Dark mode">
@@ -416,6 +425,28 @@
             <button class="secondary-button" type="button" data-close-settings>Cancel</button>
             <button class="primary-button" value="save" type="submit">Save</button>
           </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="createWorkItemDialog" class="dialog create-work-item-dialog" aria-labelledby="createWorkItemHeading">
+      <form id="createWorkItemForm">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span>New work item</span><span aria-hidden="true">/</span><span id="createWorkItemTypeLabel">Work item</span></div>
+            <h2 id="createWorkItemHeading">Create <span id="createWorkItemHeadingType">work item</span></h2>
+            <p>Start with a title. Nothing else will be prefilled.</p>
+          </div>
+          <button class="close-button" type="button" data-close-create-work-item aria-label="Close">×</button>
+        </div>
+        <label for="createWorkItemTitle">
+          Title
+          <input id="createWorkItemTitle" name="title" type="text" maxlength="255" autocomplete="off" required autofocus />
+        </label>
+        <p id="createWorkItemError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-create-work-item>Cancel</button>
+          <button id="createWorkItemSubmit" class="primary-button" type="submit">Create</button>
         </div>
       </form>
     </dialog>
