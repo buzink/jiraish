@@ -170,6 +170,7 @@ const HISTORY_FIELDS = {
   "System.IterationPath": "Sprint",
   "System.Tags": "Tags",
   "System.Description": "Description",
+  "Microsoft.VSTS.Common.AcceptanceCriteria": "Acceptance criteria",
   "Microsoft.VSTS.TCM.ReproSteps": "Repro steps",
   "Microsoft.VSTS.TCM.SystemInfo": "System info",
   "System.Parent": "Parent",
@@ -354,6 +355,9 @@ const els = {
   descriptionEditorCancel: document.querySelector("#descriptionEditorCancel"),
   descriptionEditorSubmit: document.querySelector("#descriptionEditorSubmit"),
   descriptionEditorStatus: document.querySelector("#descriptionEditorStatus"),
+  workItemAcceptanceCriteriaSection: document.querySelector("#workItemAcceptanceCriteriaSection"),
+  workItemAcceptanceCriteria: document.querySelector("#workItemAcceptanceCriteria"),
+  acceptanceCriteriaEditButton: document.querySelector("#acceptanceCriteriaEditButton"),
   workItemSystemInfoSection: document.querySelector("#workItemSystemInfoSection"),
   workItemSystemInfo: document.querySelector("#workItemSystemInfo"),
   systemInfoEditButton: document.querySelector("#systemInfoEditButton"),
@@ -928,6 +932,7 @@ function normalizeWorkItem(item) {
     createdDate: fields["System.CreatedDate"] || "",
     createdBy: createdBy?.displayName || createdBy?.uniqueName || "",
     descriptionHtml: fields["System.Description"] || "",
+    acceptanceCriteriaHtml: fields["Microsoft.VSTS.Common.AcceptanceCriteria"] || "",
     reproStepsHtml: fields["Microsoft.VSTS.TCM.ReproSteps"] || "",
     systemInfoHtml: fields["Microsoft.VSTS.TCM.SystemInfo"] || "",
     pointsField: storyPoints !== undefined ? "Microsoft.VSTS.Scheduling.StoryPoints"
@@ -944,7 +949,7 @@ async function fetchWorkItems(ids, { includeDescription = false } = {}) {
     "System.ChangedBy", "System.CreatedDate", "System.CreatedBy", "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Scheduling.StoryPoints",
     "Microsoft.VSTS.Scheduling.Effort"
   ];
-  if (includeDescription) fields.push("System.Description", "Microsoft.VSTS.TCM.ReproSteps", "Microsoft.VSTS.TCM.SystemInfo");
+  if (includeDescription) fields.push("System.Description", "Microsoft.VSTS.Common.AcceptanceCriteria", "Microsoft.VSTS.TCM.ReproSteps", "Microsoft.VSTS.TCM.SystemInfo");
   for (let index = 0; index < uniqueIds.length; index += 200) {
     const chunk = uniqueIds.slice(index, index + 200);
     const result = await azure(`/_apis/wit/workitems?ids=${chunk.join(",")}&fields=${encodeURIComponent(fields.join(","))}&errorPolicy=Omit&api-version=7.1`);
@@ -1608,6 +1613,7 @@ async function loadForYouMentions(user) {
     const mentions = [];
     for (const [html, kind] of [
       [item.descriptionHtml, "Description"],
+      [item.acceptanceCriteriaHtml, "Acceptance criteria"],
       [item.reproStepsHtml, "Repro steps"],
       [item.systemInfoHtml, "System info"]
     ]) {
@@ -3338,6 +3344,7 @@ function normalizeWorkItemDetail(item) {
   const effort = fields["Microsoft.VSTS.Scheduling.Effort"];
   return {
     descriptionHtml: fields["System.Description"] || "",
+    acceptanceCriteriaHtml: fields["Microsoft.VSTS.Common.AcceptanceCriteria"] || "",
     reproStepsHtml: fields["Microsoft.VSTS.TCM.ReproSteps"] || "",
     systemInfoHtml: fields["Microsoft.VSTS.TCM.SystemInfo"] || "",
     assignee: assigned?.displayName || assigned?.uniqueName || "",
@@ -3392,7 +3399,7 @@ function normalizeHistoryUpdate(update) {
     if (!label) return [];
     return [{
       label,
-      compact: ["System.Description", "Microsoft.VSTS.TCM.ReproSteps", "Microsoft.VSTS.TCM.SystemInfo"].includes(field),
+      compact: ["System.Description", "Microsoft.VSTS.Common.AcceptanceCriteria", "Microsoft.VSTS.TCM.ReproSteps", "Microsoft.VSTS.TCM.SystemInfo"].includes(field),
       oldValue: formatHistoryValue(change.oldValue),
       newValue: formatHistoryValue(change.newValue)
     }];
@@ -3451,6 +3458,10 @@ function attachmentType(name) {
 
 function isBugWorkItem(item) {
   return String(item?.type || "").trim().toLocaleLowerCase("en") === "bug";
+}
+
+function isUserStoryWorkItem(item) {
+  return String(item?.type || "").trim().toLocaleLowerCase("en") === "user story";
 }
 
 function renderWorkItemAttachments(attachments = []) {
@@ -3563,6 +3574,7 @@ function renderWorkItemParent(item, detail) {
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
   const { webBase } = activeAzureContext();
   const bug = isBugWorkItem(item);
+  const userStory = isUserStoryWorkItem(item);
   els.workItemType.textContent = item.type;
   els.workItemKey.textContent = workItemKey(item.id);
   els.workItemTitle.textContent = item.title;
@@ -3579,11 +3591,20 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
     bug ? detail?.reproStepsHtml : detail?.descriptionHtml,
     loading ? `Loading ${bug ? "repro steps" : "description"}…` : bug ? "No repro steps added." : "No description added."
   );
+  els.workItemAcceptanceCriteriaSection.hidden = !userStory;
+  if (userStory) {
+    setRichContent(
+      els.workItemAcceptanceCriteria,
+      detail?.acceptanceCriteriaHtml,
+      loading ? "Loading acceptance criteria…" : "No acceptance criteria added."
+    );
+  }
   els.workItemSystemInfoSection.hidden = !bug;
   if (bug) setRichContent(els.workItemSystemInfo, detail?.systemInfoHtml, loading ? "Loading system information…" : "No system information added.");
   renderWorkItemAttachments(detail?.attachments || []);
   renderWorkItemSubtasks(detail?.subtasks || [], detail?.subtasksError || "");
   els.descriptionEditButton.disabled = loading;
+  els.acceptanceCriteriaEditButton.disabled = loading;
   els.systemInfoEditButton.disabled = loading;
   els.workItemAssignee.textContent = detail?.assignee || item.assignee || "Unassigned";
   els.workItemAssignee.setAttribute("aria-label", `Assigned to ${detail?.assignee || item.assignee || "Unassigned"}. Click to change.`);
@@ -4140,13 +4161,32 @@ async function loadAreaPaths() {
 }
 
 function flattenClassificationPaths(root) {
+  const cleanPath = value => String(value || "").replace(/^\\+/, "");
+  const technicalRootPath = cleanPath(root?.path);
+  const technicalRootName = String(root?.structureType || root?.name || "");
+  const technicalSuffix = `\\${technicalRootName}`;
+  const hasTechnicalContainer = /^(area|iteration)$/i.test(technicalRootName)
+    && technicalRootPath.toLocaleLowerCase("en").endsWith(technicalSuffix.toLocaleLowerCase("en"));
+  const logicalRootPath = hasTechnicalContainer
+    ? technicalRootPath.slice(0, -technicalSuffix.length)
+    : technicalRootPath;
+  const technicalChildPrefix = `${technicalRootPath}\\`;
+  const normalizePath = value => {
+    const path = cleanPath(value);
+    if (!hasTechnicalContainer) return path;
+    if (path.toLocaleLowerCase("en") === technicalRootPath.toLocaleLowerCase("en")) return logicalRootPath;
+    if (path.toLocaleLowerCase("en").startsWith(technicalChildPrefix.toLocaleLowerCase("en"))) {
+      return `${logicalRootPath}\\${path.slice(technicalChildPrefix.length)}`;
+    }
+    return path;
+  };
   const paths = [];
   const visit = node => {
-    if (node?.path) paths.push(node.path.startsWith("\\") ? node.path.slice(1) : node.path);
+    if (node?.path) paths.push(normalizePath(node.path));
     (node?.children || []).forEach(visit);
   };
   visit(root);
-  return [...new Set(paths)].sort((a, b) => a.localeCompare(b, "en"));
+  return [...new Set(paths.filter(Boolean))].sort((a, b) => a.localeCompare(b, "en"));
 }
 
 async function loadTeamIterations() {
@@ -4657,11 +4697,13 @@ function handleMentionKeydown(kind, event) {
 
 function workItemContentField(item, editorMode = "content") {
   if (editorMode === "system-info") return "Microsoft.VSTS.TCM.SystemInfo";
+  if (editorMode === "acceptance-criteria") return "Microsoft.VSTS.Common.AcceptanceCriteria";
   return isBugWorkItem(item) ? "Microsoft.VSTS.TCM.ReproSteps" : "System.Description";
 }
 
 function workItemContentLabel(item, editorMode = "content") {
   if (editorMode === "system-info") return "system info";
+  if (editorMode === "acceptance-criteria") return "acceptance criteria";
   return isBugWorkItem(item) ? "repro steps" : "description";
 }
 
@@ -4670,7 +4712,10 @@ let descriptionEditorMode = "content";
 function openDescriptionEditor(editorMode = "content") {
   const item = selectedWorkItem();
   const systemInfo = editorMode === "system-info";
-  const editButton = systemInfo ? els.systemInfoEditButton : els.descriptionEditButton;
+  const acceptanceCriteria = editorMode === "acceptance-criteria";
+  const editButton = systemInfo
+    ? els.systemInfoEditButton
+    : acceptanceCriteria ? els.acceptanceCriteriaEditButton : els.descriptionEditButton;
   if (!item || editButton.disabled) return;
   closeWorkItemStateMenu();
   closeWorkItemAssigneeMenu();
@@ -4679,21 +4724,29 @@ function openDescriptionEditor(editorMode = "content") {
   closeMentionMenu("comment");
   const detail = state.detailsCache.get(item.id);
   const bug = isBugWorkItem(item);
-  const html = (systemInfo ? detail?.systemInfoHtml : bug ? detail?.reproStepsHtml : detail?.descriptionHtml) || "";
+  const html = (systemInfo
+    ? detail?.systemInfoHtml
+    : acceptanceCriteria ? detail?.acceptanceCriteriaHtml : bug ? detail?.reproStepsHtml : detail?.descriptionHtml) || "";
   descriptionEditorMode = editorMode;
   els.descriptionEditor.replaceChildren(sanitizeRichHtml(html));
-  els.descriptionEditor.setAttribute("aria-label", systemInfo ? "System info" : bug ? "Repro steps" : "Description");
-  els.descriptionEditor.dataset.placeholder = systemInfo ? "Add system information…" : bug ? "Add repro steps…" : "Add a description…";
+  els.descriptionEditor.setAttribute("aria-label", systemInfo ? "System info" : acceptanceCriteria ? "Acceptance criteria" : bug ? "Repro steps" : "Description");
+  els.descriptionEditor.dataset.placeholder = systemInfo
+    ? "Add system information…"
+    : acceptanceCriteria ? "Add acceptance criteria…" : bug ? "Add repro steps…" : "Add a description…";
   els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
   hydrateRichTextImages(els.descriptionEditor);
   if (systemInfo) {
     els.workItemSystemInfo.hidden = true;
     els.workItemSystemInfo.after(els.descriptionEditorForm);
+  } else if (acceptanceCriteria) {
+    els.workItemAcceptanceCriteria.hidden = true;
+    els.workItemAcceptanceCriteria.after(els.descriptionEditorForm);
   } else {
     els.workItemDescription.hidden = true;
     els.workItemDescription.after(els.descriptionEditorForm);
   }
   els.descriptionEditButton.hidden = true;
+  els.acceptanceCriteriaEditButton.hidden = true;
   els.systemInfoEditButton.hidden = true;
   els.descriptionEditorForm.hidden = false;
   els.descriptionEditorStatus.textContent = "";
@@ -4705,8 +4758,10 @@ function resetDescriptionEditor() {
   closeMentionMenu("description");
   els.descriptionEditorForm.hidden = true;
   els.workItemDescription.hidden = false;
+  els.workItemAcceptanceCriteria.hidden = false;
   els.workItemSystemInfo.hidden = false;
   els.descriptionEditButton.hidden = false;
+  els.acceptanceCriteriaEditButton.hidden = false;
   els.systemInfoEditButton.hidden = false;
   els.workItemDescription.after(els.descriptionEditorForm);
   els.descriptionEditor.replaceChildren();
@@ -5534,6 +5589,7 @@ els.workItemIterationSearch.addEventListener("input", async () => {
   closeWorkItemDetailFieldMenus();
 }));
 els.descriptionEditButton.addEventListener("click", () => openDescriptionEditor());
+els.acceptanceCriteriaEditButton.addEventListener("click", () => openDescriptionEditor("acceptance-criteria"));
 els.systemInfoEditButton.addEventListener("click", () => openDescriptionEditor("system-info"));
 els.descriptionEditorCancel.addEventListener("click", resetDescriptionEditor);
 els.descriptionEditorForm.addEventListener("submit", submitDescriptionEditor);
@@ -5546,7 +5602,9 @@ els.descriptionEditor.addEventListener("keydown", event => {
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
-    const editButton = descriptionEditorMode === "system-info" ? els.systemInfoEditButton : els.descriptionEditButton;
+    const editButton = descriptionEditorMode === "system-info"
+      ? els.systemInfoEditButton
+      : descriptionEditorMode === "acceptance-criteria" ? els.acceptanceCriteriaEditButton : els.descriptionEditButton;
     resetDescriptionEditor();
     editButton.focus();
   } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
