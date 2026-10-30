@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261030-work-item-releases" />
+    <link rel="stylesheet" href="styles.css?v=20261030-github-build-links-v3" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -29,6 +29,7 @@
         <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint board</button>
         <button id="backlogNav" class="nav-item" type="button">Backlog</button>
         <button id="wikiNav" class="nav-item" type="button">Wiki</button>
+        <button id="releasesNav" class="nav-item" type="button"><span class="releases-nav-full">Releases</span><span class="releases-nav-short">Rel.</span></button>
         <div id="createWorkItemControl" class="create-work-item-control">
           <button id="createWorkItemButton" class="nav-item create-work-item-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="createWorkItemMenu">
             <span class="create-work-item-label">Create</span><span class="create-work-item-symbol" aria-hidden="true">+</span>
@@ -260,6 +261,37 @@
           <div id="wikiPageStatus" class="wiki-page-status" aria-live="polite">Select a page from the sidebar.</div>
           <div id="wikiPageContent" class="wiki-content"></div>
         </article>
+      </section>
+
+      <section id="releasesView" class="releases-view" aria-labelledby="releasesTitle" data-releases-view hidden>
+        <header class="page-heading releases-heading">
+          <div>
+            <div class="eyebrow" data-project-team>PROJECT</div>
+            <h1 id="releasesTitle">Releases</h1>
+            <p class="sprint-meta">Latest deployment data from each Azure DevOps release source.</p>
+          </div>
+          <button id="releasesRefresh" class="secondary-button" type="button">Refresh releases</button>
+        </header>
+        <div class="release-debug-grid">
+          <section class="release-debug-panel" aria-labelledby="classicReleasesTitle">
+            <header><div><span class="release-debug-icon classic" aria-hidden="true">R</span><h2 id="classicReleasesTitle">Classic releases</h2></div><span id="classicReleasesCount" class="count">0</span></header>
+            <p class="release-debug-description">Latest Classic release pipeline runs and their environments.</p>
+            <div id="classicReleasesStatus" class="release-debug-status" aria-live="polite"></div>
+            <div id="classicReleasesList" class="work-item-release-list"></div>
+          </section>
+          <section class="release-debug-panel" aria-labelledby="yamlRunsTitle">
+            <header><div><span class="release-debug-icon yaml" aria-hidden="true">Y1</span><h2 id="yamlRunsTitle">YAML pipeline runs</h2></div><span id="yamlRunsCount" class="count">0</span></header>
+            <p class="release-debug-description">Latest YAML runs discovered through Build timelines, with their stages.</p>
+            <div id="yamlRunsStatus" class="release-debug-status" aria-live="polite"></div>
+            <div id="yamlRunsList" class="work-item-release-list"></div>
+          </section>
+          <section class="release-debug-panel" aria-labelledby="yamlDeploymentsTitle">
+            <header><div><span class="release-debug-icon environment" aria-hidden="true">Y2</span><h2 id="yamlDeploymentsTitle">YAML Environment deployments</h2></div><span id="yamlDeploymentsCount" class="count">0</span></header>
+            <p class="release-debug-description">Latest deployment records from real Azure DevOps Environments.</p>
+            <div id="yamlDeploymentsStatus" class="release-debug-status" aria-live="polite"></div>
+            <div id="yamlDeploymentsList" class="work-item-release-list"></div>
+          </section>
+        </div>
       </section>
 
       <section id="forYouView" class="for-you-view" aria-labelledby="forYouTitle" data-for-you-view hidden>
@@ -794,6 +826,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261030-work-item-releases" defer></script>
+    <script src="app.js?v=20261030-github-build-links-v3" defer></script>
   </body>
 </html>

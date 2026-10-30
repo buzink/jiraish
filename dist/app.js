@@ -156,6 +156,14 @@ const state = {
   globalSearchLoading: false,
   globalSearchRequestToken: 0,
   currentView: "board",
+  releaseDebug: {
+    classic: [],
+    yamlRuns: [],
+    yamlDeployments: [],
+    errors: {},
+    loaded: false,
+    requestToken: 0
+  },
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
   commentsRequestTokens: new Map(),
@@ -163,10 +171,20 @@ const state = {
   githubWorkItemPullRequestsCache: new Map(),
   githubWorkItemPullRequestsErrors: new Map(),
   githubWorkItemPullRequestsRequestTokens: new Map(),
+  githubCommitBuildIdsCache: new Map(),
+  azureGithubPullRequestBuildIdsCache: new Map(),
   workItemDeploymentsCache: new Map(),
   workItemDeploymentsErrors: new Map(),
   workItemDeploymentsRequestTokens: new Map(),
   workItemDeploymentSourceKeys: new Map(),
+  workItemYamlReferencesCache: new Map(),
+  workItemYamlDiscoveryErrors: new Map(),
+  workItemYamlDiscoveryRequestTokens: new Map(),
+  yamlBuildWorkItemsCache: new Map(),
+  recentYamlBuildsProject: "",
+  recentYamlBuilds: [],
+  recentYamlBuildsLoaded: false,
+  recentYamlBuildsPromise: null,
   richImageCache: new Map(),
   workItemTypeStatesCache: new Map(),
   workItemTypeFieldsCache: new Map(),
@@ -233,6 +251,7 @@ const els = {
   sprintBoardNav: document.querySelector("#sprintBoardNav"),
   backlogNav: document.querySelector("#backlogNav"),
   wikiNav: document.querySelector("#wikiNav"),
+  releasesNav: document.querySelector("#releasesNav"),
   createWorkItemControl: document.querySelector("#createWorkItemControl"),
   createWorkItemButton: document.querySelector("#createWorkItemButton"),
   createWorkItemMenu: document.querySelector("#createWorkItemMenu"),
@@ -242,7 +261,18 @@ const els = {
   backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
   forYouViews: [...document.querySelectorAll("[data-for-you-view]")],
   wikiViews: [...document.querySelectorAll("[data-wiki-view]")],
+  releasesViews: [...document.querySelectorAll("[data-releases-view]")],
   searchViews: [...document.querySelectorAll("[data-search-view]")],
+  releasesRefresh: document.querySelector("#releasesRefresh"),
+  classicReleasesCount: document.querySelector("#classicReleasesCount"),
+  classicReleasesStatus: document.querySelector("#classicReleasesStatus"),
+  classicReleasesList: document.querySelector("#classicReleasesList"),
+  yamlRunsCount: document.querySelector("#yamlRunsCount"),
+  yamlRunsStatus: document.querySelector("#yamlRunsStatus"),
+  yamlRunsList: document.querySelector("#yamlRunsList"),
+  yamlDeploymentsCount: document.querySelector("#yamlDeploymentsCount"),
+  yamlDeploymentsStatus: document.querySelector("#yamlDeploymentsStatus"),
+  yamlDeploymentsList: document.querySelector("#yamlDeploymentsList"),
   globalSearchForm: document.querySelector("#globalSearchForm"),
   globalSearchInput: document.querySelector("#globalSearchInput"),
   globalSearchPageForm: document.querySelector("#globalSearchPageForm"),
@@ -693,12 +723,15 @@ async function azure(path, options = {}, scope = "project") {
     if (response.status === 401 || response.status === 403) {
       const error = new Error("The PAT is invalid, expired, or does not have the required read permissions.");
       error.auth = true;
+      error.status = response.status;
       throw error;
     }
     if (!response.ok) {
       let detail = "";
       try { detail = (await response.json())?.message || ""; } catch {}
-      throw new Error(detail || `Azure DevOps returned error ${response.status}.`);
+      const error = new Error(detail || `Azure DevOps returned error ${response.status}.`);
+      error.status = response.status;
+      throw error;
     }
     if (response.status === 204) return null;
     const text = await response.text();
@@ -706,6 +739,37 @@ async function azure(path, options = {}, scope = "project") {
   } finally {
     if (protectsWork) state.pendingWorkItemWrites = Math.max(0, state.pendingWorkItemWrites - 1);
   }
+}
+
+async function azurePage(path, scope = "project") {
+  const parsed = activeAzureContext();
+  if (scope === "project" && !parsed.project) throw new Error("No Azure DevOps project has been selected yet.");
+  const apiBase = scope === "organization" ? parsed.orgBase : parsed.base;
+  const response = await fetch(`${apiBase}${path}`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Basic ${btoa(`:${state.pat}`)}`
+    }
+  });
+  let result = null;
+  try { result = await response.json(); } catch {}
+  if (response.status === 401 || response.status === 403) {
+    const error = new Error("The PAT is invalid, expired, or does not have the required read permissions.");
+    error.auth = true;
+    error.status = response.status;
+    throw error;
+  }
+  if (!response.ok) {
+    const error = new Error(result?.message || `Azure DevOps returned error ${response.status}.`);
+    error.status = response.status;
+    throw error;
+  }
+  return {
+    result,
+    continuationToken: response.headers.get("x-ms-continuationtoken")
+      || response.headers.get("x-ms-continuation-token")
+      || ""
+  };
 }
 
 async function azureRelease(path, project = "") {
@@ -932,6 +996,7 @@ async function loadBoard({ openSettings = false } = {}) {
       showNotice(`No sprints are configured for team “${selectedTeam.name}”.`, "error");
       if (state.currentView === "backlog") await loadBacklog(true);
       if (state.currentView === "for-you") await loadForYou(true);
+      if (state.currentView === "releases") await loadReleaseDebugPage(true);
       if (openSettings) showSettings();
       return;
     }
@@ -942,6 +1007,7 @@ async function loadBoard({ openSettings = false } = {}) {
     render();
     if (state.currentView === "backlog") await loadBacklog(true);
     if (state.currentView === "for-you") await loadForYou(true);
+    if (state.currentView === "releases") await loadReleaseDebugPage(true);
     if (openSettings) showSettings();
   } catch (error) {
     console.error(error);
@@ -1370,21 +1436,25 @@ async function showMainView(view) {
   const showBacklog = view === "backlog";
   const showBoard = view === "board";
   const showWiki = view === "wiki";
+  const showReleases = view === "releases";
   const showSearch = view === "search";
-  els.listViews.forEach(element => { element.hidden = showForYou || showWiki || showSearch; });
+  els.listViews.forEach(element => { element.hidden = showForYou || showWiki || showReleases || showSearch; });
   els.boardViews.forEach(element => { element.hidden = !showBoard; });
   els.backlogViews.forEach(element => { element.hidden = !showBacklog; });
   els.forYouViews.forEach(element => { element.hidden = !showForYou; });
   els.wikiViews.forEach(element => { element.hidden = !showWiki; });
+  els.releasesViews.forEach(element => { element.hidden = !showReleases; });
   els.searchViews.forEach(element => { element.hidden = !showSearch; });
   els.forYouNav.classList.toggle("is-active", showForYou);
   els.sprintBoardNav.classList.toggle("is-active", showBoard);
   els.backlogNav.classList.toggle("is-active", showBacklog);
   els.wikiNav.classList.toggle("is-active", showWiki);
+  els.releasesNav.classList.toggle("is-active", showReleases);
   els.forYouNav.toggleAttribute("aria-current", showForYou);
   els.sprintBoardNav.toggleAttribute("aria-current", showBoard);
   els.backlogNav.toggleAttribute("aria-current", showBacklog);
   els.wikiNav.toggleAttribute("aria-current", showWiki);
+  els.releasesNav.toggleAttribute("aria-current", showReleases);
   if (!showForYou) closeForYouPersonMenu();
   if (showForYou) {
     if (enteringForYou) {
@@ -1401,6 +1471,10 @@ async function showMainView(view) {
   }
   if (showWiki) {
     await loadWiki();
+    return;
+  }
+  if (showReleases) {
+    await loadReleaseDebugPage();
     return;
   }
   if (showSearch) {
@@ -1713,6 +1787,153 @@ async function githubIssueSearch(query) {
   return values;
 }
 
+async function githubIssueSearchForRepositories(query, repositories) {
+  const accessibleRepositories = await loadGithubAccessibleRepositories();
+  const owners = new Map();
+  repositories.forEach(repository => {
+    const ownerLogin = String(repository || "").split("/")[0];
+    if (!ownerLogin) return;
+    const owner = githubOwnerDetails(ownerLogin, accessibleRepositories);
+    owners.set(ownerLogin.toLocaleLowerCase("en"), owner);
+  });
+  const resultGroups = await mapWithConcurrency([...owners.values()], 3, owner => {
+    const ownerQualifier = owner.type === "Organization" ? "org" : "user";
+    return githubIssueSearch(`${query} ${ownerQualifier}:${owner.login}`);
+  });
+  const results = new Map();
+  resultGroups.flat().forEach(pullRequest => {
+    const key = `${pullRequest.repository_url}:${pullRequest.number}`;
+    if (!results.has(key)) results.set(key, pullRequest);
+  });
+  return [...results.values()].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+}
+
+async function configuredGithubRepositories() {
+  let repositories = state.githubRepos;
+  if (state.githubAllRepos) {
+    const accessible = await loadGithubAccessibleRepositories();
+    const ownerLogins = state.githubAllOwners
+      ? [...new Set(accessible.map(repository => repository.owner?.login).filter(Boolean))]
+      : state.githubOwners;
+    repositories = (await loadGithubRepositoriesForOwners(ownerLogins, accessible))
+      .map(repository => repository.full_name);
+  }
+  const selectedOwners = new Set(state.githubOwners.map(owner => owner.toLocaleLowerCase("en")));
+  return [...new Set(repositories.filter(repository => repository && (
+    state.githubAllOwners || selectedOwners.has(String(repository).split("/")[0].toLocaleLowerCase("en"))
+  )).map(repository => String(repository).toLocaleLowerCase("en")))];
+}
+
+function azureBuildIdFromGithubTarget(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const context = activeAzureContext();
+    const hostname = url.hostname.toLocaleLowerCase("en");
+    const segments = url.pathname.split("/").filter(Boolean).map(segment => decodeURIComponent(segment));
+    let organization = "";
+    let project = "";
+    if (hostname === "dev.azure.com") {
+      [organization = "", project = ""] = segments;
+    } else if (hostname.endsWith(".visualstudio.com")) {
+      organization = hostname.slice(0, -".visualstudio.com".length);
+      [project = ""] = segments;
+    } else return null;
+    if (organization.toLocaleLowerCase("en") !== context.organization.toLocaleLowerCase("en")) return null;
+    if (project && project.toLocaleLowerCase("en") !== context.project.toLocaleLowerCase("en")) return null;
+    const buildId = Number(url.searchParams.get("buildId"));
+    return Number.isInteger(buildId) && buildId > 0 ? buildId : null;
+  } catch {
+    return null;
+  }
+}
+
+async function githubCommitAzureBuildIds(repository, sha) {
+  const normalizedSha = String(sha || "").trim();
+  if (!repository || !normalizedSha) return [];
+  const cacheKey = `${repository.toLocaleLowerCase("en")}:${normalizedSha.toLocaleLowerCase("en")}`;
+  if (state.githubCommitBuildIdsCache.has(cacheKey)) {
+    return state.githubCommitBuildIdsCache.get(cacheKey);
+  }
+  const [owner, name] = repository.split("/");
+  const commitPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(normalizedSha)}`;
+  const request = Promise.allSettled([
+    github(`${commitPath}/status`),
+    github(`${commitPath}/check-runs?per_page=100`)
+  ]).then(results => {
+    const urls = [];
+    if (results[0].status === "fulfilled") {
+      (results[0].value?.statuses || []).forEach(status => urls.push(status.target_url));
+    }
+    if (results[1].status === "fulfilled") {
+      (results[1].value?.check_runs || []).forEach(checkRun => {
+        urls.push(checkRun.details_url, checkRun.html_url);
+      });
+    }
+    return [...new Set(urls.map(azureBuildIdFromGithubTarget).filter(Boolean))];
+  }).catch(error => {
+    state.githubCommitBuildIdsCache.delete(cacheKey);
+    throw error;
+  });
+  state.githubCommitBuildIdsCache.set(cacheKey, request);
+  return request;
+}
+
+function azureBuildRepositoryName(build) {
+  const repository = build?.repository || {};
+  const candidates = [repository.name, repository.fullName];
+  try {
+    const url = new URL(repository.url || "");
+    const githubMatch = url.pathname.match(/\/repos\/([^/]+\/[^/]+)(?:\/|$)/i);
+    if (githubMatch) candidates.push(decodeURIComponent(githubMatch[1]));
+  } catch {}
+  return candidates.map(value => String(value || "").replace(/^github:/i, "").toLocaleLowerCase("en"))
+    .find(value => value.includes("/")) || "";
+}
+
+function azureBuildMatchesGithubPullRequest(build, pullRequest) {
+  const expectedRepository = pullRequest.repository.toLocaleLowerCase("en");
+  const buildRepository = azureBuildRepositoryName(build);
+  if (buildRepository && buildRepository !== expectedRepository) return false;
+  const commitShas = new Set((pullRequest.commitShas || []).map(sha => sha.toLocaleLowerCase("en")));
+  if (commitShas.has(String(build.sourceVersion || "").toLocaleLowerCase("en"))) return true;
+  const sourceBranch = String(build.sourceBranch || "").toLocaleLowerCase("en");
+  const pullNumber = Number(pullRequest.number);
+  if (sourceBranch === `refs/pull/${pullNumber}/merge` || sourceBranch === `refs/pull/${pullNumber}/head`) return true;
+  return Object.entries(build.triggerInfo || {}).some(([key, value]) =>
+    /(?:pr|pull.?request).*number/i.test(key) && Number(value) === pullNumber);
+}
+
+async function azureBuildIdsForGithubPullRequest(pullRequest) {
+  const cacheKey = [
+    pullRequest.repository.toLocaleLowerCase("en"),
+    pullRequest.number,
+    ...(pullRequest.commitShas || []).map(sha => sha.toLocaleLowerCase("en"))
+  ].join(":");
+  if (state.azureGithubPullRequestBuildIdsCache.has(cacheKey)) {
+    return state.azureGithubPullRequestBuildIdsCache.get(cacheKey);
+  }
+  const created = new Date(pullRequest.createdAt || pullRequest.updatedAt || 0).getTime();
+  const completed = new Date(pullRequest.mergedAt || pullRequest.updatedAt || pullRequest.createdAt || 0).getTime();
+  const startTime = new Date(Math.max(0, Math.min(created || completed, completed || created) - 6 * 60 * 60 * 1000));
+  const endTime = new Date(Math.max(created, completed) + 24 * 60 * 60 * 1000);
+  const timeQuery = Number.isFinite(startTime.getTime()) && Number.isFinite(endTime.getTime())
+    ? `&minTime=${encodeURIComponent(startTime.toISOString())}&maxTime=${encodeURIComponent(endTime.toISOString())}`
+    : "";
+  const request = azure(`/_apis/build/builds?$top=1000&queryOrder=queueTimeDescending${timeQuery}&api-version=7.1`)
+    .then(result => (result?.value || [])
+      .filter(build => azureBuildMatchesGithubPullRequest(build, pullRequest))
+      .map(build => Number(build.id))
+      .filter(buildId => Number.isInteger(buildId) && buildId > 0))
+    .then(buildIds => [...new Set(buildIds)])
+    .catch(error => {
+      state.azureGithubPullRequestBuildIdsCache.delete(cacheKey);
+      throw error;
+    });
+  state.azureGithubPullRequestBuildIdsCache.set(cacheKey, request);
+  return request;
+}
+
 function githubRepositoryFromApiUrl(value) {
   const match = String(value || "").match(/\/repos\/([^/]+\/[^/]+)$/i);
   return match ? decodeURIComponent(match[1]) : "";
@@ -1722,14 +1943,22 @@ async function loadGithubPullRequestsForWorkItem(item) {
   if (!state.githubToken) return [];
   const marker = `AB#${item.id}`;
   const exactMarker = new RegExp(`\\bAB#${item.id}\\b`, "i");
-  const matches = (await githubIssueSearch(`is:pr in:title "${marker}"`))
-    .filter(pullRequest => exactMarker.test(pullRequest.title || ""));
+  const repositoryNames = await configuredGithubRepositories();
+  const configuredRepositories = new Set(repositoryNames);
+  const matches = (await githubIssueSearchForRepositories(`is:pr in:title "${marker}"`, repositoryNames))
+    .filter(pullRequest => {
+      const repository = githubRepositoryFromApiUrl(pullRequest.repository_url).toLocaleLowerCase("en");
+      return configuredRepositories.has(repository) && exactMarker.test(pullRequest.title || "");
+    });
   const details = await mapWithConcurrency(matches, 6, async pullRequest => {
     const repository = githubRepositoryFromApiUrl(pullRequest.repository_url);
     if (!repository) return null;
     const [owner, name] = repository.split("/");
     try {
       const detail = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${pullRequest.number}`);
+      const commitShas = [...new Set([detail.head?.sha, detail.merge_commit_sha].filter(Boolean))];
+      const buildIdGroups = await mapWithConcurrency(commitShas, 2, sha =>
+        githubCommitAzureBuildIds(repository, sha));
       return {
         id: detail.id,
         repository: detail.base?.repo?.full_name || repository,
@@ -1737,17 +1966,33 @@ async function loadGithubPullRequestsForWorkItem(item) {
         title: detail.title || pullRequest.title,
         url: detail.html_url || pullRequest.html_url,
         author: detail.user?.login || pullRequest.user?.login || "Unknown",
+        createdAt: detail.created_at || pullRequest.created_at || "",
         updatedAt: detail.updated_at || pullRequest.updated_at || "",
         state: detail.state || pullRequest.state || "open",
         draft: Boolean(detail.draft),
-        mergedAt: detail.merged_at || pullRequest.pull_request?.merged_at || ""
+        mergedAt: detail.merged_at || pullRequest.pull_request?.merged_at || "",
+        headSha: detail.head?.sha || "",
+        commitShas,
+        azureBuildIds: [...new Set(buildIdGroups.flat())]
       };
     } catch (error) {
       if (error.status === 404) return null;
       throw error;
     }
   });
-  return details.filter(Boolean).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  const pullRequests = details.filter(Boolean);
+  await mapWithConcurrency(pullRequests, 4, async pullRequest => {
+    try {
+      const discoveredBuildIds = await azureBuildIdsForGithubPullRequest(pullRequest);
+      pullRequest.azureBuildIds = [...new Set([
+        ...(pullRequest.azureBuildIds || []),
+        ...discoveredBuildIds
+      ])];
+    } catch (error) {
+      console.warn(`Azure builds for GitHub pull request ${pullRequest.repository}#${pullRequest.number} could not be discovered.`, error);
+    }
+  });
+  return pullRequests.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 
 async function loadGithubAccessibleRepositories() {
@@ -1805,19 +2050,8 @@ async function loadGithubRepositoriesForOwners(ownerLogins, accessibleRepositori
 
 async function loadGithubPullRequests() {
   if (!state.githubToken) return [];
-  let repositories = state.githubRepos;
-  if (state.githubAllRepos) {
-    const accessible = await loadGithubAccessibleRepositories();
-    const ownerLogins = state.githubAllOwners
-      ? [...new Set(accessible.map(repository => repository.owner?.login).filter(Boolean))]
-      : state.githubOwners;
-    repositories = (await loadGithubRepositoriesForOwners(ownerLogins, accessible)).map(repository => repository.full_name);
-  }
-  const selectedOwners = new Set(state.githubOwners.map(owner => owner.toLocaleLowerCase("en")));
-  const filteredRepositories = repositories.filter(repository => repository && (
-    state.githubAllOwners || selectedOwners.has(String(repository).split("/")[0].toLocaleLowerCase("en"))
-  ));
-  const pullRequestGroups = await mapWithConcurrency(filteredRepositories, 6, async repository => {
+  const repositories = await configuredGithubRepositories();
+  const pullRequestGroups = await mapWithConcurrency(repositories, 6, async repository => {
     const [owner, name, ...rest] = repository.split("/");
     if (!owner || !name || rest.length) throw new Error(`“${repository}” is not a valid owner/repository name.`);
     try {
@@ -4182,6 +4416,7 @@ async function showWorkItem(item) {
   const cachedHistory = state.historyCache.get(item.id) || [];
   const cachedPullRequests = state.githubWorkItemPullRequestsCache.get(item.id) || [];
   const cachedDeployments = state.workItemDeploymentsCache.get(item.id) || [];
+  const cachedDeploymentError = state.workItemDeploymentsErrors.get(item.id) || "";
   if (!hasCachedComments) state.commentsErrors.delete(item.id);
   if (!hasCachedHistory) state.historyErrors.delete(item.id);
   if (!hasCachedPullRequests) state.githubWorkItemPullRequestsErrors.delete(item.id);
@@ -4190,7 +4425,7 @@ async function showWorkItem(item) {
   renderComments(cachedComments, !hasCachedComments);
   renderHistory(cachedHistory, !hasCachedHistory);
   renderWorkItemPullRequests(cachedPullRequests, Boolean(state.githubToken) && !hasCachedPullRequests);
-  renderWorkItemDeployments(cachedDeployments, !hasCachedDeployments);
+  renderWorkItemDeployments(cachedDeployments, !hasCachedDeployments, cachedDeploymentError);
   renderCombinedActivity();
   setActivityTab("comments");
   if (!els.workItemDialog.open) {
@@ -4260,6 +4495,9 @@ function removeDeletedWorkItem(itemId) {
   state.workItemDeploymentsErrors.delete(Number(itemId));
   state.workItemDeploymentsRequestTokens.delete(Number(itemId));
   state.workItemDeploymentSourceKeys.delete(Number(itemId));
+  state.workItemYamlReferencesCache.delete(Number(itemId));
+  state.workItemYamlDiscoveryErrors.delete(Number(itemId));
+  state.workItemYamlDiscoveryRequestTokens.delete(Number(itemId));
 }
 
 async function deleteSelectedWorkItem() {
@@ -4394,6 +4632,8 @@ async function loadWorkItemPullRequests(item) {
     if (state.githubWorkItemPullRequestsRequestTokens.get(item.id) !== requestToken) return;
     state.githubWorkItemPullRequestsCache.set(item.id, pullRequests);
     state.githubWorkItemPullRequestsErrors.delete(item.id);
+    const detail = state.detailsCache.get(item.id);
+    if (detail) syncWorkItemDeployments(item, detail.deploymentReferences || []);
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemPullRequests(pullRequests);
       renderCombinedActivity();
@@ -4410,17 +4650,85 @@ async function loadWorkItemPullRequests(item) {
 }
 
 function deploymentReferencesKey(references) {
-  return references.map(reference => [
-    reference.sourceType,
-    reference.projectId,
-    reference.releaseId,
-    reference.environmentId
-  ].join(":"))
+  return references.map(reference => reference.sourceType === "yaml"
+    ? [reference.sourceType, reference.projectId, reference.buildId].join(":")
+    : [reference.sourceType, reference.projectId, reference.releaseId, reference.environmentId].join(":"))
     .sort()
     .join("|");
 }
 
-function syncWorkItemDeployments(item, references) {
+function mergeDeploymentReferences(...groups) {
+  const references = new Map();
+  groups.flat().forEach(reference => {
+    const key = reference.sourceType === "yaml"
+      ? `${reference.sourceType}:${reference.projectId}:${reference.buildId}`
+      : `${reference.sourceType}:${reference.projectId}:${reference.releaseId}:${reference.environmentId}`;
+    references.set(key, reference);
+  });
+  return [...references.values()];
+}
+
+function githubPullRequestDeploymentReferences(itemId) {
+  const projectId = activeAzureContext().project;
+  const buildIds = (state.githubWorkItemPullRequestsCache.get(Number(itemId)) || [])
+    .flatMap(pullRequest => pullRequest.azureBuildIds || []);
+  return [...new Set(buildIds.map(Number).filter(buildId => Number.isInteger(buildId) && buildId > 0))]
+    .map(buildId => ({ sourceType: "yaml", projectId, buildId }));
+}
+
+async function recentYamlBuildsForWorkItemDiscovery() {
+  const project = activeAzureContext().project;
+  if (state.recentYamlBuildsProject === project && state.recentYamlBuildsLoaded) {
+    return state.recentYamlBuilds;
+  }
+  if (state.recentYamlBuildsProject === project && state.recentYamlBuildsPromise) {
+    return state.recentYamlBuildsPromise;
+  }
+  state.recentYamlBuildsProject = project;
+  state.recentYamlBuilds = [];
+  state.recentYamlBuildsLoaded = false;
+  state.recentYamlBuildsPromise = loadRecentYamlBuilds(150).then(builds => {
+    if (state.recentYamlBuildsProject === project) {
+      state.recentYamlBuilds = builds;
+      state.recentYamlBuildsLoaded = true;
+    }
+    return builds;
+  }).finally(() => {
+    if (state.recentYamlBuildsProject === project) state.recentYamlBuildsPromise = null;
+  });
+  return state.recentYamlBuildsPromise;
+}
+
+async function yamlBuildWorkItemIds(buildId) {
+  const numericBuildId = Number(buildId);
+  if (state.yamlBuildWorkItemsCache.has(numericBuildId)) {
+    return state.yamlBuildWorkItemsCache.get(numericBuildId);
+  }
+  const request = azure(`/_apis/build/builds/${numericBuildId}/workitems?$top=500&api-version=7.1`)
+    .then(result => new Set((result?.value || []).map(reference => Number(reference.id)).filter(Boolean)))
+    .catch(error => {
+      if (error.status === 404) return new Set();
+      state.yamlBuildWorkItemsCache.delete(numericBuildId);
+      throw error;
+    });
+  state.yamlBuildWorkItemsCache.set(numericBuildId, request);
+  return request;
+}
+
+async function discoverYamlDeploymentReferences(item) {
+  const builds = await recentYamlBuildsForWorkItemDiscovery();
+  const matches = await mapWithConcurrency(builds, 8, async build => {
+    const workItemIds = await yamlBuildWorkItemIds(build.id);
+    return workItemIds.has(Number(item.id)) ? build : null;
+  });
+  return matches.filter(Boolean).map(build => ({
+    sourceType: "yaml",
+    projectId: activeAzureContext().project,
+    buildId: Number(build.id)
+  }));
+}
+
+function syncResolvedWorkItemDeployments(item, references) {
   const sourceKey = deploymentReferencesKey(references);
   const previousKey = state.workItemDeploymentSourceKeys.get(item.id);
   const hasResult = state.workItemDeploymentsCache.has(item.id)
@@ -4432,8 +4740,10 @@ function syncWorkItemDeployments(item, references) {
   state.workItemDeploymentsErrors.delete(item.id);
   if (!references.length) {
     state.workItemDeploymentsCache.set(item.id, []);
+    const discoveryError = state.workItemYamlDiscoveryErrors.get(item.id) || "";
+    if (discoveryError) state.workItemDeploymentsErrors.set(item.id, discoveryError);
     if (isSelectedWorkItem(item.id)) {
-      renderWorkItemDeployments([]);
+      renderWorkItemDeployments([], false, discoveryError);
       renderCombinedActivity();
     }
     return;
@@ -4443,6 +4753,56 @@ function syncWorkItemDeployments(item, references) {
     renderCombinedActivity();
   }
   loadWorkItemDeployments(item, references, sourceKey);
+}
+
+function syncWorkItemDeployments(item, directReferences) {
+  const githubReferences = githubPullRequestDeploymentReferences(item.id);
+  if (state.workItemYamlReferencesCache.has(item.id)) {
+    const references = mergeDeploymentReferences(
+      directReferences,
+      githubReferences,
+      state.workItemYamlReferencesCache.get(item.id)
+    );
+    syncResolvedWorkItemDeployments(item, references);
+    return;
+  }
+  if (state.workItemYamlDiscoveryRequestTokens.has(item.id)) {
+    if (githubReferences.length) {
+      syncResolvedWorkItemDeployments(item, mergeDeploymentReferences(directReferences, githubReferences));
+    }
+    return;
+  }
+  const requestToken = Symbol(`yaml-discovery-${item.id}`);
+  state.workItemYamlDiscoveryRequestTokens.set(item.id, requestToken);
+  if (isSelectedWorkItem(item.id)) {
+    renderWorkItemDeployments([], true);
+    renderCombinedActivity();
+  }
+  discoverYamlDeploymentReferences(item).then(references => {
+    if (state.workItemYamlDiscoveryRequestTokens.get(item.id) !== requestToken) return;
+    state.workItemYamlReferencesCache.set(item.id, references);
+    state.workItemYamlDiscoveryErrors.delete(item.id);
+    syncResolvedWorkItemDeployments(item, mergeDeploymentReferences(
+      directReferences,
+      githubPullRequestDeploymentReferences(item.id),
+      references
+    ));
+  }).catch(error => {
+    if (state.workItemYamlDiscoveryRequestTokens.get(item.id) !== requestToken) return;
+    console.error("Related YAML pipeline runs could not be discovered.", error);
+    state.workItemYamlReferencesCache.set(item.id, []);
+    state.workItemYamlDiscoveryErrors.set(item.id, error.auth
+      ? "Related YAML pipeline runs could not be discovered. The PAT requires ‘Build: Read’."
+      : error.message || "Related YAML pipeline runs could not be discovered.");
+    syncResolvedWorkItemDeployments(item, mergeDeploymentReferences(
+      directReferences,
+      githubPullRequestDeploymentReferences(item.id)
+    ));
+  }).finally(() => {
+    if (state.workItemYamlDiscoveryRequestTokens.get(item.id) === requestToken) {
+      state.workItemYamlDiscoveryRequestTokens.delete(item.id);
+    }
+  });
 }
 
 function latestDateValue(values) {
@@ -4471,7 +4831,7 @@ function deploymentSummaryStatus(environments, fallback = "") {
   if (statuses.some(status => ["failed", "rejected"].includes(status))) return "failed";
   if (statuses.some(status => ["inprogress", "queued", "scheduled"].includes(status))) return "inProgress";
   if (statuses.length && statuses.every(status => status === "succeeded")) return "succeeded";
-  if (statuses.some(status => ["partiallysucceeded", "succeeded"].includes(status))) return "partiallySucceeded";
+  if (statuses.some(status => ["partiallysucceeded", "succeededwithissues", "succeeded"].includes(status))) return "partiallySucceeded";
   if (statuses.length && statuses.every(status => ["canceled", "abandoned", "skipped"].includes(status))) return "canceled";
   if (statuses.length && statuses.every(status => status === "unavailable")) return "unavailable";
   if (statuses.some(status => ["notstarted", "notdeployed", "undefined"].includes(status))) return "notStarted";
@@ -4578,25 +4938,435 @@ async function loadClassicWorkItemDeployments(references) {
   return deployments;
 }
 
+function yamlStageRecords(timeline) {
+  const stages = new Map();
+  (timeline.records || []).forEach(record => {
+    if (String(record.type || "").toLocaleLowerCase("en") !== "stage") return;
+    const key = String(record.identifier || record.refName || record.name || record.id);
+    const existing = stages.get(key);
+    const attempt = Number(record.attempt) || 1;
+    const existingAttempt = Number(existing?.attempt) || 0;
+    const recordChanged = new Date(record.lastModified || record.finishTime || record.startTime || 0).getTime() || 0;
+    const existingChanged = new Date(existing?.lastModified || existing?.finishTime || existing?.startTime || 0).getTime() || 0;
+    if (!existing || attempt > existingAttempt || (attempt === existingAttempt && recordChanged > existingChanged)) {
+      stages.set(key, record);
+    }
+  });
+  return [...stages.values()].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+}
+
+function yamlStageStatus(stage) {
+  if (stage.result) return stage.result;
+  const stateValue = String(stage.state || "").toLocaleLowerCase("en");
+  if (stateValue === "inprogress") return "inProgress";
+  if (stateValue === "pending") return "notStarted";
+  return stateValue || "unknown";
+}
+
+function normalizeYamlDeployment(build, timeline, reference, environmentDeployments = [], environmentError = "") {
+  const activeContext = activeAzureContext();
+  const buildId = Number(build.id || reference.buildId);
+  const buildUrl = build._links?.web?.href
+    || `${activeContext.webBase}/_build/results?buildId=${buildId}&view=results`;
+  const stages = yamlStageRecords(timeline).map(stage => ({
+    id: stage.id || stage.identifier || stage.name,
+    name: stage.name || stage.identifier || "Stage",
+    status: yamlStageStatus(stage),
+    rank: Number(stage.order) || Number.MAX_SAFE_INTEGER,
+    date: stage.finishTime || stage.lastModified || stage.startTime || "",
+    url: buildUrl
+  }));
+  if (!stages.length) return null;
+  const activityTimestamp = latestDateValue([
+    ...stages.map(stage => stage.date),
+    build.finishTime,
+    build.lastChangedDate,
+    build.startTime,
+    build.queueTime
+  ]);
+  const buildStatus = String(build.status || "").toLocaleLowerCase("en");
+  const runStatus = build.result
+    || (buildStatus && buildStatus !== "completed" ? build.status : "")
+    || deploymentSummaryStatus(stages, "unknown");
+  return {
+    key: `yaml:${reference.projectId}:${buildId}`,
+    sourceType: "yaml",
+    sourceLabel: "YAML pipeline",
+    id: buildId,
+    name: build.buildNumber || `Run ${buildId}`,
+    pipelineName: build.definition?.name || "YAML pipeline",
+    status: runStatus,
+    date: activityTimestamp ? new Date(activityTimestamp).toISOString() : "",
+    url: buildUrl,
+    stages,
+    environments: environmentDeployments,
+    environmentError,
+    unavailable: false
+  };
+}
+
+function environmentRecordDate(record) {
+  return record.finishTime || record.startTime || record.queueTime || "";
+}
+
+function latestEnvironmentDeploymentRecords(records) {
+  const latest = new Map();
+  records.forEach(record => {
+    const key = [record.stageName, record.jobName, record.resourceId].join(":");
+    const existing = latest.get(key);
+    const attempt = (Number(record.stageAttempt) || 1) * 10000 + (Number(record.jobAttempt) || 1);
+    const existingAttempt = existing
+      ? (Number(existing.stageAttempt) || 1) * 10000 + (Number(existing.jobAttempt) || 1)
+      : 0;
+    const changed = new Date(environmentRecordDate(record) || 0).getTime() || 0;
+    const existingChanged = new Date(environmentRecordDate(existing || {}) || 0).getTime() || 0;
+    if (!existing || attempt > existingAttempt || (attempt === existingAttempt && changed > existingChanged)) {
+      latest.set(key, record);
+    }
+  });
+  return [...latest.values()];
+}
+
+function yamlEnvironmentWebUrl(environment) {
+  const activeContext = activeAzureContext();
+  return environment._links?.web?.href
+    || `${activeContext.webBase}/_environments/${Number(environment.id)}?view=history`;
+}
+
+function normalizeYamlEnvironmentDeployment(environment, records) {
+  const latestRecords = latestEnvironmentDeploymentRecords(records);
+  const activityTimestamp = latestDateValue(latestRecords.map(environmentRecordDate));
+  const details = [...new Set(latestRecords.map(record => [record.stageName, record.jobName]
+    .filter(Boolean).join(" · ")).filter(Boolean))].join(", ");
+  return {
+    id: Number(environment.id),
+    name: environment.name || `Environment ${environment.id}`,
+    status: deploymentSummaryStatus(latestRecords.map(record => ({ status: record.result })), "unknown"),
+    rank: Number.MAX_SAFE_INTEGER,
+    date: activityTimestamp ? new Date(activityTimestamp).toISOString() : "",
+    details,
+    url: yamlEnvironmentWebUrl(environment)
+  };
+}
+
+async function loadAzureEnvironments() {
+  const environments = [];
+  let continuationToken = "";
+  do {
+    const continuation = continuationToken
+      ? `&continuationToken=${encodeURIComponent(continuationToken)}`
+      : "";
+    const page = await azurePage(`/_apis/pipelines/environments?$top=100${continuation}&api-version=7.2-preview.1`);
+    environments.push(...(Array.isArray(page.result) ? page.result : page.result?.value || []));
+    continuationToken = page.continuationToken;
+  } while (continuationToken);
+  return environments;
+}
+
+async function loadEnvironmentRecordsForBuilds(environment, buildsById) {
+  const matchingRecords = [];
+  const buildTimes = [...buildsById.values()].map(build => new Date(
+    build.queueTime || build.startTime || build.finishTime || 0
+  ).getTime() || 0).filter(Boolean);
+  const earliestBuildTime = buildTimes.length ? Math.min(...buildTimes) : 0;
+  let continuationToken = "";
+  let pageCount = 0;
+  do {
+    const continuation = continuationToken
+      ? `&continuationToken=${encodeURIComponent(continuationToken)}`
+      : "";
+    const page = await azurePage(`/_apis/pipelines/environments/${Number(environment.id)}/environmentdeploymentrecords?top=100${continuation}&api-version=7.2-preview.1`);
+    const records = Array.isArray(page.result) ? page.result : page.result?.value || [];
+    matchingRecords.push(...records.filter(record => buildsById.has(Number(record.owner?.id))));
+    continuationToken = page.continuationToken;
+    pageCount++;
+    const recordTimes = records.map(record => new Date(environmentRecordDate(record) || 0).getTime() || 0).filter(Boolean);
+    const oldestRecordTime = recordTimes.length ? Math.min(...recordTimes) : 0;
+    if (!records.length || (earliestBuildTime && oldestRecordTime && oldestRecordTime < earliestBuildTime)) break;
+  } while (continuationToken && pageCount < 50);
+  return matchingRecords;
+}
+
+async function loadYamlEnvironmentDeployments(builds) {
+  const buildsById = new Map(builds.map(build => [Number(build.id), build]));
+  const deploymentsByBuildId = new Map([...buildsById.keys()].map(buildId => [buildId, []]));
+  if (!buildsById.size) return deploymentsByBuildId;
+  const environments = await loadAzureEnvironments();
+  await mapWithConcurrency(environments, 4, async environment => {
+    const records = await loadEnvironmentRecordsForBuilds(environment, buildsById);
+    const recordsByBuildId = new Map();
+    records.forEach(record => {
+      const buildId = Number(record.owner?.id);
+      if (!recordsByBuildId.has(buildId)) recordsByBuildId.set(buildId, []);
+      recordsByBuildId.get(buildId).push(record);
+    });
+    recordsByBuildId.forEach((buildRecords, buildId) => {
+      deploymentsByBuildId.get(buildId)?.push(normalizeYamlEnvironmentDeployment(environment, buildRecords));
+    });
+  });
+  deploymentsByBuildId.forEach(deployments => deployments.sort((a, b) =>
+    new Date(b.date || 0) - new Date(a.date || 0) || a.name.localeCompare(b.name, "en", { sensitivity: "base" })));
+  return deploymentsByBuildId;
+}
+
+async function loadLatestClassicReleases() {
+  const result = await azureRelease("/_apis/release/releases?$top=5&queryOrder=descending&api-version=7.1");
+  const releases = result?.value || [];
+  const deployments = await mapWithConcurrency(releases, 4, async releaseSummary => {
+    const release = await azureRelease(`/_apis/release/releases/${Number(releaseSummary.id)}?api-version=7.1`);
+    return normalizeClassicDeployment(release, {
+      projectId: activeAzureContext().project,
+      releaseId: Number(release.id),
+      environmentIds: new Set((release.environments || []).map(environment => Number(environment.id)))
+    });
+  });
+  return deployments.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 5);
+}
+
+async function loadRecentYamlBuilds(top = 100) {
+  const definitionsResult = await azure("/_apis/build/definitions?$top=1000&processType=2&api-version=7.1");
+  const definitionIds = (definitionsResult?.value || []).map(definition => Number(definition.id)).filter(Boolean);
+  if (!definitionIds.length) return [];
+  const buildGroups = await mapWithConcurrency(Array.from({ length: Math.ceil(definitionIds.length / 100) }, (_, index) =>
+    definitionIds.slice(index * 100, index * 100 + 100)), 4, async ids => {
+    const result = await azure(`/_apis/build/builds?definitions=${ids.join(",")}&$top=${top}&queryOrder=queueTimeDescending&api-version=7.1`);
+    return result?.value || [];
+  });
+  return [...new Map(buildGroups.flat().map(build => [Number(build.id), build])).values()]
+    .sort((a, b) => new Date(b.queueTime || 0) - new Date(a.queueTime || 0))
+    .slice(0, top);
+}
+
+async function loadLatestYamlRuns() {
+  const builds = await loadRecentYamlBuilds(30);
+  const runs = await mapWithConcurrency(builds, 4, async build => {
+    try {
+      const timeline = await azure(`/_apis/build/builds/${Number(build.id)}/timeline?api-version=7.1`);
+      const deployment = normalizeYamlDeployment(build, timeline, {
+        projectId: activeAzureContext().project,
+        buildId: Number(build.id)
+      });
+      if (deployment) deployment.displayMode = "stages";
+      return deployment;
+    } catch (error) {
+      if (error.status === 404) return null;
+      throw error;
+    }
+  });
+  return runs.filter(Boolean)
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+    .slice(0, 5);
+}
+
+function normalizeLatestYamlEnvironmentDeployments(environmentRecords) {
+  const groups = new Map();
+  environmentRecords.forEach(({ environment, record }) => {
+    const ownerKey = String(record.owner?.id || record.planId || record.requestIdentifier || record.id);
+    if (!groups.has(ownerKey)) groups.set(ownerKey, {
+      owner: record.owner || {},
+      definition: record.definition || {},
+      recordsByEnvironment: new Map()
+    });
+    const group = groups.get(ownerKey);
+    const environmentId = Number(environment.id);
+    if (!group.recordsByEnvironment.has(environmentId)) {
+      group.recordsByEnvironment.set(environmentId, { environment, records: [] });
+    }
+    group.recordsByEnvironment.get(environmentId).records.push(record);
+  });
+  return [...groups.entries()].map(([ownerKey, group]) => {
+    const environments = [...group.recordsByEnvironment.values()].map(value =>
+      normalizeYamlEnvironmentDeployment(value.environment, value.records));
+    const activityTimestamp = latestDateValue(environments.map(environment => environment.date));
+    const numericOwnerId = Number(group.owner.id);
+    const runUrl = group.owner._links?.web?.href
+      || (Number.isFinite(numericOwnerId) && numericOwnerId > 0
+        ? `${activeAzureContext().webBase}/_build/results?buildId=${numericOwnerId}&view=results`
+        : "");
+    return {
+      key: `yaml-environment:${ownerKey}`,
+      sourceType: "yaml",
+      sourceLabel: "YAML environment deployment",
+      id: group.owner.id || ownerKey,
+      name: group.owner.name || `Run ${ownerKey}`,
+      pipelineName: group.definition.name || "YAML pipeline",
+      status: deploymentSummaryStatus(environments, "unknown"),
+      date: activityTimestamp ? new Date(activityTimestamp).toISOString() : "",
+      url: runUrl,
+      stages: [],
+      environments,
+      environmentError: "",
+      displayMode: "environments",
+      unavailable: false
+    };
+  }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 5);
+}
+
+async function loadLatestYamlEnvironmentDeployments() {
+  const environments = await loadAzureEnvironments();
+  const environmentRecords = [];
+  await mapWithConcurrency(environments, 4, async environment => {
+    const page = await azurePage(`/_apis/pipelines/environments/${Number(environment.id)}/environmentdeploymentrecords?top=10&api-version=7.2-preview.1`);
+    const records = Array.isArray(page.result) ? page.result : page.result?.value || [];
+    records.forEach(record => environmentRecords.push({ environment, record }));
+  });
+  environmentRecords.sort((a, b) => new Date(environmentRecordDate(b.record) || 0) - new Date(environmentRecordDate(a.record) || 0));
+  return normalizeLatestYamlEnvironmentDeployments(environmentRecords);
+}
+
+function releaseDebugElements(key) {
+  const values = {
+    classic: [els.classicReleasesCount, els.classicReleasesStatus, els.classicReleasesList],
+    yamlRuns: [els.yamlRunsCount, els.yamlRunsStatus, els.yamlRunsList],
+    yamlDeployments: [els.yamlDeploymentsCount, els.yamlDeploymentsStatus, els.yamlDeploymentsList]
+  };
+  return values[key];
+}
+
+function renderReleaseDebugSection(key, loading = false) {
+  const [count, status, list] = releaseDebugElements(key);
+  const deployments = state.releaseDebug[key];
+  const error = state.releaseDebug.errors[key] || "";
+  count.textContent = String(deployments.length);
+  status.classList.toggle("is-error", Boolean(error));
+  if (loading) {
+    status.textContent = "Loading…";
+    list.replaceChildren(...Array.from({ length: 2 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "comment-skeleton release-debug-skeleton";
+      return skeleton;
+    }));
+    return;
+  }
+  status.textContent = error || (!deployments.length ? "No results returned by this source." : "");
+  list.replaceChildren(...deployments.map(createWorkItemDeploymentEntry));
+}
+
+function renderReleaseDebugPage() {
+  ["classic", "yamlRuns", "yamlDeployments"].forEach(key => renderReleaseDebugSection(key));
+}
+
+async function loadReleaseDebugPage(force = false) {
+  if (!state.pat) {
+    showConnection();
+    return;
+  }
+  if (state.releaseDebug.loaded && !force) {
+    renderReleaseDebugPage();
+    return;
+  }
+  const requestToken = ++state.releaseDebug.requestToken;
+  const sources = [
+    { key: "classic", load: loadLatestClassicReleases },
+    { key: "yamlRuns", load: loadLatestYamlRuns },
+    { key: "yamlDeployments", load: loadLatestYamlEnvironmentDeployments }
+  ];
+  sources.forEach(source => {
+    state.releaseDebug[source.key] = [];
+    delete state.releaseDebug.errors[source.key];
+    renderReleaseDebugSection(source.key, true);
+  });
+  els.releasesRefresh.disabled = true;
+  await Promise.all(sources.map(async source => {
+    try {
+      const deployments = await source.load();
+      if (requestToken !== state.releaseDebug.requestToken) return;
+      state.releaseDebug[source.key] = deployments;
+      delete state.releaseDebug.errors[source.key];
+    } catch (error) {
+      if (requestToken !== state.releaseDebug.requestToken) return;
+      console.error(error);
+      state.releaseDebug[source.key] = [];
+      state.releaseDebug.errors[source.key] = error.message || "This release source could not be loaded.";
+    }
+    if (requestToken === state.releaseDebug.requestToken) renderReleaseDebugSection(source.key);
+  }));
+  if (requestToken !== state.releaseDebug.requestToken) return;
+  state.releaseDebug.loaded = true;
+  els.releasesRefresh.disabled = false;
+}
+
+async function loadYamlWorkItemDeployments(references) {
+  const uniqueReferences = new Map(references.map(reference => [
+    `${reference.projectId}:${reference.buildId}`,
+    reference
+  ]));
+  const loadedRuns = await mapWithConcurrency([...uniqueReferences.values()], 4, async reference => {
+    try {
+      const build = await azure(`/_apis/build/builds/${reference.buildId}?api-version=7.1`);
+      const timeline = await azure(`/_apis/build/builds/${reference.buildId}/timeline?api-version=7.1`);
+      return { build, timeline, reference };
+    } catch (error) {
+      if (error.status === 404) return null;
+      if (error.auth) {
+        const buildError = new Error("The PAT requires ‘Build: Read’ to load YAML pipeline stages.");
+        buildError.auth = true;
+        throw buildError;
+      }
+      throw error;
+    }
+  });
+  const runs = loadedRuns.filter(run => run && yamlStageRecords(run.timeline).length);
+  if (!runs.length) return [];
+  let environmentsByBuildId = new Map();
+  let environmentError = "";
+  try {
+    environmentsByBuildId = await loadYamlEnvironmentDeployments(runs.map(run => run.build));
+  } catch (error) {
+    console.warn("Azure DevOps environments could not be loaded.", error);
+    environmentError = error.auth
+      ? "Real Azure DevOps environments could not be loaded. The PAT requires ‘Build: Read’."
+      : error.message || "Real Azure DevOps environments could not be loaded.";
+  }
+  return runs.map(run => normalizeYamlDeployment(
+    run.build,
+    run.timeline,
+    run.reference,
+    environmentsByBuildId.get(Number(run.build.id)) || [],
+    environmentError
+  )).filter(Boolean);
+}
+
 async function loadDeploymentsForWorkItem(references) {
   const classicReferences = references.filter(reference => reference.sourceType === "classic");
-  const [classicDeployments] = await Promise.all([
-    loadClassicWorkItemDeployments(classicReferences)
-  ]);
-  return classicDeployments.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  const yamlReferences = references.filter(reference => reference.sourceType === "yaml");
+  const sources = [
+    { type: "classic", references: classicReferences, load: loadClassicWorkItemDeployments },
+    { type: "yaml", references: yamlReferences, load: loadYamlWorkItemDeployments }
+  ].filter(source => source.references.length);
+  const results = await Promise.allSettled(sources.map(source => source.load(source.references)));
+  const deployments = [];
+  const errors = [];
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") deployments.push(...result.value);
+    else {
+      const source = sources[index];
+      const fallback = source.type === "yaml"
+        ? "YAML pipeline stages could not be loaded."
+        : "Classic releases could not be loaded.";
+      errors.push(result.reason?.message || fallback);
+    }
+  });
+  deployments.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  return { deployments, errors };
 }
 
 async function loadWorkItemDeployments(item, references, sourceKey) {
   const requestToken = (state.workItemDeploymentsRequestTokens.get(item.id) || 0) + 1;
   state.workItemDeploymentsRequestTokens.set(item.id, requestToken);
   try {
-    const deployments = await loadDeploymentsForWorkItem(references);
+    const result = await loadDeploymentsForWorkItem(references);
     if (state.workItemDeploymentsRequestTokens.get(item.id) !== requestToken
         || state.workItemDeploymentSourceKeys.get(item.id) !== sourceKey) return;
-    state.workItemDeploymentsCache.set(item.id, deployments);
-    state.workItemDeploymentsErrors.delete(item.id);
+    const errors = [
+      ...result.errors,
+      state.workItemYamlDiscoveryErrors.get(item.id)
+    ].filter(Boolean);
+    state.workItemDeploymentsCache.set(item.id, result.deployments);
+    if (errors.length) state.workItemDeploymentsErrors.set(item.id, errors.join(" "));
+    else state.workItemDeploymentsErrors.delete(item.id);
     if (isSelectedWorkItem(item.id)) {
-      renderWorkItemDeployments(deployments);
+      renderWorkItemDeployments(result.deployments, false, errors.join(" "));
       renderCombinedActivity();
     }
   } catch (error) {
@@ -4658,15 +5428,25 @@ function normalizeWorkItemDeploymentReferences(item) {
     if (relation.rel !== "ArtifactLink") return;
     let relationUrl = String(relation.url || "");
     try { relationUrl = decodeURIComponent(relationUrl); } catch {}
-    const match = relationUrl.match(/^vstfs:\/\/\/ReleaseManagement\/ReleaseEnvironment\/([^:]+):(\d+):(\d+)$/i);
-    if (!match) return;
+    const classicMatch = relationUrl.match(/^vstfs:\/\/\/ReleaseManagement\/ReleaseEnvironment\/([^:]+):(\d+):(\d+)$/i);
+    if (classicMatch) {
+      const reference = {
+        sourceType: "classic",
+        projectId: classicMatch[1],
+        releaseId: Number(classicMatch[2]),
+        environmentId: Number(classicMatch[3])
+      };
+      references.set(`${reference.sourceType}:${reference.projectId}:${reference.releaseId}:${reference.environmentId}`, reference);
+      return;
+    }
+    const buildMatch = relationUrl.match(/^vstfs:\/\/\/Build\/Build\/(\d+)$/i);
+    if (!buildMatch) return;
     const reference = {
-      sourceType: "classic",
-      projectId: match[1],
-      releaseId: Number(match[2]),
-      environmentId: Number(match[3])
+      sourceType: "yaml",
+      projectId: activeAzureContext().project,
+      buildId: Number(buildMatch[1])
     };
-    references.set(`${reference.sourceType}:${reference.projectId}:${reference.releaseId}:${reference.environmentId}`, reference);
+    references.set(`${reference.sourceType}:${reference.projectId}:${reference.buildId}`, reference);
   });
   return [...references.values()];
 }
@@ -6822,12 +7602,16 @@ function deploymentStatusDisplay(value) {
   const status = String(value || "unknown").replace(/[^a-z]/gi, "").toLocaleLowerCase("en");
   const values = {
     succeeded: { label: "Succeeded", tone: "success" },
+    succeededwithissues: { label: "Succeeded with issues", tone: "warning" },
     partiallysucceeded: { label: "Partially succeeded", tone: "warning" },
     failed: { label: "Failed", tone: "danger" },
     rejected: { label: "Rejected", tone: "danger" },
     inprogress: { label: "In progress", tone: "progress" },
     queued: { label: "Queued", tone: "progress" },
     scheduled: { label: "Scheduled", tone: "progress" },
+    cancelling: { label: "Cancelling", tone: "progress" },
+    pending: { label: "Pending", tone: "neutral" },
+    completed: { label: "Completed", tone: "neutral" },
     notstarted: { label: "Not deployed", tone: "neutral" },
     notdeployed: { label: "Not deployed", tone: "neutral" },
     canceled: { label: "Canceled", tone: "neutral" },
@@ -6864,7 +7648,7 @@ function createWorkItemDeploymentEntry(deployment) {
   const header = document.createElement("header");
   const icon = document.createElement("span");
   icon.className = "work-item-release-icon";
-  icon.textContent = "R";
+  icon.textContent = deployment.sourceType === "yaml" ? "Y" : "R";
   const body = document.createElement("span");
   body.className = "work-item-release-body";
   const title = deployment.url ? document.createElement("a") : document.createElement("strong");
@@ -6889,35 +7673,67 @@ function createWorkItemDeploymentEntry(deployment) {
   status.textContent = statusValue.label;
   header.append(icon, body, status);
 
-  const environments = document.createElement("div");
-  environments.className = "work-item-release-environments";
-  deployment.environments.forEach(environment => {
-    const row = environment.url ? document.createElement("a") : document.createElement("div");
-    row.className = "work-item-release-environment";
-    if (environment.url) {
-      row.href = environment.url;
-      row.target = "_blank";
-      row.rel = "noopener noreferrer";
+  const details = document.createElement("div");
+  details.className = "work-item-release-environments";
+  const appendDeploymentGroup = (label, items, emptyText = "") => {
+    if (deployment.sourceType === "yaml") {
+      const heading = document.createElement("strong");
+      heading.className = "work-item-release-group-heading";
+      heading.textContent = label;
+      details.append(heading);
     }
-    const environmentStatus = deploymentStatusDisplay(environment.status);
-    const indicator = document.createElement("span");
-    indicator.className = "work-item-release-environment-indicator";
-    indicator.dataset.statusTone = environmentStatus.tone;
-    indicator.setAttribute("aria-hidden", "true");
-    const environmentBody = document.createElement("span");
-    environmentBody.className = "work-item-release-environment-body";
-    const environmentName = document.createElement("strong");
-    environmentName.textContent = environment.name;
-    const environmentDate = document.createElement("small");
-    environmentDate.textContent = environment.date ? formatDateTime(environment.date) : "Deployment details unavailable";
-    environmentBody.append(environmentName, environmentDate);
-    const environmentLabel = document.createElement("span");
-    environmentLabel.className = "work-item-release-environment-status";
-    environmentLabel.textContent = environmentStatus.label;
-    row.append(indicator, environmentBody, environmentLabel);
-    environments.append(row);
-  });
-  article.append(header, environments);
+    if (!items.length && emptyText) {
+      const empty = document.createElement("div");
+      empty.className = "work-item-release-group-empty";
+      empty.textContent = emptyText;
+      details.append(empty);
+      return;
+    }
+    items.forEach(environment => {
+      const row = environment.url ? document.createElement("a") : document.createElement("div");
+      row.className = "work-item-release-environment";
+      if (environment.url) {
+        row.href = environment.url;
+        row.target = "_blank";
+        row.rel = "noopener noreferrer";
+      }
+      const environmentStatus = deploymentStatusDisplay(environment.status);
+      const indicator = document.createElement("span");
+      indicator.className = "work-item-release-environment-indicator";
+      indicator.dataset.statusTone = environmentStatus.tone;
+      indicator.setAttribute("aria-hidden", "true");
+      const environmentBody = document.createElement("span");
+      environmentBody.className = "work-item-release-environment-body";
+      const environmentName = document.createElement("strong");
+      environmentName.textContent = environment.name;
+      const environmentDate = document.createElement("small");
+      environmentDate.textContent = [
+        environment.details,
+        environment.date ? formatDateTime(environment.date) : ""
+      ].filter(Boolean).join(" · ") || "Deployment details unavailable";
+      environmentBody.append(environmentName, environmentDate);
+      const environmentLabel = document.createElement("span");
+      environmentLabel.className = "work-item-release-environment-status";
+      environmentLabel.textContent = environmentStatus.label;
+      row.append(indicator, environmentBody, environmentLabel);
+      details.append(row);
+    });
+  };
+  if (deployment.sourceType === "yaml") {
+    if (deployment.displayMode !== "environments") {
+      appendDeploymentGroup("Stages", deployment.stages || []);
+    }
+    if (deployment.displayMode !== "stages") {
+      appendDeploymentGroup(
+        "Azure DevOps environments",
+        deployment.environments || [],
+        deployment.environmentError || "This run did not deploy to an Azure DevOps environment."
+      );
+    }
+  } else {
+    appendDeploymentGroup("Environments", deployment.environments || []);
+  }
+  article.append(header, details);
   return article;
 }
 
@@ -7256,6 +8072,20 @@ function renderEmptyBoard() {
   state.forYouErrors = {};
   state.forYouSelectedUser = null;
   state.forYouUserKey = "";
+  state.releaseDebug.classic = [];
+  state.releaseDebug.yamlRuns = [];
+  state.releaseDebug.yamlDeployments = [];
+  state.releaseDebug.errors = {};
+  state.releaseDebug.loaded = false;
+  state.releaseDebug.requestToken++;
+  state.workItemYamlReferencesCache.clear();
+  state.workItemYamlDiscoveryErrors.clear();
+  state.workItemYamlDiscoveryRequestTokens.clear();
+  state.yamlBuildWorkItemsCache.clear();
+  state.recentYamlBuildsProject = "";
+  state.recentYamlBuilds = [];
+  state.recentYamlBuildsLoaded = false;
+  state.recentYamlBuildsPromise = null;
   state.iteration = null;
   state.iterations = [];
   state.currentIterationId = "";
@@ -7516,6 +8346,22 @@ els.connectionForm.addEventListener("submit", event => {
       state.workItemDeploymentsErrors.clear();
       state.workItemDeploymentsRequestTokens.clear();
       state.workItemDeploymentSourceKeys.clear();
+      state.workItemYamlReferencesCache.clear();
+      state.workItemYamlDiscoveryErrors.clear();
+      state.workItemYamlDiscoveryRequestTokens.clear();
+      state.yamlBuildWorkItemsCache.clear();
+      state.githubCommitBuildIdsCache.clear();
+      state.azureGithubPullRequestBuildIdsCache.clear();
+      state.recentYamlBuildsProject = "";
+      state.recentYamlBuilds = [];
+      state.recentYamlBuildsLoaded = false;
+      state.recentYamlBuildsPromise = null;
+      state.releaseDebug.classic = [];
+      state.releaseDebug.yamlRuns = [];
+      state.releaseDebug.yamlDeployments = [];
+      state.releaseDebug.errors = {};
+      state.releaseDebug.loaded = false;
+      state.releaseDebug.requestToken++;
     }
     const githubToken = els.githubToken.value.trim();
     if (githubToken !== state.githubToken) {
@@ -7530,6 +8376,12 @@ els.connectionForm.addEventListener("submit", event => {
       state.githubWorkItemPullRequestsCache.clear();
       state.githubWorkItemPullRequestsErrors.clear();
       state.githubWorkItemPullRequestsRequestTokens.clear();
+      state.githubCommitBuildIdsCache.clear();
+      state.azureGithubPullRequestBuildIdsCache.clear();
+      state.workItemDeploymentsCache.clear();
+      state.workItemDeploymentsErrors.clear();
+      state.workItemDeploymentsRequestTokens.clear();
+      state.workItemDeploymentSourceKeys.clear();
       state.githubPullRequestFilters = { repositories: [], authors: [] };
       localStorage.removeItem(STORAGE.githubPrFilters);
     }
@@ -7578,6 +8430,12 @@ els.settingsForm.addEventListener("submit", async event => {
     state.githubWorkItemPullRequestsCache.clear();
     state.githubWorkItemPullRequestsErrors.clear();
     state.githubWorkItemPullRequestsRequestTokens.clear();
+    state.githubCommitBuildIdsCache.clear();
+    state.azureGithubPullRequestBuildIdsCache.clear();
+    state.workItemDeploymentsCache.clear();
+    state.workItemDeploymentsErrors.clear();
+    state.workItemDeploymentsRequestTokens.clear();
+    state.workItemDeploymentSourceKeys.clear();
   }
   els.settingsDialog.close();
   if (previousTeam !== state.teamId) {
@@ -7949,6 +8807,8 @@ els.globalSearchPageForm.addEventListener("submit", event => {
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
 els.wikiNav.addEventListener("click", () => showMainView("wiki"));
+els.releasesNav.addEventListener("click", () => showMainView("releases"));
+els.releasesRefresh.addEventListener("click", () => loadReleaseDebugPage(true));
 els.wikiSelect.addEventListener("change", async () => {
   state.wikiId = els.wikiSelect.value;
   localStorage.setItem(STORAGE.wiki, state.wikiId);
@@ -7968,6 +8828,7 @@ els.backlogShowAllFeatures.addEventListener("click", () => {
 });
 els.refresh.addEventListener("click", () => {
   if (state.currentView === "wiki") return loadWiki(true);
+  if (state.currentView === "releases") return loadReleaseDebugPage(true);
   if (state.currentView === "search") return runGlobalSearch(state.globalSearchQuery);
   return loadBoard();
 });
