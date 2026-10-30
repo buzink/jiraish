@@ -105,6 +105,8 @@ const state = {
   backlogSelectionAnchorId: null,
   backlogDeleting: false,
   backlogUpdating: false,
+  backlogPositionItemIds: [],
+  backlogPositionGroupKey: "",
   wikis: [],
   wikiId: localStorage.getItem(STORAGE.wiki) || "",
   wikiProjectName: "",
@@ -352,6 +354,16 @@ const els = {
   createWorkItemParentLabel: document.querySelector("#createWorkItemParentLabel"),
   createWorkItemError: document.querySelector("#createWorkItemError"),
   createWorkItemSubmit: document.querySelector("#createWorkItemSubmit"),
+  backlogPositionDialog: document.querySelector("#backlogPositionDialog"),
+  backlogPositionForm: document.querySelector("#backlogPositionForm"),
+  backlogPositionKey: document.querySelector("#backlogPositionKey"),
+  backlogPositionScope: document.querySelector("#backlogPositionScope"),
+  backlogPositionTitle: document.querySelector("#backlogPositionTitle"),
+  backlogPositionInput: document.querySelector("#backlogPositionInput"),
+  backlogPositionLowest: document.querySelector("#backlogPositionLowest"),
+  backlogPositionHighest: document.querySelector("#backlogPositionHighest"),
+  backlogPositionError: document.querySelector("#backlogPositionError"),
+  backlogPositionSubmit: document.querySelector("#backlogPositionSubmit"),
   workItemDialog: document.querySelector("#workItemDialog"),
   workItemActions: document.querySelector("#workItemActions"),
   deleteWorkItem: document.querySelector("#deleteWorkItem"),
@@ -2826,6 +2838,17 @@ function createBacklogRow(item) {
     })),
     iteration => updateBacklogItemField(item, "System.IterationPath", iteration.path || iteration.name, `Moving ${workItemKey(item.id)}…`, "Sprint")
   );
+  const moveToPosition = document.createElement("button");
+  moveToPosition.type = "button";
+  moveToPosition.className = "backlog-row-position";
+  moveToPosition.setAttribute("role", "menuitem");
+  moveToPosition.textContent = "Move to position";
+  moveToPosition.disabled = state.backlogUpdating || state.backlogDeleting;
+  moveToPosition.addEventListener("click", event => {
+    event.stopPropagation();
+    closeBacklogRowMenus();
+    showBacklogPositionDialog(item);
+  });
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "backlog-row-delete";
@@ -2837,7 +2860,7 @@ function createBacklogRow(item) {
     menu.open = false;
     deleteBacklogItems(item);
   });
-  options.append(assignMenu, sprintMenu, remove);
+  options.append(assignMenu, sprintMenu, moveToPosition, remove);
   menu.append(trigger, options);
   actions.append(menu);
   row.append(type, key, summary, itemState, priority, points, assignee, actions);
@@ -2990,6 +3013,134 @@ async function updateBacklogItemField(item, field, value, progress, label) {
   }
 }
 
+function backlogPositionGroup(item) {
+  const path = String(item.iterationPath || "").toLocaleLowerCase("en");
+  const iteration = chronologicalIterations().find(candidate => {
+    const candidatePath = String(candidate.path || "").toLocaleLowerCase("en");
+    return candidatePath && candidatePath === path;
+  });
+  return iteration
+    ? { key: `iteration:${iteration.id || path}`, label: iteration.name }
+    : { key: "other", label: "Other" };
+}
+
+function backlogItemsInPositionGroup(groupKey) {
+  return state.backlogItems.filter(candidate => backlogPositionGroup(candidate).key === groupKey);
+}
+
+function showBacklogPositionDialog(item) {
+  const targets = backlogActionTargets(item);
+  if (!targets.length || !state.backlogItems.length) return;
+  const groups = [...new Map(targets.map(target => {
+    const group = backlogPositionGroup(target);
+    return [group.key, group];
+  })).values()];
+  if (groups.length !== 1) {
+    showNotice("Select work items from the same backlog section to move them to one position.", "error");
+    return;
+  }
+  const group = groups[0];
+  const groupItems = backlogItemsInPositionGroup(group.key);
+  const targetIds = targets.map(target => Number(target.id));
+  const currentIndex = groupItems.findIndex(candidate => Number(candidate.id) === targetIds[0]);
+  state.backlogPositionItemIds = targetIds;
+  state.backlogPositionGroupKey = group.key;
+  const lowest = 1;
+  const highest = groupItems.length - targets.length + 1;
+  els.backlogPositionKey.textContent = targets.length === 1 ? workItemKey(targets[0].id) : `${targets.length} selected issues`;
+  els.backlogPositionScope.textContent = group.label;
+  els.backlogPositionTitle.textContent = targets.length === 1
+    ? targets[0].title
+    : "The selected issues will keep their current relative order.";
+  els.backlogPositionInput.min = String(lowest);
+  els.backlogPositionInput.max = String(highest);
+  els.backlogPositionInput.value = String(currentIndex + 1);
+  els.backlogPositionLowest.textContent = String(lowest);
+  els.backlogPositionHighest.textContent = String(highest);
+  els.backlogPositionError.textContent = "";
+  els.backlogPositionSubmit.disabled = false;
+  els.backlogPositionSubmit.textContent = "Move";
+  if (!els.backlogPositionDialog.open) els.backlogPositionDialog.showModal();
+  requestAnimationFrame(() => {
+    els.backlogPositionInput.focus();
+    els.backlogPositionInput.select();
+  });
+}
+
+function closeBacklogPositionDialog(force = false) {
+  if (state.backlogUpdating && !force) return;
+  state.backlogPositionItemIds = [];
+  state.backlogPositionGroupKey = "";
+  if (els.backlogPositionDialog.open) els.backlogPositionDialog.close();
+}
+
+async function moveBacklogItemToPosition(event) {
+  event.preventDefault();
+  if (state.backlogUpdating || state.backlogDeleting) return;
+  const targetIds = new Set(state.backlogPositionItemIds.map(Number));
+  const targets = state.backlogItems.filter(candidate => targetIds.has(Number(candidate.id)));
+  const groupItems = backlogItemsInPositionGroup(state.backlogPositionGroupKey);
+  const positionGroup = targets.length ? backlogPositionGroup(targets[0]) : null;
+  const team = state.teams.find(candidate => candidate.id === state.teamId);
+  if (!targets.length || targets.length !== targetIds.size || !groupItems.length || !team
+    || targets.some(target => backlogPositionGroup(target).key !== state.backlogPositionGroupKey)) {
+    els.backlogPositionError.textContent = "One or more selected work items are no longer available on the backlog.";
+    return;
+  }
+  const highest = groupItems.length - targets.length + 1;
+  const position = Number(els.backlogPositionInput.value);
+  if (!Number.isInteger(position) || position < 1 || position > highest) {
+    els.backlogPositionError.textContent = `Enter a whole number from 1 through ${highest}.`;
+    els.backlogPositionInput.focus();
+    return;
+  }
+  const reordered = groupItems.filter(candidate => !targetIds.has(Number(candidate.id)));
+  const insertIndex = position - 1;
+  reordered.splice(insertIndex, 0, ...targets);
+  const unchanged = reordered.every((candidate, index) => Number(candidate.id) === Number(groupItems[index]?.id));
+  if (unchanged) {
+    closeBacklogPositionDialog();
+    return;
+  }
+  const previousId = insertIndex > 0 ? Number(reordered[insertIndex - 1].id) : 0;
+  const nextIndex = insertIndex + targets.length;
+  const nextId = nextIndex < reordered.length ? Number(reordered[nextIndex].id) : 0;
+  state.backlogUpdating = true;
+  els.backlogPositionError.textContent = "";
+  els.backlogPositionSubmit.disabled = true;
+  els.backlogPositionSubmit.textContent = "Moving…";
+  try {
+    await azure(`/${encodeURIComponent(team.name)}/_apis/work/workitemsorder?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ids: targets.map(target => Number(target.id)),
+        previousId,
+        nextId
+      })
+    });
+    let groupIndex = 0;
+    state.backlogItems = state.backlogItems.map(candidate => (
+      backlogPositionGroup(candidate).key === state.backlogPositionGroupKey ? reordered[groupIndex++] : candidate
+    ));
+    closeBacklogPositionDialog(true);
+    const endPosition = position + targets.length - 1;
+    showNotice(targets.length === 1
+      ? `${workItemKey(targets[0].id)} moved to ${positionGroup.label} position ${position}.`
+      : `${targets.length} work items moved to ${positionGroup.label} positions ${position}–${endPosition}.`, "info");
+  } catch (error) {
+    console.error(error);
+    els.backlogPositionError.textContent = error.auth
+      ? "The selected work items could not be moved. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The selected work items could not be moved.";
+  } finally {
+    state.backlogUpdating = false;
+    els.backlogPositionSubmit.disabled = false;
+    els.backlogPositionSubmit.textContent = "Move";
+    if (state.currentView === "backlog") renderBacklog();
+  }
+}
+
 function selectBacklogRow(item, event = {}) {
   const itemId = Number(item.id);
   const toggleSpecific = Boolean(event.metaKey || event.ctrlKey);
@@ -3031,7 +3182,7 @@ function renderBacklogSelection() {
   });
 }
 
-function backlogDeleteTargets(item) {
+function backlogActionTargets(item) {
   const itemId = Number(item.id);
   const selectedIds = state.backlogSelectedIds.has(itemId) ? state.backlogSelectedIds : new Set([itemId]);
   return state.backlogItems.filter(candidate => selectedIds.has(Number(candidate.id)));
@@ -3039,7 +3190,7 @@ function backlogDeleteTargets(item) {
 
 async function deleteBacklogItems(item) {
   if (state.backlogDeleting) return;
-  const targets = backlogDeleteTargets(item);
+  const targets = backlogActionTargets(item);
   if (!targets.length) return;
   const description = targets.length === 1
     ? `${workItemKey(targets[0].id)} “${targets[0].title}”`
@@ -6773,6 +6924,22 @@ els.createWorkItemDialog.addEventListener("close", () => {
 });
 els.createWorkItemDialog.addEventListener("click", event => {
   if (event.target === els.createWorkItemDialog) requestCloseCreateWorkItemDialog();
+});
+els.backlogPositionForm.addEventListener("submit", moveBacklogItemToPosition);
+document.querySelectorAll("[data-close-backlog-position]").forEach(button => {
+  button.addEventListener("click", () => closeBacklogPositionDialog());
+});
+els.backlogPositionDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeBacklogPositionDialog();
+});
+els.backlogPositionDialog.addEventListener("click", event => {
+  if (event.target === els.backlogPositionDialog) closeBacklogPositionDialog();
+});
+els.backlogPositionDialog.addEventListener("close", () => {
+  state.backlogPositionItemIds = [];
+  state.backlogPositionGroupKey = "";
+  els.backlogPositionError.textContent = "";
 });
 for (const [button, content] of [
   [els.filterPanelToggle, els.filterPanelBody],

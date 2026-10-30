@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261030-backlog-row-actions" />
+    <link rel="stylesheet" href="styles.css?v=20261030-mobile-heading-search" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -493,6 +493,32 @@
       </form>
     </dialog>
 
+    <dialog id="backlogPositionDialog" class="dialog backlog-position-dialog" aria-labelledby="backlogPositionHeading">
+      <form id="backlogPositionForm">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span id="backlogPositionKey">Work item</span><span aria-hidden="true">/</span><span id="backlogPositionScope">Backlog</span></div>
+            <h2 id="backlogPositionHeading">Move to position</h2>
+            <p id="backlogPositionTitle"></p>
+          </div>
+          <button class="close-button" type="button" data-close-backlog-position aria-label="Close">×</button>
+        </div>
+        <label for="backlogPositionInput">
+          Position
+          <input id="backlogPositionInput" name="position" type="number" inputmode="numeric" step="1" required />
+        </label>
+        <div class="backlog-position-range" aria-live="polite">
+          <span>Lowest possible: <strong id="backlogPositionLowest">1</strong></span>
+          <span>Highest possible: <strong id="backlogPositionHighest">1</strong></span>
+        </div>
+        <p id="backlogPositionError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-backlog-position>Cancel</button>
+          <button id="backlogPositionSubmit" class="primary-button" type="submit">Move</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="workItemDialog" class="dialog work-item-dialog" aria-labelledby="workItemTitle" tabindex="-1">
       <div class="work-item-shell">
         <div id="workItemLoading" class="work-item-loading" aria-hidden="true"><span></span></div>
@@ -725,6 +751,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261030-backlog-row-actions" defer></script>
+    <script src="app.js?v=20261030-mobile-heading-search" defer></script>
   </body>
 </html>
