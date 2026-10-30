@@ -160,6 +160,9 @@ const state = {
   commentsCache: new Map(),
   commentsRequestTokens: new Map(),
   historyCache: new Map(),
+  githubWorkItemPullRequestsCache: new Map(),
+  githubWorkItemPullRequestsErrors: new Map(),
+  githubWorkItemPullRequestsRequestTokens: new Map(),
   richImageCache: new Map(),
   workItemTypeStatesCache: new Map(),
   workItemTypeFieldsCache: new Map(),
@@ -468,6 +471,7 @@ const els = {
   workItemChanged: document.querySelector("#workItemChanged"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
+  workItemPullRequestCount: document.querySelector("#workItemPullRequestCount"),
   workItemAttachmentsSection: document.querySelector("#workItemAttachmentsSection"),
   workItemAttachmentCount: document.querySelector("#workItemAttachmentCount"),
   workItemAttachments: document.querySelector("#workItemAttachments"),
@@ -479,6 +483,7 @@ const els = {
   workItemAllPanel: document.querySelector("#workItemAllPanel"),
   workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
+  workItemPullRequestsPanel: document.querySelector("#workItemPullRequestsPanel"),
   workItemActivityStatus: document.querySelector("#workItemActivityStatus"),
   workItemActivity: document.querySelector("#workItemActivity"),
   workItemCommentsStatus: document.querySelector("#workItemCommentsStatus"),
@@ -494,6 +499,8 @@ const els = {
   commentComposerStatus: document.querySelector("#commentComposerStatus"),
   workItemHistoryStatus: document.querySelector("#workItemHistoryStatus"),
   workItemHistory: document.querySelector("#workItemHistory"),
+  workItemPullRequestsStatus: document.querySelector("#workItemPullRequestsStatus"),
+  workItemPullRequests: document.querySelector("#workItemPullRequests"),
   workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
   openInAzure: document.querySelector("#openInAzure")
 };
@@ -952,6 +959,9 @@ function applyBoardStories(stories) {
     state.commentsCache.clear();
     state.commentsRequestTokens.clear();
     state.historyCache.clear();
+    state.githubWorkItemPullRequestsCache.clear();
+    state.githubWorkItemPullRequestsErrors.clear();
+    state.githubWorkItemPullRequestsRequestTokens.clear();
     state.workItemTypeStatesCache.clear();
     state.workItemTypeFieldsCache.clear();
     state.areaPathsCache = null;
@@ -1652,6 +1662,54 @@ async function githubPages(path) {
     if (result.length < 100) break;
   }
   return values;
+}
+
+async function githubIssueSearch(query) {
+  const values = [];
+  for (let page = 1; page <= 10; page++) {
+    const result = await github(`/search/issues?q=${encodeURIComponent(query)}&sort=updated&order=desc&per_page=100&page=${page}`);
+    if (!Array.isArray(result?.items)) throw new Error("GitHub returned an unexpected search response.");
+    values.push(...result.items);
+    if (result.items.length < 100 || values.length >= Math.min(Number(result.total_count) || 0, 1000)) break;
+  }
+  return values;
+}
+
+function githubRepositoryFromApiUrl(value) {
+  const match = String(value || "").match(/\/repos\/([^/]+\/[^/]+)$/i);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+async function loadGithubPullRequestsForWorkItem(item) {
+  if (!state.githubToken) return [];
+  const marker = `AB#${item.id}`;
+  const exactMarker = new RegExp(`\\bAB#${item.id}\\b`, "i");
+  const matches = (await githubIssueSearch(`is:pr in:title "${marker}"`))
+    .filter(pullRequest => exactMarker.test(pullRequest.title || ""));
+  const details = await mapWithConcurrency(matches, 6, async pullRequest => {
+    const repository = githubRepositoryFromApiUrl(pullRequest.repository_url);
+    if (!repository) return null;
+    const [owner, name] = repository.split("/");
+    try {
+      const detail = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${pullRequest.number}`);
+      return {
+        id: detail.id,
+        repository: detail.base?.repo?.full_name || repository,
+        number: detail.number,
+        title: detail.title || pullRequest.title,
+        url: detail.html_url || pullRequest.html_url,
+        author: detail.user?.login || pullRequest.user?.login || "Unknown",
+        updatedAt: detail.updated_at || pullRequest.updated_at || "",
+        state: detail.state || pullRequest.state || "open",
+        draft: Boolean(detail.draft),
+        mergedAt: detail.merged_at || pullRequest.pull_request?.merged_at || ""
+      };
+    } catch (error) {
+      if (error.status === 404) return null;
+      throw error;
+    }
+  });
+  return details.filter(Boolean).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 
 async function loadGithubAccessibleRepositories() {
@@ -4079,14 +4137,18 @@ async function showWorkItem(item) {
   const hasCachedDetail = state.detailsCache.has(item.id);
   const hasCachedComments = state.commentsCache.has(item.id);
   const hasCachedHistory = state.historyCache.has(item.id);
+  const hasCachedPullRequests = state.githubWorkItemPullRequestsCache.has(item.id);
   const cachedDetail = state.detailsCache.get(item.id) || null;
   const cachedComments = state.commentsCache.get(item.id) || [];
   const cachedHistory = state.historyCache.get(item.id) || [];
+  const cachedPullRequests = state.githubWorkItemPullRequestsCache.get(item.id) || [];
   if (!hasCachedComments) state.commentsErrors.delete(item.id);
   if (!hasCachedHistory) state.historyErrors.delete(item.id);
+  if (!hasCachedPullRequests) state.githubWorkItemPullRequestsErrors.delete(item.id);
   renderWorkItemDetail(item, cachedDetail, !hasCachedDetail);
   renderComments(cachedComments, !hasCachedComments);
   renderHistory(cachedHistory, !hasCachedHistory);
+  renderWorkItemPullRequests(cachedPullRequests, Boolean(state.githubToken) && !hasCachedPullRequests);
   renderCombinedActivity();
   setActivityTab("comments");
   if (!els.workItemDialog.open) {
@@ -4102,6 +4164,9 @@ async function showWorkItem(item) {
   }
   if (!hasCachedHistory) {
     loadWorkItemHistory(item);
+  }
+  if (state.githubToken && !hasCachedPullRequests) {
+    loadWorkItemPullRequests(item);
   }
 }
 
@@ -4143,6 +4208,9 @@ function removeDeletedWorkItem(itemId) {
   state.commentsErrors.delete(Number(itemId));
   state.historyCache.delete(Number(itemId));
   state.historyErrors.delete(Number(itemId));
+  state.githubWorkItemPullRequestsCache.delete(Number(itemId));
+  state.githubWorkItemPullRequestsErrors.delete(Number(itemId));
+  state.githubWorkItemPullRequestsRequestTokens.delete(Number(itemId));
 }
 
 async function deleteSelectedWorkItem() {
@@ -4256,6 +4324,29 @@ async function loadWorkItemHistory(item) {
     state.historyErrors.set(item.id, "History could not be loaded.");
     if (isSelectedWorkItem(item.id)) {
       renderHistory([], false, state.historyErrors.get(item.id));
+      renderCombinedActivity();
+    }
+  }
+}
+
+async function loadWorkItemPullRequests(item) {
+  const requestToken = (state.githubWorkItemPullRequestsRequestTokens.get(item.id) || 0) + 1;
+  state.githubWorkItemPullRequestsRequestTokens.set(item.id, requestToken);
+  try {
+    const pullRequests = await loadGithubPullRequestsForWorkItem(item);
+    if (state.githubWorkItemPullRequestsRequestTokens.get(item.id) !== requestToken) return;
+    state.githubWorkItemPullRequestsCache.set(item.id, pullRequests);
+    state.githubWorkItemPullRequestsErrors.delete(item.id);
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemPullRequests(pullRequests);
+      renderCombinedActivity();
+    }
+  } catch (error) {
+    if (state.githubWorkItemPullRequestsRequestTokens.get(item.id) !== requestToken) return;
+    console.error(error);
+    state.githubWorkItemPullRequestsErrors.set(item.id, error.message || "Pull requests could not be loaded.");
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemPullRequests([], false, state.githubWorkItemPullRequestsErrors.get(item.id));
       renderCombinedActivity();
     }
   }
@@ -6388,17 +6479,83 @@ function createHistoryChange(change) {
   return row;
 }
 
+function workItemPullRequestStatus(pullRequest) {
+  if (pullRequest.mergedAt) return { label: "Merged", tone: "merged" };
+  if (String(pullRequest.state).toLocaleLowerCase("en") === "closed") return { label: "Closed", tone: "closed" };
+  if (pullRequest.draft) return { label: "Draft", tone: "draft" };
+  return { label: "Open", tone: "open" };
+}
+
+function renderWorkItemPullRequests(pullRequests, loading = false, error = "") {
+  els.workItemPullRequestCount.textContent = String(pullRequests.length);
+  els.workItemPullRequestsStatus.classList.toggle("is-error", Boolean(error));
+  if (!state.githubToken) {
+    els.workItemPullRequestsStatus.textContent = "Add a GitHub API key under Change connection to load pull requests.";
+    els.workItemPullRequests.replaceChildren();
+    return;
+  }
+  if (loading) {
+    els.workItemPullRequestsStatus.textContent = "Loading pull requests…";
+    els.workItemPullRequests.replaceChildren(...Array.from({ length: 2 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "comment-skeleton";
+      return skeleton;
+    }));
+    return;
+  }
+  const marker = state.selectedItemId === null ? "this work item" : `AB#${state.selectedItemId}`;
+  els.workItemPullRequestsStatus.textContent = error || (!pullRequests.length
+    ? `No pull requests reference ${marker} in the title.`
+    : "");
+  els.workItemPullRequests.replaceChildren(...pullRequests.map(createWorkItemPullRequestEntry));
+}
+
+function createWorkItemPullRequestEntry(pullRequest) {
+  const link = document.createElement("a");
+  link.className = "work-item-pull-request";
+  link.href = pullRequest.url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.setAttribute("aria-label", `Open pull request ${pullRequest.repository} number ${pullRequest.number}: ${pullRequest.title}`);
+  const icon = document.createElement("span");
+  icon.className = "work-item-pull-request-icon";
+  icon.textContent = "PR";
+  const body = document.createElement("span");
+  body.className = "work-item-pull-request-body";
+  const title = document.createElement("strong");
+  title.textContent = pullRequest.title;
+  const metadata = document.createElement("small");
+  metadata.textContent = `${pullRequest.repository} #${pullRequest.number} · ${pullRequest.author} · ${formatDateTime(pullRequest.updatedAt)}`;
+  body.append(title, metadata);
+  const statusValue = workItemPullRequestStatus(pullRequest);
+  const status = document.createElement("span");
+  status.className = "work-item-pull-request-status";
+  status.dataset.statusTone = statusValue.tone;
+  status.textContent = statusValue.label;
+  link.append(icon, body, status);
+  return link;
+}
+
 function renderCombinedActivity() {
   const itemId = state.selectedItemId;
   if (itemId === null) return;
   const comments = state.commentsCache.get(itemId) || [];
   const history = state.historyCache.get(itemId) || [];
+  const pullRequests = state.githubWorkItemPullRequestsCache.get(itemId) || [];
   const loading = (!state.commentsCache.has(itemId) && !state.commentsErrors.has(itemId))
-    || (!state.historyCache.has(itemId) && !state.historyErrors.has(itemId));
-  const errors = [state.commentsErrors.get(itemId), state.historyErrors.get(itemId)].filter(Boolean);
+    || (!state.historyCache.has(itemId) && !state.historyErrors.has(itemId))
+    || (Boolean(state.githubToken)
+      && !state.githubWorkItemPullRequestsCache.has(itemId)
+      && !state.githubWorkItemPullRequestsErrors.has(itemId));
+  const errors = [
+    state.commentsErrors.get(itemId),
+    state.historyErrors.get(itemId),
+    state.githubToken ? state.githubWorkItemPullRequestsErrors.get(itemId) : ""
+  ].filter(Boolean);
   const activity = [
     ...comments.map(comment => ({ kind: "comment", date: comment.createdDate, value: comment })),
-    ...history.map(entry => ({ kind: "history", date: entry.date, value: entry }))
+    ...history.map(entry => ({ kind: "history", date: entry.date, value: entry })),
+    ...pullRequests.map(pullRequest => ({ kind: "pull-request", date: pullRequest.updatedAt, value: pullRequest }))
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   els.workItemActivityStatus.classList.toggle("is-error", Boolean(errors.length));
@@ -6407,9 +6564,11 @@ function renderCombinedActivity() {
     : loading
       ? "Loading activity…"
       : !activity.length ? "No activity yet." : "";
-  els.workItemActivity.replaceChildren(...activity.map(item =>
-    item.kind === "comment" ? createComment(item.value) : createHistoryEntry(item.value)
-  ));
+  els.workItemActivity.replaceChildren(...activity.map(item => {
+    if (item.kind === "comment") return createComment(item.value);
+    if (item.kind === "pull-request") return createWorkItemPullRequestEntry(item.value);
+    return createHistoryEntry(item.value);
+  }));
 }
 
 function initialsFor(name) {
@@ -6425,6 +6584,7 @@ function setActivityTab(tab) {
   els.workItemAllPanel.hidden = tab !== "all";
   els.workItemCommentsPanel.hidden = tab !== "comments";
   els.workItemHistoryPanel.hidden = tab !== "history";
+  els.workItemPullRequestsPanel.hidden = tab !== "pull-requests";
 }
 
 function htmlToText(value) {
@@ -6969,6 +7129,9 @@ els.connectionForm.addEventListener("submit", event => {
       state.githubOwnerChoices = [];
       state.githubOwnerRepositoriesCache.clear();
       state.githubSettingsRepositories = [];
+      state.githubWorkItemPullRequestsCache.clear();
+      state.githubWorkItemPullRequestsErrors.clear();
+      state.githubWorkItemPullRequestsRequestTokens.clear();
       state.githubPullRequestFilters = { repositories: [], authors: [] };
       localStorage.removeItem(STORAGE.githubPrFilters);
     }
@@ -7012,6 +7175,12 @@ els.settingsForm.addEventListener("submit", async event => {
   localStorage.setItem(STORAGE.githubOwners, JSON.stringify(state.githubOwners));
   localStorage.setItem(STORAGE.githubAllRepos, String(state.githubAllRepos));
   localStorage.setItem(STORAGE.githubRepos, JSON.stringify(state.githubRepos));
+  const githubConfigChanged = previousGithubKey !== githubPullRequestsCacheKey();
+  if (githubConfigChanged) {
+    state.githubWorkItemPullRequestsCache.clear();
+    state.githubWorkItemPullRequestsErrors.clear();
+    state.githubWorkItemPullRequestsRequestTokens.clear();
+  }
   els.settingsDialog.close();
   if (previousTeam !== state.teamId) {
     state.filters.sprint.clear();
@@ -7024,7 +7193,7 @@ els.settingsForm.addEventListener("submit", async event => {
     state.backlogSelectedIds.clear();
     state.backlogSelectionAnchorId = null;
     loadBoard();
-  } else if (previousGithubKey !== githubPullRequestsCacheKey() && state.currentView === "for-you") {
+  } else if (githubConfigChanged && state.currentView === "for-you") {
     state.githubPullRequestsKey = "";
     await loadForYou(true);
   } else render();
