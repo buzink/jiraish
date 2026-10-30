@@ -156,6 +156,13 @@ const state = {
   globalSearchLoading: false,
   globalSearchRequestToken: 0,
   currentView: "board",
+  routeReady: false,
+  routeApplying: false,
+  routeRequestToken: 0,
+  routeWikiPath: "",
+  routeSprint: "",
+  routeQueryTimer: null,
+  routeNavigationTimer: null,
   releaseDebug: {
     classic: [],
     yamlRuns: [],
@@ -987,7 +994,8 @@ async function loadBoard({ openSettings = false } = {}) {
     state.iterationStoriesCache.clear();
     state.currentIterationId = currentIterationResult.value?.[0]?.id || "";
     const storedIterationId = localStorage.getItem(STORAGE.iteration) || "";
-    state.iteration = state.iterations.find(iteration => iteration.id === storedIterationId)
+    state.iteration = iterationForRoute(state.routeSprint)
+      || state.iterations.find(iteration => iteration.id === storedIterationId)
       || state.iterations.find(iteration => iteration.id === state.currentIterationId)
       || nearestIteration(state.iterations);
     if (!state.iteration) {
@@ -997,6 +1005,7 @@ async function loadBoard({ openSettings = false } = {}) {
       if (state.currentView === "backlog") await loadBacklog(true);
       if (state.currentView === "for-you") await loadForYou(true);
       if (state.currentView === "releases") await loadReleaseDebugPage(true);
+      await restoreRoutedViewAfterBoardLoad();
       if (openSettings) showSettings();
       return;
     }
@@ -1008,6 +1017,7 @@ async function loadBoard({ openSettings = false } = {}) {
     if (state.currentView === "backlog") await loadBacklog(true);
     if (state.currentView === "for-you") await loadForYou(true);
     if (state.currentView === "releases") await loadReleaseDebugPage(true);
+    await restoreRoutedViewAfterBoardLoad();
     if (openSettings) showSettings();
   } catch (error) {
     console.error(error);
@@ -1403,6 +1413,8 @@ async function selectOverviewIteration(iteration) {
   try {
     await loadIterationStories(team, iteration);
     localStorage.setItem(STORAGE.iteration, iteration.id);
+    state.routeSprint = sprintRouteValue(iteration);
+    if (!state.routeApplying) writeAppRoute(currentAppRoute({ sprint: state.routeSprint, itemId: null }));
     render();
   } catch (error) {
     console.error(error);
@@ -1429,7 +1441,172 @@ async function applySprintFilter() {
   applyBoardStories([...uniqueStories.values()]);
 }
 
+const APP_ROUTE_PATHS = {
+  board: "sprint-board",
+  backlog: "backlog",
+  "for-you": "for-you",
+  wiki: "wiki",
+  releases: "releases",
+  search: "search"
+};
+
+const APP_ROUTE_VIEWS = Object.fromEntries(Object.entries(APP_ROUTE_PATHS).map(([view, path]) => [path, view]));
+
+function parseAppRoute(hash = window.location.hash) {
+  const raw = String(hash || "").replace(/^#\/?/, "");
+  const separator = raw.indexOf("?");
+  const path = (separator >= 0 ? raw.slice(0, separator) : raw).replace(/^\/+|\/+$/g, "").toLocaleLowerCase("en");
+  const params = new URLSearchParams(separator >= 0 ? raw.slice(separator + 1) : "");
+  const view = APP_ROUTE_VIEWS[path] || "board";
+  const itemId = Number(params.get("item"));
+  return {
+    view,
+    query: params.get("q") || "",
+    itemId: Number.isInteger(itemId) && itemId > 0 ? itemId : null,
+    sprint: params.get("sprint") || "",
+    wikiId: params.get("wiki") || "",
+    wikiPath: params.get("path") || ""
+  };
+}
+
+function sprintRouteValue(iteration = state.iteration) {
+  if (!iteration) return "";
+  const label = String(iteration.name || iteration.path || "");
+  const number = label.match(/(?:^|\b)sprint\s*[-#]?\s*(\d+)\s*$/i)?.[1]
+    || label.match(/(?:^|[^\d])(\d+)\s*$/)?.[1];
+  return number || String(iteration.id || "");
+}
+
+function iterationForRoute(value) {
+  const routeValue = String(value || "").toLocaleLowerCase("en");
+  if (!routeValue) return null;
+  return state.iterations.find(iteration => sprintRouteValue(iteration).toLocaleLowerCase("en") === routeValue
+    || String(iteration.id || "").toLocaleLowerCase("en") === routeValue) || null;
+}
+
+function appQueryForView(view) {
+  if (view === "board") return state.search;
+  if (view === "backlog") return state.backlogSearch;
+  if (view === "for-you") return state.forYouSearch;
+  if (view === "wiki") return state.wikiQuery;
+  if (view === "search") return state.globalSearchQuery;
+  return "";
+}
+
+function currentAppRoute(overrides = {}) {
+  const view = overrides.view || state.currentView || "board";
+  return {
+    view,
+    query: overrides.query !== undefined ? overrides.query : appQueryForView(view),
+    itemId: overrides.itemId !== undefined ? overrides.itemId : state.selectedItemId,
+    sprint: overrides.sprint !== undefined ? overrides.sprint : (view === "board" ? sprintRouteValue() : ""),
+    wikiId: overrides.wikiId !== undefined ? overrides.wikiId : (view === "wiki" ? state.wikiId : ""),
+    wikiPath: overrides.wikiPath !== undefined
+      ? overrides.wikiPath
+      : (view === "wiki" ? state.wikiPage?.path || state.routeWikiPath : "")
+  };
+}
+
+function appRouteHash(route) {
+  const view = APP_ROUTE_PATHS[route.view] ? route.view : "board";
+  const params = new URLSearchParams();
+  if (view === "board" && route.sprint) params.set("sprint", route.sprint);
+  if (route.query) params.set("q", route.query);
+  if (view === "wiki" && route.wikiId) params.set("wiki", route.wikiId);
+  if (view === "wiki" && route.wikiPath) params.set("path", route.wikiPath);
+  if (Number(route.itemId) > 0) params.set("item", String(Number(route.itemId)));
+  const query = params.toString();
+  return `#/${APP_ROUTE_PATHS[view]}${query ? `?${query}` : ""}`;
+}
+
+function writeAppRoute(route, { replace = false } = {}) {
+  const hash = appRouteHash(route);
+  if (window.location.hash === hash) return;
+  window.history[replace ? "replaceState" : "pushState"]({ jiraishRoute: true }, "", hash);
+}
+
+function primeAppRouteState(route) {
+  state.currentView = route.view;
+  if (route.view === "board") state.search = route.query;
+  if (route.view === "board") state.routeSprint = route.sprint;
+  if (route.view === "backlog") state.backlogSearch = route.query;
+  if (route.view === "for-you") state.forYouSearch = route.query;
+  if (route.view === "wiki") {
+    state.wikiQuery = route.query;
+    state.routeWikiPath = route.wikiPath;
+    if (route.wikiId) state.wikiId = route.wikiId;
+  }
+  if (route.view === "search") state.globalSearchQuery = route.query;
+  els.search.value = state.search;
+  els.backlogSearch.value = state.backlogSearch;
+  els.forYouSearch.value = state.forYouSearch;
+  els.wikiSearch.value = state.wikiQuery;
+  els.globalSearchInput.value = state.globalSearchQuery;
+  els.globalSearchPageInput.value = state.globalSearchQuery;
+}
+
+function scheduleRouteQueryUpdate() {
+  window.clearTimeout(state.routeQueryTimer);
+  state.routeQueryTimer = window.setTimeout(() => {
+    if (!state.routeApplying) writeAppRoute(currentAppRoute(), { replace: true });
+  }, 250);
+}
+
+async function applyRouteSprint(route) {
+  if (route.view !== "board" || !route.sprint || !state.iterations.length) return;
+  const iteration = iterationForRoute(route.sprint);
+  if (!iteration || iteration.id === state.iteration?.id) return;
+  const team = state.teams.find(value => value.id === state.teamId);
+  if (!team) return;
+  state.filters.sprint.clear();
+  state.iteration = iteration;
+  state.routeSprint = sprintRouteValue(iteration);
+  localStorage.setItem(STORAGE.iteration, iteration.id);
+  await loadIterationStories(team, iteration);
+}
+
+async function applyAppRoute(route) {
+  const routeToken = ++state.routeRequestToken;
+  const itemChanges = Number(route.itemId || 0) !== Number(state.selectedItemId || 0);
+  if (itemChanges && workItemHasUnsavedChanges() && !confirmDiscardChanges()) {
+    writeAppRoute(currentAppRoute(), { replace: true });
+    return;
+  }
+  state.routeApplying = true;
+  try {
+    if (els.workItemDialog.open && itemChanges) els.workItemDialog.close();
+    primeAppRouteState(route);
+    await applyRouteSprint(route);
+    if (route.view === "search" && route.query) await runGlobalSearch(route.query);
+    else await showMainView(route.view);
+    if (routeToken !== state.routeRequestToken) return;
+    if (route.itemId && (!els.workItemDialog.open || Number(state.selectedItemId) !== Number(route.itemId))) {
+      const opened = await showLinkedWorkItem(route.itemId);
+      if (!opened && routeToken === state.routeRequestToken) {
+        writeAppRoute(currentAppRoute({ itemId: null }), { replace: true });
+      }
+    }
+    if (routeToken === state.routeRequestToken) writeAppRoute(currentAppRoute(), { replace: true });
+  } finally {
+    if (routeToken === state.routeRequestToken) state.routeApplying = false;
+  }
+}
+
+async function applyInitialAppRoute() {
+  if (state.routeReady) return;
+  state.routeReady = true;
+  await applyAppRoute(parseAppRoute());
+}
+
+async function restoreRoutedViewAfterBoardLoad() {
+  if (!state.routeReady) return applyInitialAppRoute();
+  if (state.currentView === "wiki") return showMainView("wiki");
+  if (state.currentView === "search" && state.globalSearchQuery) return runGlobalSearch(state.globalSearchQuery);
+  if (state.currentView === "search") return showMainView("search");
+}
+
 async function showMainView(view) {
+  if (!state.routeApplying) writeAppRoute(currentAppRoute({ view, itemId: null }));
   const enteringForYou = view === "for-you" && state.currentView !== "for-you";
   state.currentView = view;
   const showForYou = view === "for-you";
@@ -4069,6 +4246,8 @@ async function loadWikiPage(page) {
   if (mobileLayoutQuery.matches) setMobileDisclosure(els.wikiNavigationToggle, els.wikiSidebar, false);
   const requestToken = ++state.wikiRequestToken;
   state.wikiPage = page;
+  state.routeWikiPath = page.path;
+  if (!state.routeApplying) writeAppRoute(currentAppRoute({ wikiPath: page.path }));
   renderWikiTree();
   renderWikiBreadcrumbs(page);
   els.wikiPageTitle.textContent = wikiPageTitle(page);
@@ -4101,6 +4280,9 @@ async function loadWiki(force = false) {
   }
   if (!force && state.wikiProjectName === state.projectName && state.wikiRoot) {
     renderWikiTree();
+    const target = state.routeWikiPath && flattenWikiPages(state.wikiRoot)
+      .find(page => page.path.toLocaleLowerCase("en") === state.routeWikiPath.toLocaleLowerCase("en"));
+    if (target && target.path !== state.wikiPage?.path) await loadWikiPage(target);
     return;
   }
   const loadToken = ++state.wikiLoadToken;
@@ -4137,7 +4319,10 @@ async function loadWiki(force = false) {
     els.wikiTreeStatus.textContent = "";
     renderWikiTree();
     const pages = flattenWikiPages(root);
-    const selected = pages.find(page => page.path === state.wikiPage?.path) || pages[0];
+    const selected = pages.find(page => state.routeWikiPath
+      && page.path.toLocaleLowerCase("en") === state.routeWikiPath.toLocaleLowerCase("en"))
+      || pages.find(page => page.path === state.wikiPage?.path)
+      || pages[0];
     if (selected) await loadWikiPage(selected);
     else els.wikiPageStatus.textContent = "This wiki has no pages.";
   } catch (error) {
@@ -4396,6 +4581,7 @@ async function showWorkItem(item) {
   if (els.workItemDialog.open && workItemHasUnsavedChanges() && !confirmDiscardChanges(
     `Discard your unsaved changes and open ${workItemKey(item.id)}?`
   )) return;
+  if (!state.routeApplying) writeAppRoute(currentAppRoute({ itemId: item.id }));
   state.selectedItemId = item.id;
   state.selectedItem = item;
   els.workItemActions.open = false;
@@ -4452,15 +4638,21 @@ async function showWorkItem(item) {
 
 async function showLinkedWorkItem(itemId) {
   const localItem = knownWorkItems().find(item => Number(item.id) === Number(itemId));
-  if (localItem) return showWorkItem(localItem);
+  if (localItem) {
+    await showWorkItem(localItem);
+    return true;
+  }
   try {
     const [item] = await fetchWorkItems([itemId]);
     if (!item) throw new Error(`Work item ${itemId} was not found.`);
     await showWorkItem(item);
+    return true;
   } catch (error) {
     console.error(error);
     els.workItemLoadStatus.textContent = error.message || "The linked work item could not be opened.";
     els.workItemLoadStatus.classList.add("is-error");
+    showNotice(error.message || `Work item ${itemId} could not be opened.`, "error");
+    return false;
   }
 }
 
@@ -7863,6 +8055,10 @@ function setRichContent(element, value, fallback) {
     return;
   }
   element.replaceChildren(sanitizeRichHtml(value));
+  element.querySelectorAll("a.internal-work-item-link[data-work-item-id]").forEach(link => {
+    const itemId = Number(link.dataset.workItemId);
+    if (itemId > 0) link.setAttribute("href", appRouteHash(currentAppRoute({ itemId })));
+  });
   hydrateRichTextImages(element);
   highlightCodeBlocks(element);
   element.querySelectorAll('input[type="checkbox"]').forEach(checkbox => { checkbox.disabled = true; });
@@ -8669,6 +8865,7 @@ els.workItemDialog.addEventListener("close", () => {
   if (state.currentView === "for-you") renderForYou();
   state.selectedItemId = null;
   state.selectedItem = null;
+  if (!state.routeApplying) writeAppRoute(currentAppRoute({ itemId: null }));
 });
 els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) requestCloseWorkItemDialog(); });
 window.addEventListener("beforeunload", event => {
@@ -8811,6 +9008,7 @@ els.releasesNav.addEventListener("click", () => showMainView("releases"));
 els.releasesRefresh.addEventListener("click", () => loadReleaseDebugPage(true));
 els.wikiSelect.addEventListener("change", async () => {
   state.wikiId = els.wikiSelect.value;
+  state.routeWikiPath = "";
   localStorage.setItem(STORAGE.wiki, state.wikiId);
   state.wikiRoot = null;
   state.wikiPage = null;
@@ -8820,6 +9018,7 @@ els.wikiSelect.addEventListener("change", async () => {
 els.wikiSearch.addEventListener("input", event => {
   state.wikiQuery = event.target.value;
   renderWikiTree();
+  scheduleRouteQueryUpdate();
 });
 els.backlogShowAllFeatures.addEventListener("click", () => {
   state.filters.feature.clear();
@@ -8832,14 +9031,20 @@ els.refresh.addEventListener("click", () => {
   if (state.currentView === "search") return runGlobalSearch(state.globalSearchQuery);
   return loadBoard();
 });
-els.search.addEventListener("input", event => { state.search = event.target.value; render(); });
+els.search.addEventListener("input", event => {
+  state.search = event.target.value;
+  render();
+  scheduleRouteQueryUpdate();
+});
 els.backlogSearch.addEventListener("input", event => {
   state.backlogSearch = event.target.value;
   renderBacklog();
+  scheduleRouteQueryUpdate();
 });
 els.forYouSearch.addEventListener("input", event => {
   state.forYouSearch = event.target.value;
   renderForYou();
+  scheduleRouteQueryUpdate();
 });
 els.boardGroupOptions.forEach(option => option.addEventListener("click", () => {
   state.boardGroupBy = option.dataset.boardGroup;
@@ -8867,6 +9072,7 @@ document.addEventListener("click", event => {
   if (event.target.closest?.("a.user-mention")) event.preventDefault();
   const workItemLink = event.target.closest?.("a.internal-work-item-link");
   if (workItemLink) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     if (!workItemLink.closest('[contenteditable="true"]')) showLinkedWorkItem(Number(workItemLink.dataset.workItemId));
   }
@@ -8893,7 +9099,27 @@ systemTheme.addEventListener?.("change", event => {
   if (!localStorage.getItem(STORAGE.theme)) applyTheme(event.matches ? "dark" : "light");
 });
 mobileLayoutQuery.addEventListener?.("change", event => applyMobileDisclosures(event.matches));
+function scheduleAppHistoryNavigation() {
+  window.clearTimeout(state.routeNavigationTimer);
+  state.routeNavigationTimer = window.setTimeout(() => {
+    const route = parseAppRoute();
+    if (!state.routeReady) {
+      primeAppRouteState(route);
+      return;
+    }
+    applyAppRoute(route).catch(error => {
+      console.error(error);
+      showNotice(error.message || "The requested page could not be opened.", "error");
+    });
+  }, 0);
+}
+
+window.addEventListener("popstate", scheduleAppHistoryNavigation);
+window.addEventListener("hashchange", scheduleAppHistoryNavigation);
 
 applyTheme(document.documentElement.dataset.theme || "light");
 applyMobileDisclosures(mobileLayoutQuery.matches);
+const initialAppRoute = parseAppRoute();
+primeAppRouteState(initialAppRoute);
+writeAppRoute(initialAppRoute, { replace: true });
 if (state.pat) loadBoard(); else { renderEmptyBoard(); showConnection(); }

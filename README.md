@@ -64,6 +64,19 @@ https://<github-user>.github.io/jiraish/
 
 GitHub Pages must use **GitHub Actions** as its publishing source in the repository settings.
 
+## Deep links
+
+Jiraish stores the active page, text query, wiki page, and open work item in the URL hash. This keeps links compatible with static GitHub Pages hosting. Examples:
+
+```text
+#/sprint-board?sprint=133&q=login
+#/backlog?item=8374
+#/search?q=AB%238374
+#/wiki?wiki=WISH.wiki&path=%2FDevelopment%2FAPI&q=performance
+```
+
+Refreshing or opening one of these links in a new tab restores the referenced page and work item after the Azure DevOps connection has loaded.
+
 ## Project structure
 
 ```text
