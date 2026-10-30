@@ -794,6 +794,36 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .work-item-pull-request-status[data-status-tone="draft"] { color: #44546f; background: #dfe1e6; }
 .work-item-pull-request-status[data-status-tone="merged"] { color: #5e4db2; background: #f3f0ff; }
 .work-item-pull-request-status[data-status-tone="closed"] { color: #ae2e24; background: #ffeceb; }
+.work-item-release-list { display: grid; gap: 10px; }
+.comments-status:not(:empty) + .work-item-release-list { margin-top: 12px; }
+.work-item-release { overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.work-item-release > header { min-width: 0; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px; }
+.work-item-release-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 4px; color: #0747a6; background: #deebff; font-size: 10px; font-weight: 800; }
+.work-item-release-body { min-width: 0; display: grid; gap: 3px; }
+.work-item-release-title, .work-item-release-body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-item-release-title { color: var(--navy); font-size: 12px; font-weight: 700; text-decoration: none; }
+a.work-item-release-title:hover, a.work-item-release-title:focus-visible { color: var(--blue-700); text-decoration: underline; text-underline-offset: 2px; }
+.work-item-release-body small { color: var(--muted); font-size: 10px; }
+.work-item-release-status { padding: 3px 7px; border-radius: 3px; font-size: 9px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+.work-item-release-status[data-status-tone="success"] { color: #216e4e; background: #dcfff1; }
+.work-item-release-status[data-status-tone="danger"] { color: #ae2e24; background: #ffeceb; }
+.work-item-release-status[data-status-tone="warning"] { color: #7f5f01; background: #fff7d6; }
+.work-item-release-status[data-status-tone="progress"] { color: #0055cc; background: #deebff; }
+.work-item-release-status[data-status-tone="neutral"] { color: #44546f; background: #dfe1e6; }
+.work-item-release-environments { border-top: 1px solid var(--line); background: var(--board-bg); }
+.work-item-release-environment { min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px 10px 8px 20px; color: var(--text); text-decoration: none; }
+.work-item-release-environment + .work-item-release-environment { border-top: 1px solid var(--line); }
+a.work-item-release-environment:hover, a.work-item-release-environment:focus-visible { outline: 0; background: #deebff; }
+.work-item-release-environment-indicator { width: 9px; height: 9px; border-radius: 50%; background: #8993a4; }
+.work-item-release-environment-indicator[data-status-tone="success"] { background: #22a06b; }
+.work-item-release-environment-indicator[data-status-tone="danger"] { background: #ca3521; }
+.work-item-release-environment-indicator[data-status-tone="warning"] { background: #e2b203; }
+.work-item-release-environment-indicator[data-status-tone="progress"] { background: #0c66e4; }
+.work-item-release-environment-body { min-width: 0; display: grid; gap: 2px; }
+.work-item-release-environment-body strong, .work-item-release-environment-body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-item-release-environment-body strong { color: var(--navy); font-size: 11px; }
+.work-item-release-environment-body small { color: var(--muted); font-size: 9px; }
+.work-item-release-environment-status { color: var(--muted); font-size: 9px; font-weight: 700; }
 .activity-placeholder { margin-top: 14px; padding: 18px; border-radius: 4px; color: var(--muted); background: var(--board-bg); font-size: 12px; text-align: center; }
 .work-item-details { padding: 25px 26px 34px; border-left: 1px solid var(--line); background: #fafbfc; }
 .work-item-details dl { margin: 0; }
@@ -1031,6 +1061,16 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 [data-theme="dark"] .work-item-pull-request-status[data-status-tone="draft"] { color: #b6c2cf; background: #38414a; }
 [data-theme="dark"] .work-item-pull-request-status[data-status-tone="merged"] { color: #b8acf6; background: #352c63; }
 [data-theme="dark"] .work-item-pull-request-status[data-status-tone="closed"] { color: #ffb8a5; background: #5d1f1a; }
+[data-theme="dark"] .work-item-release { border-color: #454f59; background: #22272b; }
+[data-theme="dark"] .work-item-release-icon { color: #85b8ff; background: #09326c; }
+[data-theme="dark"] .work-item-release-status[data-status-tone="success"] { color: #7ee2b8; background: #164b35; }
+[data-theme="dark"] .work-item-release-status[data-status-tone="danger"] { color: #ffb8a5; background: #5d1f1a; }
+[data-theme="dark"] .work-item-release-status[data-status-tone="warning"] { color: #f5cd47; background: #533f04; }
+[data-theme="dark"] .work-item-release-status[data-status-tone="progress"] { color: #85b8ff; background: #09326c; }
+[data-theme="dark"] .work-item-release-status[data-status-tone="neutral"] { color: #b6c2cf; background: #38414a; }
+[data-theme="dark"] .work-item-release-environments { border-color: #38414a; background: #1d2125; }
+[data-theme="dark"] .work-item-release-environment + .work-item-release-environment { border-color: #38414a; }
+[data-theme="dark"] a.work-item-release-environment:hover, [data-theme="dark"] a.work-item-release-environment:focus-visible { background: #1c3b5c; }
 [data-theme="dark"] .issue-tags span { color: #b6c2cf; background: #38414a; }
 [data-theme="dark"] .issue-tags-trigger:hover span { background: #454f59; }
 [data-theme="dark"] .issue-tags-menu { border-color: #596773; background: #282e33; box-shadow: 0 8px 22px rgba(0, 0, 0, .45); }
@@ -1216,6 +1256,10 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
   .work-item-subtask-state { grid-column: 3 / 5; justify-self: start; max-width: 100%; }
   .work-item-pull-request { grid-template-columns: 28px minmax(0, 1fr); }
   .work-item-pull-request-status { grid-column: 2; justify-self: start; }
+  .work-item-release > header { grid-template-columns: 28px minmax(0, 1fr); }
+  .work-item-release-status { grid-column: 2; justify-self: start; }
+  .work-item-release-environment { grid-template-columns: 10px minmax(0, 1fr); padding-left: 12px; }
+  .work-item-release-environment-status { grid-column: 2; justify-self: start; }
   .secondary-button { flex: 1; justify-content: center; }
   .filter-toolbar-label { width: 100%; }
   .filter-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }

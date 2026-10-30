@@ -163,6 +163,10 @@ const state = {
   githubWorkItemPullRequestsCache: new Map(),
   githubWorkItemPullRequestsErrors: new Map(),
   githubWorkItemPullRequestsRequestTokens: new Map(),
+  workItemDeploymentsCache: new Map(),
+  workItemDeploymentsErrors: new Map(),
+  workItemDeploymentsRequestTokens: new Map(),
+  workItemDeploymentSourceKeys: new Map(),
   richImageCache: new Map(),
   workItemTypeStatesCache: new Map(),
   workItemTypeFieldsCache: new Map(),
@@ -472,6 +476,7 @@ const els = {
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
   workItemPullRequestCount: document.querySelector("#workItemPullRequestCount"),
+  workItemReleaseCount: document.querySelector("#workItemReleaseCount"),
   workItemAttachmentsSection: document.querySelector("#workItemAttachmentsSection"),
   workItemAttachmentCount: document.querySelector("#workItemAttachmentCount"),
   workItemAttachments: document.querySelector("#workItemAttachments"),
@@ -484,6 +489,7 @@ const els = {
   workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
   workItemPullRequestsPanel: document.querySelector("#workItemPullRequestsPanel"),
+  workItemReleasesPanel: document.querySelector("#workItemReleasesPanel"),
   workItemActivityStatus: document.querySelector("#workItemActivityStatus"),
   workItemActivity: document.querySelector("#workItemActivity"),
   workItemCommentsStatus: document.querySelector("#workItemCommentsStatus"),
@@ -501,6 +507,8 @@ const els = {
   workItemHistory: document.querySelector("#workItemHistory"),
   workItemPullRequestsStatus: document.querySelector("#workItemPullRequestsStatus"),
   workItemPullRequests: document.querySelector("#workItemPullRequests"),
+  workItemReleasesStatus: document.querySelector("#workItemReleasesStatus"),
+  workItemReleases: document.querySelector("#workItemReleases"),
   workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
   openInAzure: document.querySelector("#openInAzure")
 };
@@ -698,6 +706,32 @@ async function azure(path, options = {}, scope = "project") {
   } finally {
     if (protectsWork) state.pendingWorkItemWrites = Math.max(0, state.pendingWorkItemWrites - 1);
   }
+}
+
+async function azureRelease(path, project = "") {
+  const parsed = activeAzureContext();
+  const releaseProject = project || parsed.project;
+  if (!releaseProject) throw new Error("No Azure DevOps project has been selected yet.");
+  const apiBase = `https://vsrm.dev.azure.com/${encodeURIComponent(parsed.organization)}/${encodeURIComponent(releaseProject)}`;
+  const response = await fetch(`${apiBase}${path}`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Basic ${btoa(`:${state.pat}`)}`
+    }
+  });
+  let result = null;
+  try { result = await response.json(); } catch {}
+  if (response.status === 401 || response.status === 403) {
+    const error = new Error("The PAT requires ‘Release: Read’ to load Classic releases.");
+    error.auth = true;
+    throw error;
+  }
+  if (!response.ok) {
+    const error = new Error(result?.message || `Azure DevOps Release returned error ${response.status}.`);
+    error.status = response.status;
+    throw error;
+  }
+  return result;
 }
 
 const WORK_ITEM_TYPE_ORDER = ["Epic", "Feature", "User Story", "Product Backlog Item", "Bug", "Task", "Issue"];
@@ -962,6 +996,10 @@ function applyBoardStories(stories) {
     state.githubWorkItemPullRequestsCache.clear();
     state.githubWorkItemPullRequestsErrors.clear();
     state.githubWorkItemPullRequestsRequestTokens.clear();
+    state.workItemDeploymentsCache.clear();
+    state.workItemDeploymentsErrors.clear();
+    state.workItemDeploymentsRequestTokens.clear();
+    state.workItemDeploymentSourceKeys.clear();
     state.workItemTypeStatesCache.clear();
     state.workItemTypeFieldsCache.clear();
     state.areaPathsCache = null;
@@ -4138,17 +4176,21 @@ async function showWorkItem(item) {
   const hasCachedComments = state.commentsCache.has(item.id);
   const hasCachedHistory = state.historyCache.has(item.id);
   const hasCachedPullRequests = state.githubWorkItemPullRequestsCache.has(item.id);
+  const hasCachedDeployments = state.workItemDeploymentsCache.has(item.id);
   const cachedDetail = state.detailsCache.get(item.id) || null;
   const cachedComments = state.commentsCache.get(item.id) || [];
   const cachedHistory = state.historyCache.get(item.id) || [];
   const cachedPullRequests = state.githubWorkItemPullRequestsCache.get(item.id) || [];
+  const cachedDeployments = state.workItemDeploymentsCache.get(item.id) || [];
   if (!hasCachedComments) state.commentsErrors.delete(item.id);
   if (!hasCachedHistory) state.historyErrors.delete(item.id);
   if (!hasCachedPullRequests) state.githubWorkItemPullRequestsErrors.delete(item.id);
+  if (!hasCachedDeployments) state.workItemDeploymentsErrors.delete(item.id);
   renderWorkItemDetail(item, cachedDetail, !hasCachedDetail);
   renderComments(cachedComments, !hasCachedComments);
   renderHistory(cachedHistory, !hasCachedHistory);
   renderWorkItemPullRequests(cachedPullRequests, Boolean(state.githubToken) && !hasCachedPullRequests);
+  renderWorkItemDeployments(cachedDeployments, !hasCachedDeployments);
   renderCombinedActivity();
   setActivityTab("comments");
   if (!els.workItemDialog.open) {
@@ -4167,6 +4209,9 @@ async function showWorkItem(item) {
   }
   if (state.githubToken && !hasCachedPullRequests) {
     loadWorkItemPullRequests(item);
+  }
+  if (hasCachedDetail) {
+    syncWorkItemDeployments(item, cachedDetail.deploymentReferences || []);
   }
 }
 
@@ -4211,6 +4256,10 @@ function removeDeletedWorkItem(itemId) {
   state.githubWorkItemPullRequestsCache.delete(Number(itemId));
   state.githubWorkItemPullRequestsErrors.delete(Number(itemId));
   state.githubWorkItemPullRequestsRequestTokens.delete(Number(itemId));
+  state.workItemDeploymentsCache.delete(Number(itemId));
+  state.workItemDeploymentsErrors.delete(Number(itemId));
+  state.workItemDeploymentsRequestTokens.delete(Number(itemId));
+  state.workItemDeploymentSourceKeys.delete(Number(itemId));
 }
 
 async function deleteSelectedWorkItem() {
@@ -4278,10 +4327,18 @@ async function loadWorkItemDetail(item) {
     if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
     state.detailsCache.set(item.id, detail);
     if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, detail, false);
+    syncWorkItemDeployments(item, detail.deploymentReferences);
   } catch (error) {
     if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
     console.error(error);
     if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, null, false, "Additional details could not be loaded.");
+    if (!state.workItemDeploymentsCache.has(item.id)) {
+      state.workItemDeploymentsErrors.set(item.id, "Releases could not be discovered because the work-item links could not be loaded.");
+      if (isSelectedWorkItem(item.id)) {
+        renderWorkItemDeployments([], false, state.workItemDeploymentsErrors.get(item.id));
+        renderCombinedActivity();
+      }
+    }
   }
 }
 
@@ -4352,6 +4409,210 @@ async function loadWorkItemPullRequests(item) {
   }
 }
 
+function deploymentReferencesKey(references) {
+  return references.map(reference => [
+    reference.sourceType,
+    reference.projectId,
+    reference.releaseId,
+    reference.environmentId
+  ].join(":"))
+    .sort()
+    .join("|");
+}
+
+function syncWorkItemDeployments(item, references) {
+  const sourceKey = deploymentReferencesKey(references);
+  const previousKey = state.workItemDeploymentSourceKeys.get(item.id);
+  const hasResult = state.workItemDeploymentsCache.has(item.id)
+    || state.workItemDeploymentsErrors.has(item.id)
+    || state.workItemDeploymentsRequestTokens.has(item.id);
+  if (previousKey === sourceKey && hasResult) return;
+  state.workItemDeploymentSourceKeys.set(item.id, sourceKey);
+  state.workItemDeploymentsCache.delete(item.id);
+  state.workItemDeploymentsErrors.delete(item.id);
+  if (!references.length) {
+    state.workItemDeploymentsCache.set(item.id, []);
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDeployments([]);
+      renderCombinedActivity();
+    }
+    return;
+  }
+  if (isSelectedWorkItem(item.id)) {
+    renderWorkItemDeployments([], true);
+    renderCombinedActivity();
+  }
+  loadWorkItemDeployments(item, references, sourceKey);
+}
+
+function latestDateValue(values) {
+  return values.reduce((latest, value) => {
+    const timestamp = new Date(value || 0).getTime();
+    return Number.isFinite(timestamp) && timestamp > latest ? timestamp : latest;
+  }, 0);
+}
+
+function classicEnvironmentDate(environment) {
+  const deployStepDates = (environment.deploySteps || []).flatMap(step => [
+    step.lastModifiedOn,
+    step.completedOn,
+    step.queuedOn,
+    step.startedOn
+  ]);
+  const timestamp = latestDateValue([
+    environment.modifiedOn,
+    ...deployStepDates
+  ]);
+  return timestamp ? new Date(timestamp).toISOString() : "";
+}
+
+function deploymentSummaryStatus(environments, fallback = "") {
+  const statuses = environments.map(environment => String(environment.status || "").toLocaleLowerCase("en"));
+  if (statuses.some(status => ["failed", "rejected"].includes(status))) return "failed";
+  if (statuses.some(status => ["inprogress", "queued", "scheduled"].includes(status))) return "inProgress";
+  if (statuses.length && statuses.every(status => status === "succeeded")) return "succeeded";
+  if (statuses.some(status => ["partiallysucceeded", "succeeded"].includes(status))) return "partiallySucceeded";
+  if (statuses.length && statuses.every(status => ["canceled", "abandoned", "skipped"].includes(status))) return "canceled";
+  if (statuses.length && statuses.every(status => status === "unavailable")) return "unavailable";
+  if (statuses.some(status => ["notstarted", "notdeployed", "undefined"].includes(status))) return "notStarted";
+  return fallback || "unknown";
+}
+
+function releaseEnvironmentWebUrl(releaseUrl, environmentId) {
+  if (!releaseUrl) return "";
+  try {
+    const url = new URL(releaseUrl);
+    url.searchParams.set("environmentId", String(environmentId));
+    return url.href;
+  } catch {
+    return releaseUrl;
+  }
+}
+
+function normalizeClassicDeployment(release, group) {
+  const activeContext = activeAzureContext();
+  const releaseId = Number(release.id || group.releaseId);
+  const releaseUrl = release._links?.web?.href
+    || `${activeContext.orgBase}/${encodeURIComponent(group.projectId)}/_releaseProgress?releaseId=${releaseId}`;
+  const environmentsById = new Map((release.environments || []).map(environment => [Number(environment.id), environment]));
+  const environments = [...group.environmentIds].map(environmentId => {
+    const environment = environmentsById.get(Number(environmentId));
+    if (!environment) {
+      return {
+        id: Number(environmentId),
+        name: `Environment ${environmentId}`,
+        status: "unavailable",
+        rank: Number.MAX_SAFE_INTEGER,
+        date: "",
+        url: releaseEnvironmentWebUrl(releaseUrl, environmentId)
+      };
+    }
+    return {
+      id: Number(environment.id),
+      name: environment.name || `Environment ${environment.id}`,
+      status: environment.status || "unknown",
+      rank: Number(environment.rank) || Number.MAX_SAFE_INTEGER,
+      date: classicEnvironmentDate(environment),
+      url: environment._links?.web?.href || releaseEnvironmentWebUrl(releaseUrl, environment.id)
+    };
+  }).sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+  const activityTimestamp = latestDateValue([
+    ...environments.map(environment => environment.date),
+    release.modifiedOn,
+    release.createdOn
+  ]);
+  return {
+    key: `classic:${group.projectId}:${releaseId}`,
+    sourceType: "classic",
+    sourceLabel: "Classic release",
+    id: releaseId,
+    name: release.name || `Release ${releaseId}`,
+    pipelineName: release.releaseDefinition?.name || release.definition?.name || "Classic release pipeline",
+    status: deploymentSummaryStatus(environments, release.status),
+    date: activityTimestamp ? new Date(activityTimestamp).toISOString() : release.modifiedOn || release.createdOn || "",
+    url: releaseUrl,
+    environments,
+    unavailable: false
+  };
+}
+
+async function loadClassicWorkItemDeployments(references) {
+  const groups = new Map();
+  references.forEach(reference => {
+    const key = `${reference.projectId}:${reference.releaseId}`;
+    if (!groups.has(key)) groups.set(key, {
+      projectId: reference.projectId,
+      releaseId: reference.releaseId,
+      environmentIds: new Set()
+    });
+    groups.get(key).environmentIds.add(reference.environmentId);
+  });
+  const deployments = await mapWithConcurrency([...groups.values()], 4, async group => {
+    try {
+      const release = await azureRelease(`/_apis/release/releases/${group.releaseId}?api-version=7.1`, group.projectId);
+      return normalizeClassicDeployment(release, group);
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      return {
+        key: `classic:${group.projectId}:${group.releaseId}`,
+        sourceType: "classic",
+        sourceLabel: "Classic release",
+        id: group.releaseId,
+        name: `Release ${group.releaseId}`,
+        pipelineName: "Classic release pipeline",
+        status: "unavailable",
+        date: "",
+        url: "",
+        environments: [...group.environmentIds].map(environmentId => ({
+          id: environmentId,
+          name: `Environment ${environmentId}`,
+          status: "unavailable",
+          rank: Number.MAX_SAFE_INTEGER,
+          date: "",
+          url: ""
+        })),
+        unavailable: true
+      };
+    }
+  });
+  return deployments;
+}
+
+async function loadDeploymentsForWorkItem(references) {
+  const classicReferences = references.filter(reference => reference.sourceType === "classic");
+  const [classicDeployments] = await Promise.all([
+    loadClassicWorkItemDeployments(classicReferences)
+  ]);
+  return classicDeployments.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+}
+
+async function loadWorkItemDeployments(item, references, sourceKey) {
+  const requestToken = (state.workItemDeploymentsRequestTokens.get(item.id) || 0) + 1;
+  state.workItemDeploymentsRequestTokens.set(item.id, requestToken);
+  try {
+    const deployments = await loadDeploymentsForWorkItem(references);
+    if (state.workItemDeploymentsRequestTokens.get(item.id) !== requestToken
+        || state.workItemDeploymentSourceKeys.get(item.id) !== sourceKey) return;
+    state.workItemDeploymentsCache.set(item.id, deployments);
+    state.workItemDeploymentsErrors.delete(item.id);
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDeployments(deployments);
+      renderCombinedActivity();
+    }
+  } catch (error) {
+    if (state.workItemDeploymentsRequestTokens.get(item.id) !== requestToken
+        || state.workItemDeploymentSourceKeys.get(item.id) !== sourceKey) return;
+    console.error(error);
+    state.workItemDeploymentsErrors.set(item.id, error.auth
+      ? "Releases could not be loaded. The PAT requires ‘Release: Read’."
+      : error.message || "Releases could not be loaded.");
+    if (isSelectedWorkItem(item.id)) {
+      renderWorkItemDeployments([], false, state.workItemDeploymentsErrors.get(item.id));
+      renderCombinedActivity();
+    }
+  }
+}
+
 function isSelectedWorkItem(itemId) {
   return state.selectedItemId === itemId && els.workItemDialog.open;
 }
@@ -4390,6 +4651,26 @@ function normalizeWorkItemChildIds(item) {
   }).filter(Boolean);
 }
 
+function normalizeWorkItemDeploymentReferences(item) {
+  if (!Array.isArray(item.relations)) return state.detailsCache.get(item.id)?.deploymentReferences || [];
+  const references = new Map();
+  item.relations.forEach(relation => {
+    if (relation.rel !== "ArtifactLink") return;
+    let relationUrl = String(relation.url || "");
+    try { relationUrl = decodeURIComponent(relationUrl); } catch {}
+    const match = relationUrl.match(/^vstfs:\/\/\/ReleaseManagement\/ReleaseEnvironment\/([^:]+):(\d+):(\d+)$/i);
+    if (!match) return;
+    const reference = {
+      sourceType: "classic",
+      projectId: match[1],
+      releaseId: Number(match[2]),
+      environmentId: Number(match[3])
+    };
+    references.set(`${reference.sourceType}:${reference.projectId}:${reference.releaseId}:${reference.environmentId}`, reference);
+  });
+  return [...references.values()];
+}
+
 function normalizeWorkItemDetail(item) {
   const fields = item.fields || {};
   const assigned = fields["System.AssignedTo"];
@@ -4419,6 +4700,7 @@ function normalizeWorkItemDetail(item) {
     parentError: "",
     attachments: normalizeWorkItemAttachments(item),
     childIds: normalizeWorkItemChildIds(item),
+    deploymentReferences: normalizeWorkItemDeploymentReferences(item),
     subtasks: state.detailsCache.get(item.id)?.subtasks || [],
     subtasksError: ""
   };
@@ -6536,27 +6818,134 @@ function createWorkItemPullRequestEntry(pullRequest) {
   return link;
 }
 
+function deploymentStatusDisplay(value) {
+  const status = String(value || "unknown").replace(/[^a-z]/gi, "").toLocaleLowerCase("en");
+  const values = {
+    succeeded: { label: "Succeeded", tone: "success" },
+    partiallysucceeded: { label: "Partially succeeded", tone: "warning" },
+    failed: { label: "Failed", tone: "danger" },
+    rejected: { label: "Rejected", tone: "danger" },
+    inprogress: { label: "In progress", tone: "progress" },
+    queued: { label: "Queued", tone: "progress" },
+    scheduled: { label: "Scheduled", tone: "progress" },
+    notstarted: { label: "Not deployed", tone: "neutral" },
+    notdeployed: { label: "Not deployed", tone: "neutral" },
+    canceled: { label: "Canceled", tone: "neutral" },
+    abandoned: { label: "Abandoned", tone: "neutral" },
+    skipped: { label: "Skipped", tone: "neutral" },
+    active: { label: "Active", tone: "progress" },
+    draft: { label: "Draft", tone: "neutral" },
+    unavailable: { label: "Unavailable", tone: "neutral" },
+    unknown: { label: "Unknown", tone: "neutral" }
+  };
+  return values[status] || { label: String(value || "Unknown"), tone: "neutral" };
+}
+
+function renderWorkItemDeployments(deployments, loading = false, error = "") {
+  els.workItemReleaseCount.textContent = String(deployments.length);
+  els.workItemReleasesStatus.classList.toggle("is-error", Boolean(error));
+  if (loading) {
+    els.workItemReleasesStatus.textContent = "Loading releases…";
+    els.workItemReleases.replaceChildren(...Array.from({ length: 2 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "comment-skeleton";
+      return skeleton;
+    }));
+    return;
+  }
+  els.workItemReleasesStatus.textContent = error || (!deployments.length ? "No related releases." : "");
+  els.workItemReleases.replaceChildren(...deployments.map(createWorkItemDeploymentEntry));
+}
+
+function createWorkItemDeploymentEntry(deployment) {
+  const article = document.createElement("article");
+  article.className = "work-item-release";
+  article.dataset.deploymentSource = deployment.sourceType;
+  const header = document.createElement("header");
+  const icon = document.createElement("span");
+  icon.className = "work-item-release-icon";
+  icon.textContent = "R";
+  const body = document.createElement("span");
+  body.className = "work-item-release-body";
+  const title = deployment.url ? document.createElement("a") : document.createElement("strong");
+  title.className = "work-item-release-title";
+  title.textContent = deployment.pipelineName;
+  if (deployment.url) {
+    title.href = deployment.url;
+    title.target = "_blank";
+    title.rel = "noopener noreferrer";
+  }
+  const metadata = document.createElement("small");
+  metadata.textContent = [
+    deployment.name,
+    deployment.sourceLabel,
+    deployment.date ? formatDateTime(deployment.date) : ""
+  ].filter(Boolean).join(" · ");
+  body.append(title, metadata);
+  const statusValue = deploymentStatusDisplay(deployment.status);
+  const status = document.createElement("span");
+  status.className = "work-item-release-status";
+  status.dataset.statusTone = statusValue.tone;
+  status.textContent = statusValue.label;
+  header.append(icon, body, status);
+
+  const environments = document.createElement("div");
+  environments.className = "work-item-release-environments";
+  deployment.environments.forEach(environment => {
+    const row = environment.url ? document.createElement("a") : document.createElement("div");
+    row.className = "work-item-release-environment";
+    if (environment.url) {
+      row.href = environment.url;
+      row.target = "_blank";
+      row.rel = "noopener noreferrer";
+    }
+    const environmentStatus = deploymentStatusDisplay(environment.status);
+    const indicator = document.createElement("span");
+    indicator.className = "work-item-release-environment-indicator";
+    indicator.dataset.statusTone = environmentStatus.tone;
+    indicator.setAttribute("aria-hidden", "true");
+    const environmentBody = document.createElement("span");
+    environmentBody.className = "work-item-release-environment-body";
+    const environmentName = document.createElement("strong");
+    environmentName.textContent = environment.name;
+    const environmentDate = document.createElement("small");
+    environmentDate.textContent = environment.date ? formatDateTime(environment.date) : "Deployment details unavailable";
+    environmentBody.append(environmentName, environmentDate);
+    const environmentLabel = document.createElement("span");
+    environmentLabel.className = "work-item-release-environment-status";
+    environmentLabel.textContent = environmentStatus.label;
+    row.append(indicator, environmentBody, environmentLabel);
+    environments.append(row);
+  });
+  article.append(header, environments);
+  return article;
+}
+
 function renderCombinedActivity() {
   const itemId = state.selectedItemId;
   if (itemId === null) return;
   const comments = state.commentsCache.get(itemId) || [];
   const history = state.historyCache.get(itemId) || [];
   const pullRequests = state.githubWorkItemPullRequestsCache.get(itemId) || [];
+  const deployments = state.workItemDeploymentsCache.get(itemId) || [];
   const loading = (!state.commentsCache.has(itemId) && !state.commentsErrors.has(itemId))
     || (!state.historyCache.has(itemId) && !state.historyErrors.has(itemId))
     || (Boolean(state.githubToken)
       && !state.githubWorkItemPullRequestsCache.has(itemId)
-      && !state.githubWorkItemPullRequestsErrors.has(itemId));
+      && !state.githubWorkItemPullRequestsErrors.has(itemId))
+    || (!state.workItemDeploymentsCache.has(itemId) && !state.workItemDeploymentsErrors.has(itemId));
   const errors = [
     state.commentsErrors.get(itemId),
     state.historyErrors.get(itemId),
-    state.githubToken ? state.githubWorkItemPullRequestsErrors.get(itemId) : ""
+    state.githubToken ? state.githubWorkItemPullRequestsErrors.get(itemId) : "",
+    state.workItemDeploymentsErrors.get(itemId)
   ].filter(Boolean);
   const activity = [
     ...comments.map(comment => ({ kind: "comment", date: comment.createdDate, value: comment })),
     ...history.map(entry => ({ kind: "history", date: entry.date, value: entry })),
-    ...pullRequests.map(pullRequest => ({ kind: "pull-request", date: pullRequest.updatedAt, value: pullRequest }))
-  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+    ...pullRequests.map(pullRequest => ({ kind: "pull-request", date: pullRequest.updatedAt, value: pullRequest })),
+    ...deployments.map(deployment => ({ kind: "deployment", date: deployment.date, value: deployment }))
+  ].sort((a, b) => (new Date(b.date || 0).getTime() || 0) - (new Date(a.date || 0).getTime() || 0));
 
   els.workItemActivityStatus.classList.toggle("is-error", Boolean(errors.length));
   els.workItemActivityStatus.textContent = errors.length
@@ -6567,6 +6956,7 @@ function renderCombinedActivity() {
   els.workItemActivity.replaceChildren(...activity.map(item => {
     if (item.kind === "comment") return createComment(item.value);
     if (item.kind === "pull-request") return createWorkItemPullRequestEntry(item.value);
+    if (item.kind === "deployment") return createWorkItemDeploymentEntry(item.value);
     return createHistoryEntry(item.value);
   }));
 }
@@ -6585,6 +6975,7 @@ function setActivityTab(tab) {
   els.workItemCommentsPanel.hidden = tab !== "comments";
   els.workItemHistoryPanel.hidden = tab !== "history";
   els.workItemPullRequestsPanel.hidden = tab !== "pull-requests";
+  els.workItemReleasesPanel.hidden = tab !== "releases";
 }
 
 function htmlToText(value) {
@@ -7108,6 +7499,7 @@ function renderGithubRepositoryChoices() {
 els.connectionForm.addEventListener("submit", event => {
   event.preventDefault();
   try {
+    const previousAzureConnection = `${state.orgUrl}\n${state.pat}`;
     parseAzureUrl(els.orgUrl.value);
     state.orgUrl = els.orgUrl.value.trim();
     state.workItemTypes = [];
@@ -7119,6 +7511,12 @@ els.connectionForm.addEventListener("submit", event => {
     updateBranding();
     state.pat = els.pat.value.trim();
     if (!state.pat) throw new Error("Enter a PAT.");
+    if (`${state.orgUrl}\n${state.pat}` !== previousAzureConnection) {
+      state.workItemDeploymentsCache.clear();
+      state.workItemDeploymentsErrors.clear();
+      state.workItemDeploymentsRequestTokens.clear();
+      state.workItemDeploymentSourceKeys.clear();
+    }
     const githubToken = els.githubToken.value.trim();
     if (githubToken !== state.githubToken) {
       state.githubPullRequests = [];

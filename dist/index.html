@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261030-work-item-pull-requests" />
+    <link rel="stylesheet" href="styles.css?v=20261030-work-item-releases" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -681,6 +681,7 @@
                 <button class="is-active" type="button" role="tab" aria-selected="true" data-activity-tab="comments">Comments <span id="workItemCommentCount" class="comment-count">0</span></button>
                 <button type="button" role="tab" aria-selected="false" data-activity-tab="history">History <span id="workItemHistoryCount" class="comment-count">0</span></button>
                 <button type="button" role="tab" aria-selected="false" data-activity-tab="pull-requests">Pull requests <span id="workItemPullRequestCount" class="comment-count">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="releases">Releases <span id="workItemReleaseCount" class="comment-count">0</span></button>
               </div>
               <div id="workItemAllPanel" class="activity-panel" role="tabpanel" hidden>
                 <div id="workItemActivityStatus" class="comments-status" aria-live="polite"></div>
@@ -721,6 +722,11 @@
                 <h4 class="activity-panel-title">Pull requests</h4>
                 <div id="workItemPullRequestsStatus" class="comments-status" aria-live="polite"></div>
                 <div id="workItemPullRequests" class="work-item-pull-request-list"></div>
+              </div>
+              <div id="workItemReleasesPanel" class="activity-panel" role="tabpanel" hidden>
+                <h4 class="activity-panel-title">Releases</h4>
+                <div id="workItemReleasesStatus" class="comments-status" aria-live="polite"></div>
+                <div id="workItemReleases" class="work-item-release-list"></div>
               </div>
             </section>
           </main>
@@ -788,6 +794,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261030-work-item-pull-requests" defer></script>
+    <script src="app.js?v=20261030-work-item-releases" defer></script>
   </body>
 </html>
