@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261030-deep-links-v2" />
+    <link rel="stylesheet" href="styles.css?v=20261031-release-readiness-v2" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -272,6 +272,35 @@
           </div>
           <button id="releasesRefresh" class="secondary-button" type="button">Refresh releases</button>
         </header>
+        <section class="release-readiness" aria-labelledby="releaseReadinessTitle">
+          <header class="release-readiness-heading">
+            <div>
+              <span class="release-readiness-kicker">Release readiness</span>
+              <h2 id="releaseReadinessTitle">What would move with the next release?</h2>
+              <p>Stories and bugs in the latest successful deployment on one environment, but not yet in the next environment.</p>
+            </div>
+            <span id="releaseReadinessStatus" class="release-readiness-status" aria-live="polite"></span>
+          </header>
+          <div id="releaseReadinessNotice" class="release-readiness-notice" hidden></div>
+          <div class="release-readiness-grid">
+            <article class="release-readiness-lane">
+              <header>
+                <div><span class="release-tier development">DEV</span><div><h3>Development → Acceptance</h3><p>Present on Development, not yet on Acceptance</p></div></div>
+                <span id="developmentReadinessCount" class="count">0</span>
+              </header>
+              <div id="developmentReadinessSummary" class="release-readiness-summary"></div>
+              <div id="developmentReadinessList" class="release-readiness-list"></div>
+            </article>
+            <article class="release-readiness-lane">
+              <header>
+                <div><span class="release-tier acceptance">ACC</span><div><h3>Acceptance → Production</h3><p>Present on Acceptance, not yet on Production</p></div></div>
+                <span id="acceptanceReadinessCount" class="count">0</span>
+              </header>
+              <div id="acceptanceReadinessSummary" class="release-readiness-summary"></div>
+              <div id="acceptanceReadinessList" class="release-readiness-list"></div>
+            </article>
+          </div>
+        </section>
         <div class="release-debug-grid">
           <section class="release-debug-panel" aria-labelledby="classicReleasesTitle">
             <header><div><span class="release-debug-icon classic" aria-hidden="true">R</span><h2 id="classicReleasesTitle">Classic releases</h2></div><span id="classicReleasesCount" class="count">0</span></header>
@@ -826,6 +855,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261030-deep-links-v2" defer></script>
+    <script src="app.js?v=20261031-release-readiness-v2" defer></script>
   </body>
 </html>

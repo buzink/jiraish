@@ -9,6 +9,7 @@ Jiraish is a compact, Jira-style sprint and backlog interface for Azure DevOps. 
 - Jira-style Epic and Feature sidebar with issue, completion, and estimate metrics plus feature filtering
 - Confluence-style reader for Azure DevOps wikis with page navigation, search, and Markdown rendering
 - For you page with assigned work, mentions, personal activity, project-wide work item activity, and relevant open GitHub pull requests
+- Release readiness overview comparing Development → Acceptance and Acceptance → Production across Classic and YAML deployments
 - Filters for type, assignee, priority, sprint, state, area, tags, and feature
 - View and edit work items directly
 - Create an empty work item of any type configured in the Azure DevOps project
@@ -44,7 +45,7 @@ https://dev.azure.com/organization/project/team/
 
 When a team URL is used, that team is selected by default on first launch. Without a team in the URL, Jiraish uses the previously selected team or the first available team. With an organization-only URL, Jiraish uses the previously selected project or the first available project.
 
-The PAT needs at least read access to projects, teams, iterations, and work items. Editing work items also requires write access to Work Items.
+The PAT needs at least read access to projects, teams, iterations, and work items. The Releases page additionally needs read access to Builds, Releases, and Environments. Editing work items also requires write access to Work Items.
 
 The URL and PAT are stored only in the browser's local storage. Never publish or commit a PAT.
 

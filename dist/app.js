@@ -169,7 +169,19 @@ const state = {
     yamlDeployments: [],
     errors: {},
     loaded: false,
-    requestToken: 0
+    requestToken: 0,
+    environmentsPromise: null,
+    classicReleaseDetailsPromise: null
+  },
+  releaseReadiness: {
+    development: [],
+    acceptance: [],
+    warnings: [],
+    error: "",
+    loaded: false,
+    requestToken: 0,
+    githubComparisons: new Map(),
+    githubRepositoryMatches: new Map()
   },
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
@@ -271,6 +283,14 @@ const els = {
   releasesViews: [...document.querySelectorAll("[data-releases-view]")],
   searchViews: [...document.querySelectorAll("[data-search-view]")],
   releasesRefresh: document.querySelector("#releasesRefresh"),
+  releaseReadinessStatus: document.querySelector("#releaseReadinessStatus"),
+  releaseReadinessNotice: document.querySelector("#releaseReadinessNotice"),
+  developmentReadinessCount: document.querySelector("#developmentReadinessCount"),
+  developmentReadinessSummary: document.querySelector("#developmentReadinessSummary"),
+  developmentReadinessList: document.querySelector("#developmentReadinessList"),
+  acceptanceReadinessCount: document.querySelector("#acceptanceReadinessCount"),
+  acceptanceReadinessSummary: document.querySelector("#acceptanceReadinessSummary"),
+  acceptanceReadinessList: document.querySelector("#acceptanceReadinessList"),
   classicReleasesCount: document.querySelector("#classicReleasesCount"),
   classicReleasesStatus: document.querySelector("#classicReleasesStatus"),
   classicReleasesList: document.querySelector("#classicReleasesList"),
@@ -2056,14 +2076,23 @@ async function githubCommitAzureBuildIds(repository, sha) {
   return request;
 }
 
+function githubRepositoryFromRemoteUrl(value) {
+  const text = String(value || "").trim();
+  const apiMatch = text.match(/github\.com\/repos\/([^/]+)\/([^/?#]+)(?:[/?#]|$)/i);
+  if (apiMatch) return `${decodeURIComponent(apiMatch[1])}/${decodeURIComponent(apiMatch[2]).replace(/\.git$/i, "")}`;
+  const remoteMatch = text.match(/github\.com[/:]([^/\s:]+)\/([^/\s?#]+)(?:[/?#]|$)/i);
+  return remoteMatch ? `${decodeURIComponent(remoteMatch[1])}/${decodeURIComponent(remoteMatch[2]).replace(/\.git$/i, "")}` : "";
+}
+
 function azureBuildRepositoryName(build) {
   const repository = build?.repository || {};
-  const candidates = [repository.name, repository.fullName];
-  try {
-    const url = new URL(repository.url || "");
-    const githubMatch = url.pathname.match(/\/repos\/([^/]+\/[^/]+)(?:\/|$)/i);
-    if (githubMatch) candidates.push(decodeURIComponent(githubMatch[1]));
-  } catch {}
+  const candidates = [
+    githubRepositoryFromRemoteUrl(repository.url),
+    githubRepositoryFromRemoteUrl(repository.remoteUrl),
+    repository.fullName,
+    repository.name,
+    ...Object.values(repository.properties || {})
+  ];
   return candidates.map(value => String(value || "").replace(/^github:/i, "").toLocaleLowerCase("en"))
     .find(value => value.includes("/")) || "";
 }
@@ -5242,17 +5271,24 @@ function normalizeYamlEnvironmentDeployment(environment, records) {
 }
 
 async function loadAzureEnvironments() {
-  const environments = [];
-  let continuationToken = "";
-  do {
-    const continuation = continuationToken
-      ? `&continuationToken=${encodeURIComponent(continuationToken)}`
-      : "";
-    const page = await azurePage(`/_apis/pipelines/environments?$top=100${continuation}&api-version=7.2-preview.1`);
-    environments.push(...(Array.isArray(page.result) ? page.result : page.result?.value || []));
-    continuationToken = page.continuationToken;
-  } while (continuationToken);
-  return environments;
+  if (state.releaseDebug.environmentsPromise) return state.releaseDebug.environmentsPromise;
+  state.releaseDebug.environmentsPromise = (async () => {
+    const environments = [];
+    let continuationToken = "";
+    do {
+      const continuation = continuationToken
+        ? `&continuationToken=${encodeURIComponent(continuationToken)}`
+        : "";
+      const page = await azurePage(`/_apis/pipelines/environments?$top=100${continuation}&api-version=7.2-preview.1`);
+      environments.push(...(Array.isArray(page.result) ? page.result : page.result?.value || []));
+      continuationToken = page.continuationToken;
+    } while (continuationToken);
+    return environments;
+  })().catch(error => {
+    state.releaseDebug.environmentsPromise = null;
+    throw error;
+  });
+  return state.releaseDebug.environmentsPromise;
 }
 
 async function loadEnvironmentRecordsForBuilds(environment, buildsById) {
@@ -5301,11 +5337,28 @@ async function loadYamlEnvironmentDeployments(builds) {
   return deploymentsByBuildId;
 }
 
+async function loadRecentClassicReleaseDetails() {
+  if (state.releaseDebug.classicReleaseDetailsPromise) return state.releaseDebug.classicReleaseDetailsPromise;
+  state.releaseDebug.classicReleaseDetailsPromise = (async () => {
+    const result = await azureRelease("/_apis/release/releases?$top=30&queryOrder=descending&api-version=7.1");
+    return (await mapWithConcurrency(result?.value || [], 5, async summary => {
+      try {
+        return await azureRelease(`/_apis/release/releases/${Number(summary.id)}?api-version=7.1`);
+      } catch (error) {
+        if (error.status === 404) return null;
+        throw error;
+      }
+    })).filter(Boolean);
+  })().catch(error => {
+    state.releaseDebug.classicReleaseDetailsPromise = null;
+    throw error;
+  });
+  return state.releaseDebug.classicReleaseDetailsPromise;
+}
+
 async function loadLatestClassicReleases() {
-  const result = await azureRelease("/_apis/release/releases?$top=5&queryOrder=descending&api-version=7.1");
-  const releases = result?.value || [];
-  const deployments = await mapWithConcurrency(releases, 4, async releaseSummary => {
-    const release = await azureRelease(`/_apis/release/releases/${Number(releaseSummary.id)}?api-version=7.1`);
+  const releases = await loadRecentClassicReleaseDetails();
+  const deployments = releases.map(release => {
     return normalizeClassicDeployment(release, {
       projectId: activeAzureContext().project,
       releaseId: Number(release.id),
@@ -5406,6 +5459,352 @@ async function loadLatestYamlEnvironmentDeployments() {
   return normalizeLatestYamlEnvironmentDeployments(environmentRecords);
 }
 
+function releaseEnvironmentTier(name) {
+  const words = String(name || "").toLocaleLowerCase("en").split(/[^a-z0-9]+/).filter(Boolean);
+  if (words.some(word => ["production", "prod"].includes(word))) return "production";
+  if (words.some(word => ["acceptance", "accept", "acc", "staging", "stage"].includes(word))) return "acceptance";
+  if (words.some(word => ["development", "develop", "dev", "preview"].includes(word))) return "development";
+  return "";
+}
+
+function successfulDeployment(value) {
+  return ["succeeded", "partiallysucceeded", "succeededwithissues"].includes(String(value || "").toLocaleLowerCase("en"));
+}
+
+function latestSnapshot(snapshots, candidate) {
+  const key = `${candidate.tier}:${candidate.pipelineKey}`;
+  const existing = snapshots.get(key);
+  if (!existing || new Date(candidate.date || 0) > new Date(existing.date || 0)) snapshots.set(key, candidate);
+}
+
+async function loadBuildsById(ids) {
+  const builds = new Map();
+  await mapWithConcurrency([...new Set(ids.map(Number).filter(Boolean))], 6, async buildId => {
+    try {
+      const build = await azure(`/_apis/build/builds/${buildId}?api-version=7.1`);
+      builds.set(buildId, build);
+    } catch (error) {
+      if (error.status !== 404) throw error;
+    }
+  });
+  return builds;
+}
+
+function buildRepositoryLabel(build) {
+  return build?.repository?.name || build?.repository?.id || "Unknown repository";
+}
+
+function yamlReadinessPipelineKey(build, record) {
+  const definitionId = Number(build?.definition?.id || record?.definition?.id) || String(build?.definition?.name || record?.definition?.name || record?.owner?.name || "pipeline");
+  return `yaml:${definitionId}:${String(buildRepositoryLabel(build)).toLocaleLowerCase("en")}`;
+}
+
+async function loadYamlReadinessSnapshots() {
+  const environments = (await loadAzureEnvironments()).filter(environment => releaseEnvironmentTier(environment.name));
+  const candidates = [];
+  await mapWithConcurrency(environments, 4, async environment => {
+    const page = await azurePage(`/_apis/pipelines/environments/${Number(environment.id)}/environmentdeploymentrecords?top=100&api-version=7.2-preview.1`);
+    const records = Array.isArray(page.result) ? page.result : page.result?.value || [];
+    const latestByPipeline = new Map();
+    records.filter(record => successfulDeployment(record.result)).forEach(record => {
+      const pipeline = String(record.definition?.id || record.definition?.name || record.owner?.name || record.owner?.id || "pipeline");
+      const existing = latestByPipeline.get(pipeline);
+      if (!existing || new Date(environmentRecordDate(record) || 0) > new Date(environmentRecordDate(existing) || 0)) {
+        latestByPipeline.set(pipeline, record);
+      }
+    });
+    latestByPipeline.forEach(record => candidates.push({ environment, record }));
+  });
+  const builds = await loadBuildsById(candidates.map(candidate => candidate.record.owner?.id));
+  const snapshots = new Map();
+  candidates.forEach(({ environment, record }) => {
+    const build = builds.get(Number(record.owner?.id));
+    if (!build) return;
+    latestSnapshot(snapshots, {
+      tier: releaseEnvironmentTier(environment.name),
+      pipelineKey: yamlReadinessPipelineKey(build, record),
+      pipelineName: build.definition?.name || record.definition?.name || record.owner?.name || "YAML pipeline",
+      sourceType: "YAML",
+      environmentName: environment.name,
+      build,
+      buildId: Number(build.id),
+      repository: buildRepositoryLabel(build),
+      commit: build.sourceVersion || "",
+      date: environmentRecordDate(record),
+      url: build._links?.web?.href || ""
+    });
+  });
+  return snapshots;
+}
+
+function classicArtifactBuildId(artifact) {
+  return Number(artifact?.definitionReference?.version?.id || artifact?.definitionReference?.build?.id || artifact?.buildId) || 0;
+}
+
+async function loadClassicReadinessSnapshots() {
+  const releases = await loadRecentClassicReleaseDetails();
+  const candidates = [];
+  releases.forEach(release => {
+    const buildArtifacts = (release.artifacts || []).filter(artifact => String(artifact.type || "").toLocaleLowerCase("en") === "build" && classicArtifactBuildId(artifact));
+    (release.environments || []).forEach(environment => {
+      const tier = releaseEnvironmentTier(environment.name);
+      if (!tier || !successfulDeployment(environment.status)) return;
+      buildArtifacts.forEach(artifact => candidates.push({ release, environment, artifact, tier }));
+    });
+  });
+  const builds = await loadBuildsById(candidates.map(candidate => classicArtifactBuildId(candidate.artifact)));
+  const snapshots = new Map();
+  candidates.forEach(({ release, environment, artifact, tier }) => {
+    const build = builds.get(classicArtifactBuildId(artifact));
+    if (!build) return;
+    const definition = artifact.definitionReference?.definition || {};
+    const artifactKey = definition.id || definition.name || artifact.alias || build.definition?.id || build.definition?.name;
+    const pipelineKey = `classic:${release.releaseDefinition?.id || release.definition?.id || "release"}:${artifactKey}:${String(buildRepositoryLabel(build)).toLocaleLowerCase("en")}`;
+    latestSnapshot(snapshots, {
+      tier,
+      pipelineKey,
+      pipelineName: `${release.releaseDefinition?.name || release.definition?.name || "Classic release"} · ${artifact.alias || build.definition?.name || "Build"}`,
+      sourceType: "Classic",
+      environmentName: environment.name,
+      build,
+      buildId: Number(build.id),
+      repository: buildRepositoryLabel(build),
+      commit: build.sourceVersion || "",
+      date: classicEnvironmentDate(environment) || release.modifiedOn || release.createdOn || "",
+      url: release._links?.web?.href || build._links?.web?.href || ""
+    });
+  });
+  return snapshots;
+}
+
+function mergeReadinessSnapshots(...snapshotMaps) {
+  const merged = new Map();
+  snapshotMaps.forEach(snapshots => snapshots.forEach(snapshot => latestSnapshot(merged, snapshot)));
+  return merged;
+}
+
+async function configuredRepositoryForBuild(build, configuredRepositories) {
+  const repositoryName = String(build?.repository?.name || "").toLocaleLowerCase("en");
+  const metadataName = azureBuildRepositoryName(build);
+  const dottedName = repositoryName.includes(".") ? repositoryName.replace(".", "/") : "";
+  const directMatch = configuredRepositories.find(repository =>
+    repository === metadataName
+    || repository === repositoryName
+    || repository === dottedName
+    || repository.endsWith(`/${repositoryName}`));
+  if (directMatch) return directMatch;
+  const commit = String(build?.sourceVersion || "").trim();
+  if (!commit || !configuredRepositories.length) return "";
+  const cacheKey = `${commit.toLocaleLowerCase("en")}:${[...configuredRepositories].sort().join(",")}`;
+  if (state.releaseReadiness.githubRepositoryMatches.has(cacheKey)) {
+    return state.releaseReadiness.githubRepositoryMatches.get(cacheKey);
+  }
+  const request = mapWithConcurrency(configuredRepositories, 4, async repository => {
+    const [owner, name] = repository.split("/");
+    try {
+      await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(commit)}`);
+      return repository;
+    } catch {
+      return "";
+    }
+  }).then(matches => matches.find(Boolean) || "");
+  state.releaseReadiness.githubRepositoryMatches.set(cacheKey, request);
+  return request;
+}
+
+function azureWorkItemIds(result) {
+  return (result?.value || []).map(reference => Number(reference.id || String(reference.url || "").split("/").pop())).filter(Boolean);
+}
+
+async function workItemsBetweenBuilds(fromSnapshot, targetSnapshot) {
+  if (targetSnapshot?.buildId === fromSnapshot.buildId) return new Set();
+  try {
+    if (targetSnapshot?.buildId) {
+      const result = await azure(`/_apis/build/workitems?fromBuildId=${targetSnapshot.buildId}&toBuildId=${fromSnapshot.buildId}&$top=1000&api-version=7.1`);
+      return new Set(azureWorkItemIds(result));
+    }
+    return new Set(await yamlBuildWorkItemIds(fromSnapshot.buildId));
+  } catch (error) {
+    const ids = await yamlBuildWorkItemIds(fromSnapshot.buildId);
+    return new Set(ids);
+  }
+}
+
+function azureBoardIdsFromText(value) {
+  return [...String(value || "").matchAll(/\bAB#(\d+)\b/gi)].map(match => Number(match[1])).filter(Boolean);
+}
+
+async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, configuredRepositories) {
+  if (!state.githubToken || !targetSnapshot?.commit || !fromSnapshot.commit || targetSnapshot.commit === fromSnapshot.commit) {
+    return { ids: new Set(), unresolved: 0, warning: "" };
+  }
+  const repository = await configuredRepositoryForBuild(fromSnapshot.build, configuredRepositories);
+  if (!repository) return { ids: new Set(), unresolved: 0, warning: "The deployed commit could not be matched to one of the selected GitHub repositories." };
+  const cacheKey = `${repository}:${targetSnapshot.commit}:${fromSnapshot.commit}`.toLocaleLowerCase("en");
+  if (state.releaseReadiness.githubComparisons.has(cacheKey)) return state.releaseReadiness.githubComparisons.get(cacheKey);
+  const request = (async () => {
+    const [owner, name] = repository.split("/");
+    try {
+      const comparison = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(targetSnapshot.commit)}...${encodeURIComponent(fromSnapshot.commit)}?per_page=100`);
+      const commits = comparison.commits || [];
+      const ids = new Set(commits.flatMap(commit => azureBoardIdsFromText(commit.commit?.message)));
+      let unresolved = 0;
+      await mapWithConcurrency(commits.filter(commit => !azureBoardIdsFromText(commit.commit?.message).length), 4, async commit => {
+        try {
+          const pulls = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(commit.sha)}/pulls?per_page=20`);
+          const pullIds = (pulls || []).flatMap(pull => azureBoardIdsFromText(pull.title));
+          pullIds.forEach(id => ids.add(id));
+          if (!pullIds.length) unresolved++;
+        } catch (error) {
+          unresolved++;
+        }
+      });
+      return { ids, unresolved, warning: comparison.status === "diverged" ? "The Git branches have diverged; verify this comparison." : "" };
+    } catch (error) {
+      return { ids: new Set(), unresolved: 0, warning: `GitHub comparison failed: ${error.message}` };
+    }
+  })();
+  state.releaseReadiness.githubComparisons.set(cacheKey, request);
+  return request;
+}
+
+function readinessState(item, lane) {
+  const value = String(item.state || "").toLocaleLowerCase("en");
+  if (isFinishedWorkItem(item)) return { ready: true, label: "Ready" };
+  const ready = lane === "development"
+    ? /ready.*accept|accept.*ready|test(?:ed)?(?:\s+on)?\s+(?:dev|development)|development.*test(?:ed)?/.test(value)
+    : /ready.*prod|prod.*ready|test(?:ed)?(?:\s+on)?\s+(?:acc|acceptance)|acceptance.*test(?:ed)?/.test(value);
+  return { ready, label: ready ? "Ready" : "Needs attention" };
+}
+
+async function compareReadinessLane(snapshots, fromTier, targetTier, configuredRepositories) {
+  const fromSnapshots = [...snapshots.values()].filter(snapshot => snapshot.tier === fromTier);
+  const groups = await mapWithConcurrency(fromSnapshots, 4, async fromSnapshot => {
+    const targetSnapshot = snapshots.get(`${targetTier}:${fromSnapshot.pipelineKey}`) || null;
+    const [azureIds, githubResult] = await Promise.all([
+      workItemsBetweenBuilds(fromSnapshot, targetSnapshot),
+      githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, configuredRepositories)
+    ]);
+    const ids = new Set([...azureIds, ...githubResult.ids]);
+    const fetchedItems = ids.size ? await fetchWorkItems([...ids]) : [];
+    const items = fetchedItems.filter(item => /^(user story|bug|product backlog item)$/i.test(item.type));
+    return {
+      pipelineKey: fromSnapshot.pipelineKey,
+      pipelineName: fromSnapshot.pipelineName,
+      sourceType: fromSnapshot.sourceType,
+      repository: fromSnapshot.repository,
+      fromSnapshot,
+      targetSnapshot,
+      items,
+      unresolved: githubResult.unresolved,
+      warning: githubResult.warning || (!targetSnapshot ? `No successful ${targetTier} deployment was found for this pipeline.` : "")
+    };
+  });
+  return groups.filter(group => group.items.length || group.unresolved || group.warning)
+    .sort((a, b) => a.pipelineName.localeCompare(b.pipelineName, "en", { sensitivity: "base" }));
+}
+
+async function loadReleaseReadiness() {
+  const sourceResults = await Promise.allSettled([loadYamlReadinessSnapshots(), loadClassicReadinessSnapshots()]);
+  const warnings = [];
+  const snapshotMaps = [];
+  sourceResults.forEach((result, index) => {
+    if (result.status === "fulfilled") snapshotMaps.push(result.value);
+    else warnings.push(`${index ? "Classic" : "YAML"} deployments could not be loaded: ${result.reason?.message || "Unknown error"}`);
+  });
+  if (!snapshotMaps.length) throw new Error(warnings.join(" ") || "Deployment snapshots could not be loaded.");
+  if (!state.githubToken) warnings.push("Add a GitHub API key to also resolve AB# references from GitHub commits and pull requests.");
+  const configuredRepositories = state.githubToken ? await configuredGithubRepositories().catch(() => []) : [];
+  const snapshots = mergeReadinessSnapshots(...snapshotMaps);
+  const [development, acceptance] = await Promise.all([
+    compareReadinessLane(snapshots, "development", "acceptance", configuredRepositories),
+    compareReadinessLane(snapshots, "acceptance", "production", configuredRepositories)
+  ]);
+  return { development, acceptance, warnings };
+}
+
+function createReadinessWorkItem(item, lane) {
+  const status = readinessState(item, lane);
+  const link = document.createElement("a");
+  link.className = "release-readiness-item";
+  link.href = workItemWebUrl(item.id);
+  link.dataset.itemType = String(item.type || "").toLocaleLowerCase("en");
+  link.innerHTML = `
+    <span class="release-readiness-type" aria-hidden="true">${item.type === "Bug" ? "B" : "S"}</span>
+    <span class="release-readiness-item-body"><strong>${escapeHtml(workItemKey(item.id))} ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.state)} · ${escapeHtml(item.type)}</small></span>
+    <span class="release-readiness-badge" data-tone="${status.ready ? "ready" : "attention"}">${status.label}</span>`;
+  link.addEventListener("click", event => {
+    event.preventDefault();
+    showWorkItem(item);
+  });
+  return link;
+}
+
+function createReadinessPipeline(group, lane) {
+  const section = document.createElement("section");
+  section.className = "release-readiness-pipeline";
+  const heading = document.createElement("div");
+  heading.className = "release-readiness-pipeline-heading";
+  const buildRange = group.targetSnapshot
+    ? `${group.targetSnapshot.build?.buildNumber || `#${group.targetSnapshot.buildId}`} → ${group.fromSnapshot.build?.buildNumber || `#${group.fromSnapshot.buildId}`}`
+    : `up to ${group.fromSnapshot.build?.buildNumber || `#${group.fromSnapshot.buildId}`}`;
+  heading.innerHTML = `<strong>${escapeHtml(group.pipelineName)}</strong><small>${escapeHtml(group.sourceType)} · ${escapeHtml(group.repository)} · ${escapeHtml(buildRange)}</small>`;
+  section.append(heading, ...group.items.map(item => createReadinessWorkItem(item, lane)));
+  if (group.unresolved || group.warning) {
+    const unresolved = document.createElement("div");
+    unresolved.className = "release-readiness-unresolved";
+    unresolved.textContent = [
+      group.unresolved ? `${group.unresolved} commit${group.unresolved === 1 ? "" : "s"} could not be linked to an AB# work item.` : "",
+      group.warning
+    ].filter(Boolean).join(" ");
+    section.append(unresolved);
+  }
+  return section;
+}
+
+function renderReadinessLane(lane, groups, loading = false) {
+  const count = lane === "development" ? els.developmentReadinessCount : els.acceptanceReadinessCount;
+  const summary = lane === "development" ? els.developmentReadinessSummary : els.acceptanceReadinessSummary;
+  const list = lane === "development" ? els.developmentReadinessList : els.acceptanceReadinessList;
+  const uniqueItems = new Map(groups.flatMap(group => group.items).map(item => [Number(item.id), item]));
+  count.textContent = String(uniqueItems.size);
+  if (loading) {
+    summary.textContent = "Comparing successful deployments…";
+    list.replaceChildren(...Array.from({ length: 2 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "comment-skeleton release-debug-skeleton";
+      return skeleton;
+    }));
+    return;
+  }
+  const statuses = [...uniqueItems.values()].map(item => readinessState(item, lane));
+  const ready = statuses.filter(status => status.ready).length;
+  const attention = statuses.length - ready;
+  summary.innerHTML = uniqueItems.size
+    ? `<strong>${ready} ready</strong><span>·</span><strong>${attention} need attention</strong><span>Based on the current Azure DevOps state</span>`
+    : "No linked stories or bugs found between these environments.";
+  if (!groups.length) {
+    const empty = document.createElement("div");
+    empty.className = "release-readiness-empty";
+    empty.textContent = "No releasable difference was found. Pipelines without recognizable environment names are not included.";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...groups.map(group => createReadinessPipeline(group, lane)));
+}
+
+function renderReleaseReadiness(loading = false) {
+  const readiness = state.releaseReadiness;
+  els.releaseReadinessStatus.classList.toggle("is-error", Boolean(readiness.error));
+  els.releaseReadinessStatus.textContent = loading ? "Loading…" : readiness.error || (readiness.loaded ? `Checked ${new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date())}` : "");
+  const notices = [...readiness.warnings];
+  if (readiness.error) notices.unshift(readiness.error);
+  els.releaseReadinessNotice.hidden = !notices.length;
+  els.releaseReadinessNotice.textContent = notices.join(" ");
+  renderReadinessLane("development", readiness.development, loading);
+  renderReadinessLane("acceptance", readiness.acceptance, loading);
+}
+
 function releaseDebugElements(key) {
   const values = {
     classic: [els.classicReleasesCount, els.classicReleasesStatus, els.classicReleasesList],
@@ -5436,6 +5835,7 @@ function renderReleaseDebugSection(key, loading = false) {
 
 function renderReleaseDebugPage() {
   ["classic", "yamlRuns", "yamlDeployments"].forEach(key => renderReleaseDebugSection(key));
+  renderReleaseReadiness();
 }
 
 async function loadReleaseDebugPage(force = false) {
@@ -5443,11 +5843,17 @@ async function loadReleaseDebugPage(force = false) {
     showConnection();
     return;
   }
-  if (state.releaseDebug.loaded && !force) {
+  if (state.releaseDebug.loaded && state.releaseReadiness.loaded && !force) {
     renderReleaseDebugPage();
     return;
   }
   const requestToken = ++state.releaseDebug.requestToken;
+  state.releaseDebug.environmentsPromise = null;
+  state.releaseDebug.classicReleaseDetailsPromise = null;
+  if (force) {
+    state.releaseReadiness.githubComparisons.clear();
+    state.releaseReadiness.githubRepositoryMatches.clear();
+  }
   const sources = [
     { key: "classic", load: loadLatestClassicReleases },
     { key: "yamlRuns", load: loadLatestYamlRuns },
@@ -5458,8 +5864,34 @@ async function loadReleaseDebugPage(force = false) {
     delete state.releaseDebug.errors[source.key];
     renderReleaseDebugSection(source.key, true);
   });
+  state.releaseReadiness.development = [];
+  state.releaseReadiness.acceptance = [];
+  state.releaseReadiness.warnings = [];
+  state.releaseReadiness.error = "";
+  state.releaseReadiness.loaded = false;
+  renderReleaseReadiness(true);
   els.releasesRefresh.disabled = true;
-  await Promise.all(sources.map(async source => {
+  const readinessPromise = (async () => {
+    try {
+      const readiness = await loadReleaseReadiness();
+      if (requestToken !== state.releaseDebug.requestToken) return;
+      state.releaseReadiness.development = readiness.development;
+      state.releaseReadiness.acceptance = readiness.acceptance;
+      state.releaseReadiness.warnings = readiness.warnings;
+      state.releaseReadiness.error = "";
+    } catch (error) {
+      if (requestToken !== state.releaseDebug.requestToken) return;
+      console.error(error);
+      state.releaseReadiness.development = [];
+      state.releaseReadiness.acceptance = [];
+      state.releaseReadiness.error = error.message || "Release readiness could not be loaded.";
+    }
+    if (requestToken === state.releaseDebug.requestToken) {
+      state.releaseReadiness.loaded = true;
+      renderReleaseReadiness();
+    }
+  })();
+  await Promise.all([...sources.map(async source => {
     try {
       const deployments = await source.load();
       if (requestToken !== state.releaseDebug.requestToken) return;
@@ -5472,7 +5904,7 @@ async function loadReleaseDebugPage(force = false) {
       state.releaseDebug.errors[source.key] = error.message || "This release source could not be loaded.";
     }
     if (requestToken === state.releaseDebug.requestToken) renderReleaseDebugSection(source.key);
-  }));
+  }), readinessPromise]);
   if (requestToken !== state.releaseDebug.requestToken) return;
   state.releaseDebug.loaded = true;
   els.releasesRefresh.disabled = false;
@@ -8274,6 +8706,16 @@ function renderEmptyBoard() {
   state.releaseDebug.errors = {};
   state.releaseDebug.loaded = false;
   state.releaseDebug.requestToken++;
+  state.releaseDebug.environmentsPromise = null;
+  state.releaseDebug.classicReleaseDetailsPromise = null;
+  state.releaseReadiness.development = [];
+  state.releaseReadiness.acceptance = [];
+  state.releaseReadiness.warnings = [];
+  state.releaseReadiness.error = "";
+  state.releaseReadiness.loaded = false;
+  state.releaseReadiness.requestToken++;
+  state.releaseReadiness.githubComparisons.clear();
+  state.releaseReadiness.githubRepositoryMatches.clear();
   state.workItemYamlReferencesCache.clear();
   state.workItemYamlDiscoveryErrors.clear();
   state.workItemYamlDiscoveryRequestTokens.clear();
@@ -8558,6 +9000,16 @@ els.connectionForm.addEventListener("submit", event => {
       state.releaseDebug.errors = {};
       state.releaseDebug.loaded = false;
       state.releaseDebug.requestToken++;
+      state.releaseDebug.environmentsPromise = null;
+      state.releaseDebug.classicReleaseDetailsPromise = null;
+      state.releaseReadiness.development = [];
+      state.releaseReadiness.acceptance = [];
+      state.releaseReadiness.warnings = [];
+      state.releaseReadiness.error = "";
+      state.releaseReadiness.loaded = false;
+      state.releaseReadiness.requestToken++;
+      state.releaseReadiness.githubComparisons.clear();
+      state.releaseReadiness.githubRepositoryMatches.clear();
     }
     const githubToken = els.githubToken.value.trim();
     if (githubToken !== state.githubToken) {
@@ -8572,6 +9024,9 @@ els.connectionForm.addEventListener("submit", event => {
       state.githubWorkItemPullRequestsCache.clear();
       state.githubWorkItemPullRequestsErrors.clear();
       state.githubWorkItemPullRequestsRequestTokens.clear();
+      state.releaseReadiness.loaded = false;
+      state.releaseReadiness.githubComparisons.clear();
+      state.releaseReadiness.githubRepositoryMatches.clear();
       state.githubCommitBuildIdsCache.clear();
       state.azureGithubPullRequestBuildIdsCache.clear();
       state.workItemDeploymentsCache.clear();
@@ -8632,6 +9087,9 @@ els.settingsForm.addEventListener("submit", async event => {
     state.workItemDeploymentsErrors.clear();
     state.workItemDeploymentsRequestTokens.clear();
     state.workItemDeploymentSourceKeys.clear();
+    state.releaseReadiness.loaded = false;
+    state.releaseReadiness.githubComparisons.clear();
+    state.releaseReadiness.githubRepositoryMatches.clear();
   }
   els.settingsDialog.close();
   if (previousTeam !== state.teamId) {
@@ -8648,6 +9106,8 @@ els.settingsForm.addEventListener("submit", async event => {
   } else if (githubConfigChanged && state.currentView === "for-you") {
     state.githubPullRequestsKey = "";
     await loadForYou(true);
+  } else if (githubConfigChanged && state.currentView === "releases") {
+    await loadReleaseDebugPage(true);
   } else render();
 });
 
