@@ -101,6 +101,10 @@ const state = {
   backlogTeamId: "",
   backlogCollapsedEpics: new Set(),
   backlogCollapsedFeatures: new Set(),
+  backlogSelectedIds: new Set(),
+  backlogSelectionAnchorId: null,
+  backlogDeleting: false,
+  backlogUpdating: false,
   wikis: [],
   wikiId: localStorage.getItem(STORAGE.wiki) || "",
   wikiProjectName: "",
@@ -2429,6 +2433,9 @@ async function loadBacklog(force = false) {
       (batch.value || []).forEach(workItem => itemsById.set(workItem.id, normalizeWorkItem(workItem)));
     }
     state.backlogItems = ids.map(id => itemsById.get(id)).filter(Boolean);
+    const backlogIds = new Set(state.backlogItems.map(item => Number(item.id)));
+    state.backlogSelectedIds = new Set([...state.backlogSelectedIds].filter(itemId => backlogIds.has(itemId)));
+    if (!backlogIds.has(Number(state.backlogSelectionAnchorId))) state.backlogSelectionAnchorId = null;
     const portfolioIds = [...new Set(portfolioResults.flatMap(value => (value.workItems || []).map(link => link.target?.id).filter(Boolean)))];
     const portfolioItems = await fetchWorkItems(portfolioIds);
     const portfolioItemsById = new Map(portfolioItems.map(item => [Number(item.id), item]));
@@ -2518,7 +2525,7 @@ function createBacklogCardMenu(item, type) {
   menu.className = "backlog-card-menu";
   const trigger = document.createElement("summary");
   trigger.setAttribute("aria-label", `More actions for ${item.title}`);
-  trigger.textContent = "•••";
+  trigger.textContent = "⋮";
   const options = document.createElement("div");
   options.className = "backlog-card-menu-options";
   const view = document.createElement("button");
@@ -2735,7 +2742,7 @@ function createBacklogSection(title, items, label) {
   } else {
     const table = document.createElement("table");
     table.className = "backlog-table";
-    table.innerHTML = "<thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>State</th><th>Priority</th><th>Points</th><th>Assigned to</th></tr></thead>";
+    table.innerHTML = "<thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>State</th><th>Priority</th><th>Points</th><th>Assigned to</th><th><span class=\"sr-only\">Actions</span></th></tr></thead>";
     const body = document.createElement("tbody");
     items.forEach(item => body.append(createBacklogRow(item)));
     table.append(body);
@@ -2746,10 +2753,14 @@ function createBacklogSection(title, items, label) {
 }
 
 function createBacklogRow(item) {
+  const selected = state.backlogSelectedIds.has(Number(item.id));
   const row = document.createElement("tr");
   row.tabIndex = 0;
-  row.setAttribute("role", "button");
-  row.setAttribute("aria-label", `${item.type} ${workItemKey(item.id)}: ${item.title}`);
+  row.dataset.workItemId = String(item.id);
+  row.dataset.baseLabel = `${item.type} ${workItemKey(item.id)}: ${item.title}`;
+  row.classList.toggle("is-selected", selected);
+  row.setAttribute("aria-selected", String(selected));
+  row.setAttribute("aria-label", `${selected ? "Selected " : ""}${row.dataset.baseLabel}`);
   const type = document.createElement("td");
   const typeBadge = document.createElement("span");
   typeBadge.className = `backlog-type ${item.type.toLowerCase() === "bug" ? "is-bug" : ""}`;
@@ -2760,7 +2771,16 @@ function createBacklogRow(item) {
   key.textContent = workItemKey(item.id);
   const summary = document.createElement("td");
   summary.className = "backlog-summary";
-  summary.textContent = item.title;
+  const title = document.createElement("button");
+  title.type = "button";
+  title.className = "backlog-summary-button";
+  title.textContent = item.title;
+  title.setAttribute("aria-label", `Open ${workItemKey(item.id)}: ${item.title}`);
+  title.addEventListener("click", event => {
+    event.stopPropagation();
+    showWorkItem(item);
+  });
+  summary.append(title);
   const itemState = document.createElement("td");
   const stateBadge = document.createElement("span");
   stateBadge.className = "card-state";
@@ -2773,14 +2793,285 @@ function createBacklogRow(item) {
   points.textContent = item.points ?? "—";
   const assignee = document.createElement("td");
   assignee.textContent = item.assignee || "Unassigned";
-  row.append(type, key, summary, itemState, priority, points, assignee);
-  row.addEventListener("click", () => showWorkItem(item));
+  const actions = document.createElement("td");
+  actions.className = "backlog-row-actions";
+  const menu = document.createElement("details");
+  menu.className = "backlog-row-menu";
+  const trigger = document.createElement("summary");
+  trigger.textContent = "⋮";
+  trigger.setAttribute("aria-label", `More actions for ${workItemKey(item.id)}`);
+  const options = document.createElement("div");
+  options.className = "backlog-row-menu-options";
+  options.setAttribute("role", "menu");
+  const assignMenu = createBacklogRowSubmenu(
+    "Assign to",
+    () => [
+      { label: "Unassigned", selected: !item.assignee, value: null },
+      ...assigneeChoices(item).map(choice => ({
+        label: choice.name,
+        detail: choice.uniqueName !== choice.name ? choice.uniqueName : "",
+        selected: choice.uniqueName === item.assigneeUniqueName || choice.name === item.assignee,
+        value: choice
+      }))
+    ],
+    choice => updateBacklogItemField(item, "System.AssignedTo", choice?.uniqueName || "", `Assigning ${workItemKey(item.id)}…`, "Assignee")
+  );
+  const sprintMenu = createBacklogRowSubmenu(
+    "Move to sprint",
+    () => newestIterations().map(iteration => ({
+      label: iteration.name,
+      detail: iterationLabel(iteration),
+      selected: String(iteration.path || iteration.name).toLocaleLowerCase("en") === String(item.iterationPath).toLocaleLowerCase("en"),
+      value: iteration
+    })),
+    iteration => updateBacklogItemField(item, "System.IterationPath", iteration.path || iteration.name, `Moving ${workItemKey(item.id)}…`, "Sprint")
+  );
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "backlog-row-delete";
+  remove.setAttribute("role", "menuitem");
+  remove.textContent = "Delete";
+  remove.disabled = state.backlogDeleting || state.backlogUpdating;
+  remove.addEventListener("click", event => {
+    event.stopPropagation();
+    menu.open = false;
+    deleteBacklogItems(item);
+  });
+  options.append(assignMenu, sprintMenu, remove);
+  menu.append(trigger, options);
+  actions.append(menu);
+  row.append(type, key, summary, itemState, priority, points, assignee, actions);
+  row.addEventListener("click", event => {
+    if (event.target.closest("button, summary, details, a")) return;
+    selectBacklogRow(item, event);
+  });
   row.addEventListener("keydown", event => {
     if (event.key !== "Enter" && event.key !== " ") return;
+    if (event.target !== row) return;
     event.preventDefault();
-    showWorkItem(item);
+    selectBacklogRow(item, event);
   });
   return row;
+}
+
+function createBacklogRowSubmenu(label, getChoices, onSelect) {
+  const container = document.createElement("div");
+  container.className = "backlog-row-submenu-container";
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "backlog-row-submenu-trigger";
+  trigger.setAttribute("role", "menuitem");
+  trigger.setAttribute("aria-haspopup", "menu");
+  trigger.setAttribute("aria-expanded", "false");
+  const text = document.createElement("span");
+  text.textContent = label;
+  const arrow = document.createElement("span");
+  arrow.className = "backlog-row-submenu-arrow";
+  arrow.textContent = "‹";
+  trigger.append(text, arrow);
+  const pane = document.createElement("div");
+  pane.className = "backlog-row-submenu";
+  pane.setAttribute("role", "menu");
+  pane.setAttribute("aria-label", label);
+  let rendered = false;
+  const renderChoices = () => {
+    if (rendered) return;
+    rendered = true;
+    const choices = getChoices();
+    if (!choices.length) {
+      const empty = document.createElement("div");
+      empty.className = "backlog-row-submenu-empty";
+      empty.textContent = label === "Assign to" ? "No people available" : "No sprints available";
+      pane.append(empty);
+      return;
+    }
+    choices.forEach(choice => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "backlog-row-submenu-option";
+      button.setAttribute("role", "menuitemradio");
+      button.setAttribute("aria-checked", String(Boolean(choice.selected)));
+      button.disabled = Boolean(choice.selected) || state.backlogUpdating;
+      const content = document.createElement("span");
+      content.className = "backlog-row-submenu-option-text";
+      const primary = document.createElement("span");
+      primary.textContent = choice.label;
+      content.append(primary);
+      if (choice.detail) {
+        const secondary = document.createElement("small");
+        secondary.textContent = choice.detail;
+        content.append(secondary);
+      }
+      const check = document.createElement("span");
+      check.className = "backlog-row-submenu-check";
+      check.textContent = choice.selected ? "✓" : "";
+      button.append(content, check);
+      if (!choice.selected) button.addEventListener("click", event => {
+        event.stopPropagation();
+        closeBacklogRowMenus();
+        onSelect(choice.value);
+      });
+      pane.append(button);
+    });
+  };
+  const setOpen = open => {
+    if (open) renderChoices();
+    container.classList.toggle("is-open", open);
+    trigger.setAttribute("aria-expanded", String(open));
+  };
+  trigger.addEventListener("click", event => {
+    event.stopPropagation();
+    const open = !container.classList.contains("is-open");
+    container.parentElement?.querySelectorAll(".backlog-row-submenu-container.is-open").forEach(other => {
+      if (other === container) return;
+      other.classList.remove("is-open");
+      other.querySelector(".backlog-row-submenu-trigger")?.setAttribute("aria-expanded", "false");
+    });
+    setOpen(open);
+  });
+  container.addEventListener("mouseenter", () => setOpen(true));
+  container.addEventListener("mouseleave", () => {
+    if (!container.contains(document.activeElement)) setOpen(false);
+  });
+  container.addEventListener("focusout", event => {
+    if (!container.contains(event.relatedTarget)) setOpen(false);
+  });
+  container.append(trigger, pane);
+  return container;
+}
+
+function closeBacklogRowMenus() {
+  document.querySelectorAll(".backlog-row-menu[open]").forEach(menu => { menu.open = false; });
+  document.querySelectorAll(".backlog-row-submenu-container.is-open").forEach(menu => {
+    menu.classList.remove("is-open");
+    menu.querySelector(".backlog-row-submenu-trigger")?.setAttribute("aria-expanded", "false");
+  });
+}
+
+function syncBacklogWorkItem(itemId, result) {
+  const normalized = normalizeWorkItem(result);
+  const collections = [state.backlogItems, state.stories, state.backlogEpics, state.backlogFeatures];
+  collections.forEach(collection => collection.forEach(candidate => {
+    if (Number(candidate.id) !== Number(itemId)) return;
+    candidate.assignee = normalized.assignee;
+    candidate.assigneeUniqueName = normalized.assigneeUniqueName;
+    candidate.assigneeId = normalized.assigneeId;
+    candidate.iterationPath = normalized.iterationPath;
+    candidate.iterationName = normalized.iterationName;
+    candidate.changedDate = normalized.changedDate;
+  }));
+  state.detailsCache.delete(Number(itemId));
+  state.historyCache.delete(Number(itemId));
+  state.historyErrors.delete(Number(itemId));
+  state.iterationStoriesCache.clear();
+}
+
+async function updateBacklogItemField(item, field, value, progress, label) {
+  if (state.backlogUpdating || state.backlogDeleting) return;
+  state.backlogUpdating = true;
+  renderBacklog();
+  els.backlogMeta.textContent = progress;
+  try {
+    const result = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: `/fields/${field}`, value }])
+    });
+    syncBacklogWorkItem(item.id, result);
+    showNotice(`${label} for ${workItemKey(item.id)} updated.`, "info");
+  } catch (error) {
+    console.error(error);
+    showNotice(error.auth
+      ? `${label} could not be updated. The PAT requires ‘Work Items: Read & write’.`
+      : error.message || `${label} could not be updated.`, "error");
+  } finally {
+    state.backlogUpdating = false;
+    renderBacklog();
+  }
+}
+
+function selectBacklogRow(item, event = {}) {
+  const itemId = Number(item.id);
+  const toggleSpecific = Boolean(event.metaKey || event.ctrlKey);
+  if (event.shiftKey) {
+    const visibleIds = [...document.querySelectorAll(".backlog-table tbody tr[data-work-item-id]")]
+      .map(row => Number(row.dataset.workItemId));
+    const anchorId = visibleIds.includes(Number(state.backlogSelectionAnchorId))
+      ? Number(state.backlogSelectionAnchorId)
+      : itemId;
+    const anchorIndex = visibleIds.indexOf(anchorId);
+    const itemIndex = visibleIds.indexOf(itemId);
+    if (!toggleSpecific) state.backlogSelectedIds.clear();
+    if (anchorIndex >= 0 && itemIndex >= 0) {
+      const start = Math.min(anchorIndex, itemIndex);
+      const end = Math.max(anchorIndex, itemIndex);
+      visibleIds.slice(start, end + 1).forEach(id => state.backlogSelectedIds.add(id));
+    } else {
+      state.backlogSelectedIds.add(itemId);
+    }
+    if (state.backlogSelectionAnchorId === null) state.backlogSelectionAnchorId = itemId;
+  } else if (toggleSpecific) {
+    if (state.backlogSelectedIds.has(itemId)) state.backlogSelectedIds.delete(itemId);
+    else state.backlogSelectedIds.add(itemId);
+    state.backlogSelectionAnchorId = itemId;
+  } else {
+    state.backlogSelectedIds.clear();
+    state.backlogSelectedIds.add(itemId);
+    state.backlogSelectionAnchorId = itemId;
+  }
+  renderBacklogSelection();
+}
+
+function renderBacklogSelection() {
+  document.querySelectorAll(".backlog-table tbody tr[data-work-item-id]").forEach(row => {
+    const selected = state.backlogSelectedIds.has(Number(row.dataset.workItemId));
+    row.classList.toggle("is-selected", selected);
+    row.setAttribute("aria-selected", String(selected));
+    row.setAttribute("aria-label", `${selected ? "Selected " : ""}${row.dataset.baseLabel}`);
+  });
+}
+
+function backlogDeleteTargets(item) {
+  const itemId = Number(item.id);
+  const selectedIds = state.backlogSelectedIds.has(itemId) ? state.backlogSelectedIds : new Set([itemId]);
+  return state.backlogItems.filter(candidate => selectedIds.has(Number(candidate.id)));
+}
+
+async function deleteBacklogItems(item) {
+  if (state.backlogDeleting) return;
+  const targets = backlogDeleteTargets(item);
+  if (!targets.length) return;
+  const description = targets.length === 1
+    ? `${workItemKey(targets[0].id)} “${targets[0].title}”`
+    : `${targets.length} selected work items`;
+  if (!window.confirm(`Delete ${description}?\n\n${targets.length === 1 ? "The work item" : "These work items"} will be moved to the Azure DevOps recycle bin.`)) return;
+  state.backlogDeleting = true;
+  els.backlogMeta.textContent = `Deleting ${targets.length === 1 ? workItemKey(targets[0].id) : `${targets.length} work items`}…`;
+  document.querySelectorAll(".backlog-row-delete").forEach(button => { button.disabled = true; });
+  const results = await Promise.allSettled(targets.map(target => azure(
+    `/_apis/wit/workitems/${target.id}?api-version=7.1`,
+    { method: "DELETE" }
+  )));
+  const deleted = [];
+  const failed = [];
+  results.forEach((result, index) => {
+    const target = targets[index];
+    if (result.status === "fulfilled") {
+      deleted.push(target);
+      removeDeletedWorkItem(target.id);
+      state.backlogSelectedIds.delete(Number(target.id));
+    } else {
+      console.error(result.reason);
+      failed.push(target);
+    }
+  });
+  state.backlogDeleting = false;
+  renderBacklog();
+  if (failed.length) {
+    showNotice(`${deleted.length ? `${deleted.length} deleted. ` : ""}${failed.length} ${failed.length === 1 ? "work item" : "work items"} could not be deleted.`, "error");
+  } else {
+    showNotice(`${deleted.length} ${deleted.length === 1 ? "work item" : "work items"} deleted.`, "info");
+  }
 }
 
 function wikiPageTitle(pageOrPath) {
@@ -3470,6 +3761,8 @@ async function showLinkedWorkItem(itemId) {
 
 function removeDeletedWorkItem(itemId) {
   const keep = item => Number(item.id) !== Number(itemId);
+  state.backlogSelectedIds.delete(Number(itemId));
+  if (Number(state.backlogSelectionAnchorId) === Number(itemId)) state.backlogSelectionAnchorId = null;
   state.stories = state.stories.filter(keep);
   state.backlogItems = state.backlogItems.filter(keep);
   state.backlogEpics = state.backlogEpics.filter(keep);
@@ -3940,7 +4233,9 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
 function assigneeChoices(item) {
   const choices = state.teamMembers.length
     ? [...state.teamMembers]
-    : state.stories.filter(story => story.assignee).map(story => ({ name: story.assignee, uniqueName: story.assigneeUniqueName || story.assignee }));
+    : [...state.stories, ...state.backlogItems]
+      .filter(story => story.assignee)
+      .map(story => ({ name: story.assignee, uniqueName: story.assigneeUniqueName || story.assignee }));
   const detail = state.detailsCache.get(item.id);
   const currentName = detail?.assignee || item.assignee || "";
   if (currentName && !choices.some(choice => choice.name === currentName || choice.uniqueName === currentName)) {
@@ -3952,7 +4247,7 @@ function assigneeChoices(item) {
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).sort((a, b) => a.name.localeCompare(b.name, "en"));
+  }).sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true }));
 }
 
 function toggleWorkItemAssigneeMenu() {
@@ -6216,6 +6511,8 @@ els.settingsForm.addEventListener("submit", async event => {
     state.backlogTeamId = "";
     state.backlogCollapsedEpics.clear();
     state.backlogCollapsedFeatures.clear();
+    state.backlogSelectedIds.clear();
+    state.backlogSelectionAnchorId = null;
     loadBoard();
   } else if (previousGithubKey !== githubPullRequestsCacheKey() && state.currentView === "for-you") {
     state.githubPullRequestsKey = "";
@@ -6580,6 +6877,9 @@ els.clearFilters.addEventListener("click", async () => {
 
 document.addEventListener("click", event => {
   if (!els.workItemActions.contains(event.target)) els.workItemActions.open = false;
+  document.querySelectorAll(".backlog-row-menu[open]").forEach(menu => {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
   if (event.target.closest?.("a.user-mention")) event.preventDefault();
   const workItemLink = event.target.closest?.("a.internal-work-item-link");
   if (workItemLink) {
