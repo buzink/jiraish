@@ -8,8 +8,11 @@ const STORAGE = {
   iteration: "wish-board.iteration-id",
   theme: "wish-board.theme",
   githubToken: "wish-board.github-token",
+  githubOwners: "wish-board.github-owners",
+  githubAllOwners: "wish-board.github-all-owners",
   githubRepos: "wish-board.github-repositories",
   githubAllRepos: "wish-board.github-all-repositories",
+  githubPrFilters: "wish-board.github-pr-filters",
   boardGroupBy: "wish-board.board-group-by",
   wiki: "wish-board.wiki-id",
   wikiExpandedItems: "wish-board.wiki-expanded-items",
@@ -64,8 +67,18 @@ const state = {
   orgUrl: localStorage.getItem(STORAGE.url) || DEFAULT_URL,
   pat: localStorage.getItem(STORAGE.pat) || "",
   githubToken: localStorage.getItem(STORAGE.githubToken) || "",
+  githubOwners: readJson(STORAGE.githubOwners, []),
+  githubAllOwners: localStorage.getItem(STORAGE.githubAllOwners) !== "false",
   githubRepos: readJson(STORAGE.githubRepos, []),
   githubAllRepos: localStorage.getItem(STORAGE.githubAllRepos) !== "false",
+  githubAccessibleRepositories: [],
+  githubAccessibleRepositoriesToken: "",
+  githubOwnerChoices: [],
+  githubOwnerRepositoriesCache: new Map(),
+  githubSettingsRepositories: [],
+  githubSettingsRepositoryRequestToken: 0,
+  githubRepositoryDraft: new Set(),
+  githubRepositoryDraftInitialized: false,
   teams: [],
   teamId: localStorage.getItem(STORAGE.team) || "",
   projectName: localStorage.getItem(STORAGE.project) || "",
@@ -131,8 +144,9 @@ const state = {
   githubPullRequests: [],
   githubPullRequestsKey: "",
   githubPullRequestsError: "",
+  githubPullRequestFilters: readJson(STORAGE.githubPrFilters, { repositories: [], authors: [] }),
   forYouErrors: {},
-  forYouExpanded: { custom: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false },
+  forYouExpanded: { custom: false, github: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false },
   forYouSelectedUser: null,
   forYouUserKey: "",
   forYouRequestToken: 0,
@@ -269,10 +283,20 @@ const els = {
   forYouCompletedList: document.querySelector("#forYouCompletedList"),
   forYouCompletedShowAll: document.querySelector("#forYouCompletedShowAll"),
   githubPrPanel: document.querySelector("#githubPrPanel"),
+  githubPrTitle: document.querySelector("#githubPrTitle"),
   githubPrCount: document.querySelector("#githubPrCount"),
   githubPrStatus: document.querySelector("#githubPrStatus"),
+  githubPrFiltersToggle: document.querySelector("#githubPrFiltersToggle"),
+  githubPrFiltersBody: document.querySelector("#githubPrFiltersBody"),
+  githubPrRepositories: document.querySelector("#githubPrRepositories"),
+  githubPrRepositoriesSummary: document.querySelector("#githubPrRepositoriesSummary"),
+  githubPrRepositoryOptions: document.querySelector("#githubPrRepositoryOptions"),
+  githubPrAuthors: document.querySelector("#githubPrAuthors"),
+  githubPrAuthorsSummary: document.querySelector("#githubPrAuthorsSummary"),
+  githubPrAuthorOptions: document.querySelector("#githubPrAuthorOptions"),
   githubPrTableWrap: document.querySelector("#githubPrTableWrap"),
   githubPrRows: document.querySelector("#githubPrRows"),
+  githubPrShowAll: document.querySelector("#githubPrShowAll"),
   forYouCustomTitle: document.querySelector("#forYouCustomTitle"),
   forYouCustomFiltersToggle: document.querySelector("#forYouCustomFiltersToggle"),
   forYouCustomFiltersBody: document.querySelector("#forYouCustomFiltersBody"),
@@ -341,9 +365,12 @@ const els = {
   teamSelect: document.querySelector("#teamSelect"),
   stateMappings: document.querySelector("#stateMappings"),
   githubRepoSettings: document.querySelector("#githubRepoSettings"),
+  githubAllOwners: document.querySelector("#githubAllOwners"),
+  githubOwnerOptions: document.querySelector("#githubOwnerOptions"),
+  githubOwnerStatus: document.querySelector("#githubOwnerStatus"),
   githubAllRepos: document.querySelector("#githubAllRepos"),
-  githubReposLabel: document.querySelector("#githubReposLabel"),
-  githubReposInput: document.querySelector("#githubReposInput"),
+  githubRepoOptions: document.querySelector("#githubRepoOptions"),
+  githubRepoStatus: document.querySelector("#githubRepoStatus"),
   changeConnection: document.querySelector("#changeConnection"),
   createWorkItemDialog: document.querySelector("#createWorkItemDialog"),
   createWorkItemForm: document.querySelector("#createWorkItemForm"),
@@ -494,10 +521,15 @@ function applyMobileDisclosures(mobile) {
   for (const [button, content] of [
     [els.filterPanelToggle, els.filterPanelBody],
     [els.forYouCustomFiltersToggle, els.forYouCustomFiltersBody],
+    [els.githubPrFiltersToggle, els.githubPrFiltersBody],
     [els.backlogHierarchyToggle, els.backlogSidebar],
     [els.wikiNavigationToggle, els.wikiSidebar]
   ]) setMobileDisclosure(button, content, expanded);
-  if (mobile) els.forYouCustomTags.open = false;
+  if (mobile) {
+    els.forYouCustomTags.open = false;
+    els.githubPrRepositories.open = false;
+    els.githubPrAuthors.open = false;
+  }
 }
 
 function readJson(key, fallback) {
@@ -1310,7 +1342,7 @@ async function showMainView(view) {
     if (enteringForYou) {
       state.forYouSelectedUser = null;
       state.forYouUserKey = "";
-      state.forYouExpanded = { custom: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
+      state.forYouExpanded = { custom: false, github: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
     }
     await loadForYou();
     return;
@@ -1493,8 +1525,9 @@ function forYouIdentityQuery(user, isSelf) {
 
 function githubPullRequestsCacheKey() {
   if (!state.githubToken) return "";
+  const owners = state.githubAllOwners ? "*" : state.githubOwners.map(owner => owner.toLocaleLowerCase("en")).sort().join(",");
   const repositories = state.githubAllRepos ? "*" : state.githubRepos.map(repo => repo.toLocaleLowerCase("en")).sort().join(",");
-  return repositories;
+  return `${owners}|${repositories}`;
 }
 
 function normalizedForYouCustomConfig() {
@@ -1602,7 +1635,9 @@ async function github(path) {
     const message = response.status === 401
       ? "GitHub rejected the API key. Update it under Change connection."
       : result?.message || `GitHub request failed (${response.status}).`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return result;
 }
@@ -1619,16 +1654,84 @@ async function githubPages(path) {
   return values;
 }
 
+async function loadGithubAccessibleRepositories() {
+  if (state.githubAccessibleRepositoriesToken === state.githubToken) {
+    return state.githubAccessibleRepositories;
+  }
+  const repositories = await githubPages("/user/repos?sort=full_name&direction=asc");
+  const repositoriesByName = new Map();
+  repositories.forEach(repository => {
+    const key = String(repository.full_name || "").toLocaleLowerCase("en");
+    if (key) repositoriesByName.set(key, repository);
+  });
+  state.githubAccessibleRepositories = [...repositoriesByName.values()]
+    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), "en", { sensitivity: "base", numeric: true }));
+  state.githubAccessibleRepositoriesToken = state.githubToken;
+  return state.githubAccessibleRepositories;
+}
+
+function githubOwnerDetails(login, repositories = state.githubAccessibleRepositories) {
+  const normalized = String(login || "").toLocaleLowerCase("en");
+  const configured = state.githubOwnerChoices.find(owner => owner.login.toLocaleLowerCase("en") === normalized);
+  if (configured) return configured;
+  const repository = repositories.find(candidate => String(candidate.owner?.login || "").toLocaleLowerCase("en") === normalized);
+  return { login: repository?.owner?.login || login, type: repository?.owner?.type || "User" };
+}
+
+async function loadGithubRepositoriesForOwners(ownerLogins, accessibleRepositories = null) {
+  const accessible = accessibleRepositories || await loadGithubAccessibleRepositories();
+  const owners = [...new Set(ownerLogins.map(owner => String(owner || "").trim()).filter(Boolean))];
+  const groups = await mapWithConcurrency(owners, 3, async ownerLogin => {
+    const owner = githubOwnerDetails(ownerLogin, accessible);
+    if (owner.type !== "Organization") {
+      return accessible.filter(repository => String(repository.owner?.login || "").toLocaleLowerCase("en") === owner.login.toLocaleLowerCase("en"));
+    }
+    const cacheKey = owner.login.toLocaleLowerCase("en");
+    if (!state.githubOwnerRepositoriesCache.has(cacheKey)) {
+      const pending = githubPages(`/orgs/${encodeURIComponent(owner.login)}/repos?type=all&sort=full_name&direction=asc`)
+        .then(repositories => [
+          ...repositories,
+          ...accessible.filter(repository => String(repository.owner?.login || "").toLocaleLowerCase("en") === cacheKey)
+        ]);
+      state.githubOwnerRepositoriesCache.set(cacheKey, pending);
+      pending.catch(() => state.githubOwnerRepositoriesCache.delete(cacheKey));
+    }
+    return state.githubOwnerRepositoriesCache.get(cacheKey);
+  });
+  const repositories = new Map();
+  groups.flat().forEach(repository => {
+    const key = String(repository.full_name || "").toLocaleLowerCase("en");
+    if (key && !repositories.has(key)) repositories.set(key, repository);
+  });
+  return [...repositories.values()]
+    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name), "en", { sensitivity: "base", numeric: true }));
+}
+
 async function loadGithubPullRequests() {
   if (!state.githubToken) return [];
-  const repositories = state.githubAllRepos
-    ? (await githubPages("/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=full_name")).map(repository => repository.full_name)
-    : state.githubRepos;
-  const pullRequestGroups = await mapWithConcurrency(repositories.filter(Boolean), 6, async repository => {
+  let repositories = state.githubRepos;
+  if (state.githubAllRepos) {
+    const accessible = await loadGithubAccessibleRepositories();
+    const ownerLogins = state.githubAllOwners
+      ? [...new Set(accessible.map(repository => repository.owner?.login).filter(Boolean))]
+      : state.githubOwners;
+    repositories = (await loadGithubRepositoriesForOwners(ownerLogins, accessible)).map(repository => repository.full_name);
+  }
+  const selectedOwners = new Set(state.githubOwners.map(owner => owner.toLocaleLowerCase("en")));
+  const filteredRepositories = repositories.filter(repository => repository && (
+    state.githubAllOwners || selectedOwners.has(String(repository).split("/")[0].toLocaleLowerCase("en"))
+  ));
+  const pullRequestGroups = await mapWithConcurrency(filteredRepositories, 6, async repository => {
     const [owner, name, ...rest] = repository.split("/");
     if (!owner || !name || rest.length) throw new Error(`“${repository}” is not a valid owner/repository name.`);
-    const pulls = await githubPages(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls?state=open&sort=updated&direction=desc`);
-    return pulls.map(pullRequest => ({ ...pullRequest, repository: `${owner}/${name}` }));
+    try {
+      const pulls = await githubPages(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls?state=open&sort=updated&direction=desc`);
+      return pulls.map(pullRequest => ({ ...pullRequest, repository: `${owner}/${name}` }));
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      console.warn(`GitHub repository ${owner}/${name} is not accessible with the configured token.`);
+      return [];
+    }
   });
   return pullRequestGroups.flat()
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
@@ -2049,7 +2152,7 @@ async function selectForYouUser(choice) {
     uniqueName: choice.uniqueName || choice.displayName
   };
   state.forYouUserKey = "";
-  state.forYouExpanded = { custom: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
+  state.forYouExpanded = { custom: false, github: false, work: false, mentions: false, activity: false, created: false, updated: false, completed: false };
   closeForYouPersonMenu();
   renderForYouIdentity();
   await loadForYou(true);
@@ -2204,6 +2307,7 @@ function renderForYouLoading() {
     els.githubPrStatus.classList.remove("is-error");
     els.githubPrTableWrap.hidden = true;
     els.githubPrRows.replaceChildren();
+    els.githubPrShowAll.hidden = true;
   }
   for (const [count, status, list, showAll] of [
     [els.forYouWorkCount, els.forYouWorkStatus, els.forYouWorkList, els.forYouWorkShowAll],
@@ -2246,18 +2350,120 @@ function renderForYou() {
     "No recently completed work items were found.");
 }
 
+function normalizedGithubPullRequestFilters() {
+  const config = state.githubPullRequestFilters && typeof state.githubPullRequestFilters === "object"
+    ? state.githubPullRequestFilters
+    : {};
+  return {
+    repositories: [...new Set((Array.isArray(config.repositories) ? config.repositories : []).map(String).filter(Boolean))],
+    authors: [...new Set((Array.isArray(config.authors) ? config.authors : []).map(String).filter(Boolean))]
+  };
+}
+
+function githubPullRequestFilterChoices(property, selected) {
+  const values = property === "repository"
+    ? state.githubPullRequests.map(pullRequest => pullRequest.repository)
+    : state.githubPullRequests.map(pullRequest => pullRequest.user?.login);
+  return [...new Set([...values, ...selected].filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base", numeric: true }));
+}
+
+function renderGithubPullRequestFilterOptions(container, choices, selected, emptyMessage) {
+  const options = choices.map(choice => {
+    const label = document.createElement("label");
+    label.className = "for-you-custom-tag-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = choice;
+    checkbox.checked = selected.includes(choice);
+    const name = document.createElement("span");
+    name.textContent = choice;
+    label.append(checkbox, name);
+    return label;
+  });
+  if (options.length) container.replaceChildren(...options);
+  else {
+    const empty = document.createElement("p");
+    empty.className = "for-you-custom-tags-empty";
+    empty.textContent = emptyMessage;
+    container.replaceChildren(empty);
+  }
+}
+
+function githubPullRequestFilterSummary(values, singular, emptyLabel = "Anything") {
+  if (!values.length) return emptyLabel;
+  if (values.length === 1) return values[0];
+  return `${values.length} ${singular}s selected`;
+}
+
+function githubPullRequestTitle() {
+  const filters = normalizedGithubPullRequestFilters();
+  const repositories = filters.repositories.length
+    ? filters.repositories.join(" or ")
+    : "everything";
+  const authors = filters.authors.length
+    ? filters.authors.join(" or ")
+    : "anyone";
+  return `Open GitHub pull requests for ${repositories} by ${authors}`;
+}
+
+function renderGithubPullRequestFilters() {
+  const config = normalizedGithubPullRequestFilters();
+  state.githubPullRequestFilters = config;
+  const repositoriesOpen = els.githubPrRepositories.open;
+  const authorsOpen = els.githubPrAuthors.open;
+  els.githubPrTitle.textContent = githubPullRequestTitle();
+  els.githubPrRepositoriesSummary.textContent = githubPullRequestFilterSummary(config.repositories, "repository");
+  els.githubPrAuthorsSummary.textContent = githubPullRequestFilterSummary(config.authors, "author", "Anyone");
+  renderGithubPullRequestFilterOptions(
+    els.githubPrRepositoryOptions,
+    githubPullRequestFilterChoices("repository", config.repositories),
+    config.repositories,
+    "No repositories found."
+  );
+  renderGithubPullRequestFilterOptions(
+    els.githubPrAuthorOptions,
+    githubPullRequestFilterChoices("author", config.authors),
+    config.authors,
+    "No authors found."
+  );
+  els.githubPrRepositories.open = repositoriesOpen;
+  els.githubPrAuthors.open = authorsOpen;
+}
+
+function updateGithubPullRequestFilters() {
+  state.githubPullRequestFilters = {
+    repositories: [...els.githubPrRepositoryOptions.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value),
+    authors: [...els.githubPrAuthorOptions.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value)
+  };
+  state.forYouExpanded.github = false;
+  localStorage.setItem(STORAGE.githubPrFilters, JSON.stringify(state.githubPullRequestFilters));
+  renderGithubPullRequests();
+}
+
 function renderGithubPullRequests() {
   els.githubPrPanel.hidden = !state.githubToken;
   if (!state.githubToken) {
     els.githubPrRows.replaceChildren();
+    els.githubPrShowAll.hidden = true;
     return;
   }
+  renderGithubPullRequestFilters();
   const error = state.githubPullRequestsError;
-  els.githubPrCount.textContent = String(state.githubPullRequests.length);
+  const filters = normalizedGithubPullRequestFilters();
+  const matchingPullRequests = state.githubPullRequests.filter(pullRequest => (
+    (!filters.repositories.length || filters.repositories.includes(pullRequest.repository))
+    && (!filters.authors.length || filters.authors.includes(pullRequest.user?.login || ""))
+  ));
+  const expanded = state.forYouExpanded.github;
+  const visiblePullRequests = expanded ? matchingPullRequests : matchingPullRequests.slice(0, 5);
+  els.githubPrCount.textContent = String(matchingPullRequests.length);
   els.githubPrStatus.classList.toggle("is-error", Boolean(error));
-  els.githubPrStatus.textContent = error || (!state.githubPullRequests.length ? "No matching open pull requests were found." : "");
-  els.githubPrTableWrap.hidden = Boolean(error) || !state.githubPullRequests.length;
-  els.githubPrRows.replaceChildren(...state.githubPullRequests.map(pullRequest => {
+  els.githubPrStatus.textContent = error || (!matchingPullRequests.length
+    ? state.githubPullRequests.length ? "No open pull requests match these filters." : "No matching open pull requests were found."
+    : "");
+  els.githubPrTableWrap.hidden = Boolean(error) || !matchingPullRequests.length;
+  els.githubPrRows.replaceChildren(...visiblePullRequests.map(pullRequest => {
     const row = document.createElement("tr");
     const repository = document.createElement("td");
     repository.textContent = pullRequest.repository;
@@ -2278,6 +2484,9 @@ function renderGithubPullRequests() {
     row.append(repository, titleCell, author, updated);
     return row;
   }));
+  els.githubPrShowAll.hidden = Boolean(error) || matchingPullRequests.length <= 5;
+  els.githubPrShowAll.textContent = expanded ? "Show less" : "Show all";
+  els.githubPrShowAll.setAttribute("aria-expanded", String(expanded));
 }
 
 function renderForYouSection(kind, items, renderer, emptyMessage) {
@@ -6545,10 +6754,20 @@ function showSettings() {
     return row;
   }));
   els.githubRepoSettings.hidden = !state.githubToken;
+  els.githubAllOwners.checked = state.githubAllOwners;
+  els.githubOwnerOptions.replaceChildren();
+  els.githubOwnerStatus.textContent = "";
+  els.githubOwnerStatus.classList.remove("is-error");
   els.githubAllRepos.checked = state.githubAllRepos;
-  els.githubReposInput.value = state.githubRepos.join("\n");
+  state.githubRepositoryDraft = new Set(state.githubRepos);
+  state.githubRepositoryDraftInitialized = state.githubRepos.length > 0;
+  els.githubRepoOptions.replaceChildren();
+  els.githubRepoStatus.textContent = "";
+  els.githubRepoStatus.classList.remove("is-error");
+  updateGithubOwnerSettings();
   updateGithubRepositorySettings();
   els.settingsDialog.showModal();
+  if (state.githubToken) loadGithubOwnerChoices();
 }
 
 function showConnection(error = "") {
@@ -6599,16 +6818,131 @@ function formatDate(value) { return value ? new Intl.DateTimeFormat("en-GB", { d
 function formatDateTime(value) { return value ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)) : ""; }
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 
-function parseGithubRepositories(value) {
-  return [...new Set(String(value || "").split(/[\n,]+/)
-    .map(repository => repository.trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\/$/, ""))
-    .filter(Boolean))];
+function renderGithubOwnerChoices() {
+  const selectedOwners = new Set(state.githubOwners.map(owner => owner.toLocaleLowerCase("en")));
+  const useStoredSelection = selectedOwners.size > 0;
+  els.githubOwnerOptions.replaceChildren(...state.githubOwnerChoices.map(owner => {
+    const label = document.createElement("label");
+    label.className = "github-owner-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = owner.login;
+    checkbox.checked = !useStoredSelection || selectedOwners.has(owner.login.toLocaleLowerCase("en"));
+    const name = document.createElement("span");
+    name.textContent = owner.login;
+    const type = document.createElement("small");
+    type.textContent = owner.type === "Organization" ? "Organization" : "Personal";
+    label.append(checkbox, name, type);
+    return label;
+  }));
+  updateGithubOwnerSettings();
+}
+
+async function loadGithubOwnerChoices() {
+  if (!state.githubToken) return;
+  const token = state.githubToken;
+  els.githubOwnerStatus.textContent = "Loading accessible users and organizations…";
+  els.githubOwnerStatus.classList.remove("is-error");
+  try {
+    const repositories = await loadGithubAccessibleRepositories();
+    if (token !== state.githubToken) return;
+    const owners = new Map();
+    repositories.forEach(repository => {
+      const login = String(repository.owner?.login || repository.full_name?.split("/")[0] || "").trim();
+      if (!login) return;
+      const key = login.toLocaleLowerCase("en");
+      if (!owners.has(key)) owners.set(key, { login, type: repository.owner?.type || "User" });
+    });
+    state.githubOwnerChoices = [...owners.values()]
+      .sort((a, b) => a.login.localeCompare(b.login, "en", { sensitivity: "base", numeric: true }));
+    renderGithubOwnerChoices();
+    els.githubOwnerStatus.textContent = state.githubOwnerChoices.length
+      ? ""
+      : "No accessible repository owners were found for this token.";
+  } catch (error) {
+    console.error(error);
+    state.githubOwnerChoices = [];
+    els.githubOwnerOptions.replaceChildren();
+    els.githubOwnerStatus.textContent = error.message || "GitHub owners could not be loaded.";
+    els.githubOwnerStatus.classList.add("is-error");
+  }
+}
+
+function updateGithubOwnerSettings() {
+  els.githubOwnerOptions.hidden = els.githubAllOwners.checked;
+  if (els.githubAllOwners.checked) {
+    els.githubOwnerStatus.textContent = "";
+    els.githubOwnerStatus.classList.remove("is-error");
+  }
+  if (!els.githubAllRepos.checked) refreshGithubRepositoryChoices();
 }
 
 function updateGithubRepositorySettings() {
   const showRepositories = !els.githubAllRepos.checked;
-  els.githubReposLabel.hidden = !showRepositories;
-  els.githubReposInput.required = showRepositories;
+  els.githubRepoOptions.hidden = !showRepositories;
+  if (showRepositories) refreshGithubRepositoryChoices();
+  else {
+    els.githubRepoStatus.textContent = "";
+    els.githubRepoStatus.classList.remove("is-error");
+  }
+}
+
+function selectedGithubOwnersInSettings() {
+  if (els.githubAllOwners.checked) return state.githubOwnerChoices.map(owner => owner.login);
+  return [...els.githubOwnerOptions.querySelectorAll("input[type=checkbox]:checked")].map(input => input.value);
+}
+
+async function refreshGithubRepositoryChoices() {
+  const requestToken = ++state.githubSettingsRepositoryRequestToken;
+  const ownerLogins = selectedGithubOwnersInSettings();
+  if (!ownerLogins.length) {
+    state.githubSettingsRepositories = [];
+    renderGithubRepositoryChoices();
+    return;
+  }
+  els.githubRepoStatus.textContent = "Loading repositories…";
+  els.githubRepoStatus.classList.remove("is-error");
+  try {
+    const repositories = await loadGithubRepositoriesForOwners(ownerLogins);
+    if (requestToken !== state.githubSettingsRepositoryRequestToken || !els.settingsDialog.open) return;
+    state.githubSettingsRepositories = repositories;
+    renderGithubRepositoryChoices();
+  } catch (error) {
+    console.error(error);
+    if (requestToken !== state.githubSettingsRepositoryRequestToken || !els.settingsDialog.open) return;
+    state.githubSettingsRepositories = [];
+    els.githubRepoOptions.replaceChildren();
+    els.githubRepoStatus.textContent = error.message || "GitHub repositories could not be loaded.";
+    els.githubRepoStatus.classList.add("is-error");
+  }
+}
+
+function renderGithubRepositoryChoices() {
+  const repositories = state.githubSettingsRepositories;
+  if (!state.githubRepositoryDraftInitialized && repositories.length) {
+    repositories.forEach(repository => state.githubRepositoryDraft.add(repository.full_name));
+    state.githubRepositoryDraftInitialized = true;
+  }
+  els.githubRepoOptions.replaceChildren(...repositories.map(repository => {
+    const label = document.createElement("label");
+    label.className = "github-repository-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = repository.full_name;
+    checkbox.checked = state.githubRepositoryDraft.has(repository.full_name);
+    const name = document.createElement("span");
+    name.textContent = repository.full_name;
+    const visibility = document.createElement("small");
+    visibility.textContent = repository.private ? "Private" : "Public";
+    label.append(checkbox, name, visibility);
+    return label;
+  }));
+  els.githubRepoStatus.classList.remove("is-error");
+  if (!els.githubAllRepos.checked) {
+    els.githubRepoStatus.textContent = repositories.length
+      ? ""
+      : "No accessible repositories were found for the selected owners.";
+  }
 }
 
 els.connectionForm.addEventListener("submit", event => {
@@ -6630,6 +6964,13 @@ els.connectionForm.addEventListener("submit", event => {
       state.githubPullRequests = [];
       state.githubPullRequestsKey = "";
       state.githubPullRequestsError = "";
+      state.githubAccessibleRepositories = [];
+      state.githubAccessibleRepositoriesToken = "";
+      state.githubOwnerChoices = [];
+      state.githubOwnerRepositoriesCache.clear();
+      state.githubSettingsRepositories = [];
+      state.githubPullRequestFilters = { repositories: [], authors: [] };
+      localStorage.removeItem(STORAGE.githubPrFilters);
     }
     state.githubToken = githubToken;
     localStorage.setItem(STORAGE.url, state.orgUrl);
@@ -6645,12 +6986,30 @@ els.settingsForm.addEventListener("submit", async event => {
   event.preventDefault();
   const previousTeam = state.teamId;
   const previousGithubKey = githubPullRequestsCacheKey();
+  const githubAllOwners = els.githubAllOwners.checked;
+  const githubOwners = [...els.githubOwnerOptions.querySelectorAll("input[type=checkbox]:checked")].map(input => input.value);
+  if (state.githubToken && !githubAllOwners && !githubOwners.length) {
+    els.githubOwnerStatus.textContent = "Select at least one GitHub user or organization.";
+    els.githubOwnerStatus.classList.add("is-error");
+    return;
+  }
+  const githubAllRepos = els.githubAllRepos.checked;
+  const githubRepos = [...els.githubRepoOptions.querySelectorAll("input[type=checkbox]:checked")].map(input => input.value);
+  if (state.githubToken && !githubAllRepos && !githubRepos.length) {
+    els.githubRepoStatus.textContent = "Select at least one GitHub repository.";
+    els.githubRepoStatus.classList.add("is-error");
+    return;
+  }
   state.teamId = els.teamSelect.value;
-  state.githubAllRepos = els.githubAllRepos.checked;
-  state.githubRepos = parseGithubRepositories(els.githubReposInput.value);
+  state.githubAllOwners = githubAllOwners;
+  state.githubOwners = githubOwners;
+  state.githubAllRepos = githubAllRepos;
+  state.githubRepos = githubRepos;
   els.stateMappings.querySelectorAll("select[data-state]").forEach(select => { state.mapping[select.dataset.state] = select.value; });
   localStorage.setItem(STORAGE.team, state.teamId);
   localStorage.setItem(STORAGE.mapping, JSON.stringify(state.mapping));
+  localStorage.setItem(STORAGE.githubAllOwners, String(state.githubAllOwners));
+  localStorage.setItem(STORAGE.githubOwners, JSON.stringify(state.githubOwners));
   localStorage.setItem(STORAGE.githubAllRepos, String(state.githubAllRepos));
   localStorage.setItem(STORAGE.githubRepos, JSON.stringify(state.githubRepos));
   els.settingsDialog.close();
@@ -6893,7 +7252,21 @@ window.addEventListener("beforeunload", event => {
   event.returnValue = "";
 });
 els.cancelConnection.addEventListener("click", () => els.connectionDialog.close());
+els.githubAllOwners.addEventListener("change", updateGithubOwnerSettings);
+els.githubOwnerOptions.addEventListener("change", event => {
+  if (!event.target.matches("input[type=checkbox]")) return;
+  els.githubOwnerStatus.textContent = "";
+  els.githubOwnerStatus.classList.remove("is-error");
+  if (!els.githubAllRepos.checked) refreshGithubRepositoryChoices();
+});
 els.githubAllRepos.addEventListener("change", updateGithubRepositorySettings);
+els.githubRepoOptions.addEventListener("change", event => {
+  if (!event.target.matches("input[type=checkbox]")) return;
+  if (event.target.checked) state.githubRepositoryDraft.add(event.target.value);
+  else state.githubRepositoryDraft.delete(event.target.value);
+  els.githubRepoStatus.textContent = "";
+  els.githubRepoStatus.classList.remove("is-error");
+});
 els.changeConnection.addEventListener("click", () => showConnection());
 els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
@@ -6944,12 +7317,17 @@ els.backlogPositionDialog.addEventListener("close", () => {
 for (const [button, content] of [
   [els.filterPanelToggle, els.filterPanelBody],
   [els.forYouCustomFiltersToggle, els.forYouCustomFiltersBody],
+  [els.githubPrFiltersToggle, els.githubPrFiltersBody],
   [els.backlogHierarchyToggle, els.backlogSidebar],
   [els.wikiNavigationToggle, els.wikiSidebar]
 ]) {
   button.addEventListener("click", () => {
     toggleMobileDisclosure(button, content);
     if (content === els.forYouCustomFiltersBody && content.hidden) els.forYouCustomTags.open = false;
+    if (content === els.githubPrFiltersBody && content.hidden) {
+      els.githubPrRepositories.open = false;
+      els.githubPrAuthors.open = false;
+    }
   });
 }
 els.forYouNav.addEventListener("click", () => showMainView("for-you"));
@@ -6975,6 +7353,17 @@ els.forYouCustomShowAll.addEventListener("click", () => {
   state.forYouExpanded.custom = !state.forYouExpanded.custom;
   renderForYouCustomTable();
   if (!state.forYouExpanded.custom) els.forYouCustomShowAll.scrollIntoView({ block: "nearest" });
+});
+els.githubPrRepositoryOptions.addEventListener("change", event => {
+  if (event.target.matches('input[type="checkbox"]')) updateGithubPullRequestFilters();
+});
+els.githubPrAuthorOptions.addEventListener("change", event => {
+  if (event.target.matches('input[type="checkbox"]')) updateGithubPullRequestFilters();
+});
+els.githubPrShowAll.addEventListener("click", () => {
+  state.forYouExpanded.github = !state.forYouExpanded.github;
+  renderGithubPullRequests();
+  if (!state.forYouExpanded.github) els.githubPrShowAll.scrollIntoView({ block: "nearest" });
 });
 els.forYouWorkShowAll.addEventListener("click", () => toggleForYouSection("work"));
 els.forYouMentionsShowAll.addEventListener("click", () => toggleForYouSection("mentions"));
@@ -7057,6 +7446,8 @@ document.addEventListener("click", event => {
   if (!els.commentMentionMenu.contains(event.target) && !els.commentComposerInput.contains(event.target)) closeMentionMenu("comment");
   if (!els.forYouPersonControl.contains(event.target)) closeForYouPersonMenu();
   if (!els.forYouCustomTags.contains(event.target)) els.forYouCustomTags.open = false;
+  if (!els.githubPrRepositories.contains(event.target)) els.githubPrRepositories.open = false;
+  if (!els.githubPrAuthors.contains(event.target)) els.githubPrAuthors.open = false;
   if (!els.createWorkItemControl.contains(event.target)) closeCreateWorkItemMenu();
   if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
   if (!els.boardGroupControl.contains(event.target)) els.boardGroupControl.open = false;

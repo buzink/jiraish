@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261030-mobile-heading-search" />
+    <link rel="stylesheet" href="styles.css?v=20261030-github-pr-filter-title" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -302,11 +302,32 @@
           <header>
             <div>
               <span class="for-you-icon github-pr-icon" aria-hidden="true">GH</span>
-              <h2 id="githubPrTitle">Open GitHub pull requests</h2>
+              <h2 id="githubPrTitle">Open GitHub pull requests for everything by anyone</h2>
             </div>
             <span id="githubPrCount" class="count">0</span>
           </header>
           <p class="for-you-description">All open pull requests across the configured repositories.</p>
+          <button id="githubPrFiltersToggle" class="mobile-disclosure-toggle" type="button" aria-controls="githubPrFiltersBody" aria-expanded="true">
+            <span class="mobile-disclosure-icon" aria-hidden="true">☷</span><strong>Filters</strong><span class="mobile-disclosure-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div id="githubPrFiltersBody" class="mobile-disclosure-body">
+            <div class="for-you-custom-controls github-pr-filters" aria-label="Filter pull requests">
+              <div class="for-you-custom-field for-you-custom-tags-field">
+                <span>Repository</span>
+                <details id="githubPrRepositories">
+                  <summary id="githubPrRepositoriesSummary">Anything</summary>
+                  <div id="githubPrRepositoryOptions" class="for-you-custom-tag-options" role="group" aria-label="Filter by repository"></div>
+                </details>
+              </div>
+              <div class="for-you-custom-field for-you-custom-tags-field">
+                <span>Author</span>
+                <details id="githubPrAuthors">
+                  <summary id="githubPrAuthorsSummary">Anyone</summary>
+                  <div id="githubPrAuthorOptions" class="for-you-custom-tag-options" role="group" aria-label="Filter by author"></div>
+                </details>
+              </div>
+            </div>
+          </div>
           <div id="githubPrStatus" class="for-you-status" aria-live="polite"></div>
           <div id="githubPrTableWrap" class="github-pr-table-wrap">
             <table class="github-pr-table">
@@ -314,6 +335,7 @@
               <tbody id="githubPrRows"></tbody>
             </table>
           </div>
+          <button id="githubPrShowAll" class="for-you-show-all" type="button" aria-controls="githubPrRows" aria-expanded="false" hidden>Show all</button>
         </section>
         <div class="for-you-grid">
           <section class="for-you-panel for-you-work-panel" aria-labelledby="forYouWorkTitle">
@@ -445,15 +467,24 @@
         </label>
         <fieldset id="githubRepoSettings" class="github-repo-settings" hidden>
           <legend>GitHub pull requests</legend>
-          <label class="checkbox-label">
-            <input id="githubAllRepos" type="checkbox" checked>
-            Show pull requests from all repositories
-          </label>
-          <label id="githubReposLabel" hidden>
-            Repositories
-            <textarea id="githubReposInput" rows="3" placeholder="owner/repository, one per line"></textarea>
-            <span class="field-help">Enter exact GitHub repository names as owner/repository, separated by commas or new lines.</span>
-          </label>
+          <div class="github-settings-group">
+            <strong>Users and organizations</strong>
+            <label class="checkbox-label">
+              <input id="githubAllOwners" type="checkbox" checked>
+              Show pull requests from all accessible owners
+            </label>
+            <div id="githubOwnerOptions" class="github-owner-options" hidden></div>
+            <p id="githubOwnerStatus" class="github-owner-status" aria-live="polite"></p>
+          </div>
+          <div class="github-settings-group">
+            <strong>Repositories</strong>
+            <label class="checkbox-label">
+              <input id="githubAllRepos" type="checkbox" checked>
+              Show pull requests from all repositories for the selected owners
+            </label>
+            <div id="githubRepoOptions" class="github-repository-options" hidden></div>
+            <p id="githubRepoStatus" class="github-owner-status" aria-live="polite"></p>
+          </div>
         </fieldset>
         <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
         <div id="stateMappings" class="state-mappings"></div>
@@ -751,6 +782,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261030-mobile-heading-search" defer></script>
+    <script src="app.js?v=20261030-github-pr-anyone" defer></script>
   </body>
 </html>
