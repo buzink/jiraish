@@ -3838,13 +3838,36 @@ function createBacklogRow(item) {
   );
   const featureMenu = createBacklogRowSubmenu(
     "Move to feature",
-    () => state.backlogFeatures.map(feature => ({
-      label: feature.title,
-      detail: workItemKey(feature.id),
-      selected: actionTargets().every(target => Number(feature.id) === Number(target.parentId)),
-      value: feature
-    })),
-    feature => updateBacklogItemParent(item, feature)
+    () => {
+      const byTitle = (left, right) => String(left.title || "").localeCompare(String(right.title || ""), "en", { sensitivity: "base" });
+      const featureChoice = feature => ({
+        label: feature.title,
+        detail: workItemKey(feature.id),
+        selected: actionTargets().every(target => Number(feature.id) === Number(target.parentId)),
+        value: feature
+      });
+      const epicIds = new Set(state.backlogEpics.map(epic => Number(epic.id)));
+      const epicChoices = [...state.backlogEpics].sort(byTitle).map(epic => ({
+        label: epic.title,
+        detail: workItemKey(epic.id),
+        children: [...state.backlogFeatures]
+          .filter(feature => Number(feature.parentId) === Number(epic.id))
+          .sort(byTitle)
+          .map(featureChoice),
+        emptyText: "No features available"
+      })).filter(epic => epic.children.length);
+      const ungroupedChoices = [...state.backlogFeatures]
+        .filter(feature => !epicIds.has(Number(feature.parentId)))
+        .sort(byTitle)
+        .map(featureChoice);
+      return [
+        ...epicChoices,
+        ...(epicChoices.length && ungroupedChoices.length ? [{ separator: true }] : []),
+        ...ungroupedChoices
+      ];
+    },
+    feature => updateBacklogItemParent(item, feature),
+    "No epics or features available"
   );
   const moveToPosition = document.createElement("button");
   moveToPosition.type = "button";
@@ -3922,7 +3945,7 @@ function createBacklogRow(item) {
   return row;
 }
 
-function createBacklogRowSubmenu(label, getChoices, onSelect) {
+function createBacklogRowSubmenu(label, getChoices, onSelect, emptyText = "", triggerDetail = "") {
   const container = document.createElement("div");
   container.className = "backlog-row-submenu-container";
   const trigger = document.createElement("button");
@@ -3931,12 +3954,20 @@ function createBacklogRowSubmenu(label, getChoices, onSelect) {
   trigger.setAttribute("role", "menuitem");
   trigger.setAttribute("aria-haspopup", "menu");
   trigger.setAttribute("aria-expanded", "false");
+  const triggerContent = document.createElement("span");
+  triggerContent.className = "backlog-row-submenu-option-text";
   const text = document.createElement("span");
   text.textContent = label;
+  triggerContent.append(text);
+  if (triggerDetail) {
+    const detail = document.createElement("small");
+    detail.textContent = triggerDetail;
+    triggerContent.append(detail);
+  }
   const arrow = document.createElement("span");
   arrow.className = "backlog-row-submenu-arrow";
   arrow.textContent = "‹";
-  trigger.append(text, arrow);
+  trigger.append(triggerContent, arrow);
   const pane = document.createElement("div");
   pane.className = "backlog-row-submenu";
   pane.setAttribute("role", "menu");
@@ -3946,7 +3977,9 @@ function createBacklogRowSubmenu(label, getChoices, onSelect) {
   const positionPane = () => {
     if (!container.classList.contains("is-open")) return;
     const triggerRect = trigger.getBoundingClientRect();
-    const menuRect = container.closest(".backlog-row-menu-options")?.getBoundingClientRect() || triggerRect;
+    const menuRect = container.closest(".backlog-row-submenu")?.getBoundingClientRect()
+      || container.closest(".backlog-row-menu-options")?.getBoundingClientRect()
+      || triggerRect;
     const paneWidth = pane.offsetWidth;
     const paneHeight = pane.offsetHeight;
     const viewportGap = 8;
@@ -3965,13 +3998,30 @@ function createBacklogRowSubmenu(label, getChoices, onSelect) {
     if (!choices.length) {
       const empty = document.createElement("div");
       empty.className = "backlog-row-submenu-empty";
-      empty.textContent = label === "Assign to"
+      empty.textContent = emptyText || (label === "Assign to"
         ? "No people available"
-        : label === "Move to feature" ? "No features available" : "No sprints available";
+        : label === "Move to feature" ? "No features available" : "No sprints available");
       pane.append(empty);
       return;
     }
     choices.forEach(choice => {
+      if (choice.separator) {
+        const separator = document.createElement("div");
+        separator.className = "backlog-row-submenu-separator";
+        separator.setAttribute("role", "separator");
+        pane.append(separator);
+        return;
+      }
+      if (Array.isArray(choice.children)) {
+        pane.append(createBacklogRowSubmenu(
+          choice.label,
+          () => choice.children,
+          onSelect,
+          choice.emptyText || "No options available",
+          choice.detail || ""
+        ));
+        return;
+      }
       const button = document.createElement("button");
       button.type = "button";
       button.className = "backlog-row-submenu-option";
@@ -4006,39 +4056,53 @@ function createBacklogRowSubmenu(label, getChoices, onSelect) {
     pane.classList.toggle("is-open", open);
     trigger.setAttribute("aria-expanded", String(open));
     if (open) {
+      const nested = Boolean(container.closest(".backlog-row-submenu"));
       if (pane.parentElement !== document.body) document.body.append(pane);
       positionPane();
       window.addEventListener("resize", positionPane);
-      window.addEventListener("scroll", positionPane, true);
+      if (!nested) window.addEventListener("scroll", positionPane, true);
     } else {
       window.clearTimeout(closeTimer);
+      pane.querySelectorAll(".backlog-row-submenu-container.is-open").forEach(submenu => {
+        submenu.dispatchEvent(new CustomEvent("backlog-submenu-close"));
+      });
       window.removeEventListener("resize", positionPane);
       window.removeEventListener("scroll", positionPane, true);
       pane.removeAttribute("style");
       if (pane.parentElement !== container) container.append(pane);
+      container.closest(".backlog-row-submenu")?.dispatchEvent(new CustomEvent("backlog-submenu-child-closed"));
     }
   };
   const scheduleClose = () => {
     window.clearTimeout(closeTimer);
     closeTimer = window.setTimeout(() => {
-      const focusInside = container.contains(document.activeElement) || pane.contains(document.activeElement);
-      if (!container.matches(":hover") && !pane.matches(":hover") && !focusInside) setOpen(false);
+      const interactingWithSubmenu = [...document.querySelectorAll(".backlog-row-submenu.is-open")].some(openPane => (
+        openPane.matches(":hover")
+      ));
+      if (!container.matches(":hover") && !interactingWithSubmenu) setOpen(false);
+    }, 500);
+  };
+  const closeSiblingSubmenus = () => {
+    [...(container.parentElement?.children || [])].forEach(other => {
+      if (other === container || !other.matches(".backlog-row-submenu-container.is-open")) return;
+      other.dispatchEvent(new CustomEvent("backlog-submenu-close"));
     });
   };
   trigger.addEventListener("click", event => {
     event.stopPropagation();
     const open = !container.classList.contains("is-open");
-    container.parentElement?.querySelectorAll(".backlog-row-submenu-container.is-open").forEach(other => {
-      if (other === container) return;
-      other.dispatchEvent(new CustomEvent("backlog-submenu-close"));
-    });
+    if (open) closeSiblingSubmenus();
     setOpen(open);
     if (open && event.detail === 0) pane.querySelector("button:not(:disabled)")?.focus();
   });
-  container.addEventListener("mouseenter", () => setOpen(true));
+  container.addEventListener("mouseenter", () => {
+    closeSiblingSubmenus();
+    setOpen(true);
+  });
   container.addEventListener("mouseleave", scheduleClose);
   pane.addEventListener("mouseenter", () => window.clearTimeout(closeTimer));
   pane.addEventListener("mouseleave", scheduleClose);
+  pane.addEventListener("backlog-submenu-child-closed", scheduleClose);
   container.addEventListener("focusout", event => {
     if (!container.contains(event.relatedTarget) && !pane.contains(event.relatedTarget)) scheduleClose();
   });
