@@ -3808,14 +3808,17 @@ function createBacklogRow(item) {
   const options = document.createElement("div");
   options.className = "backlog-row-menu-options";
   options.setAttribute("role", "menu");
+  const actionTargets = () => backlogActionTargets(item);
   const assignMenu = createBacklogRowSubmenu(
     "Assign to",
     () => [
-      { label: "Unassigned", selected: !item.assignee, value: null },
+      { label: "Unassigned", selected: actionTargets().every(target => !target.assignee), value: null },
       ...assigneeChoices(item).map(choice => ({
         label: choice.name,
         detail: choice.uniqueName !== choice.name ? choice.uniqueName : "",
-        selected: choice.uniqueName === item.assigneeUniqueName || choice.name === item.assignee,
+        selected: actionTargets().every(target => (
+          choice.uniqueName === target.assigneeUniqueName || choice.name === target.assignee
+        )),
         value: choice
       }))
     ],
@@ -3826,10 +3829,22 @@ function createBacklogRow(item) {
     () => newestIterations().map(iteration => ({
       label: iteration.name,
       detail: iterationLabel(iteration),
-      selected: String(iteration.path || iteration.name).toLocaleLowerCase("en") === String(item.iterationPath).toLocaleLowerCase("en"),
+      selected: actionTargets().every(target => (
+        String(iteration.path || iteration.name).toLocaleLowerCase("en") === String(target.iterationPath).toLocaleLowerCase("en")
+      )),
       value: iteration
     })),
     iteration => updateBacklogItemField(item, "System.IterationPath", iteration.path || iteration.name, `Moving ${workItemKey(item.id)}…`, "Sprint")
+  );
+  const featureMenu = createBacklogRowSubmenu(
+    "Move to feature",
+    () => state.backlogFeatures.map(feature => ({
+      label: feature.title,
+      detail: workItemKey(feature.id),
+      selected: actionTargets().every(target => Number(feature.id) === Number(target.parentId)),
+      value: feature
+    })),
+    feature => updateBacklogItemParent(item, feature)
   );
   const moveToPosition = document.createElement("button");
   moveToPosition.type = "button";
@@ -3853,7 +3868,7 @@ function createBacklogRow(item) {
     menu.open = false;
     deleteBacklogItems(item);
   });
-  options.append(assignMenu, sprintMenu, moveToPosition, remove);
+  options.append(assignMenu, sprintMenu, featureMenu, moveToPosition, remove);
   menu.append(trigger, options);
   const positionOptions = () => {
     if (!menu.open) return;
@@ -3950,7 +3965,9 @@ function createBacklogRowSubmenu(label, getChoices, onSelect) {
     if (!choices.length) {
       const empty = document.createElement("div");
       empty.className = "backlog-row-submenu-empty";
-      empty.textContent = label === "Assign to" ? "No people available" : "No sprints available";
+      empty.textContent = label === "Assign to"
+        ? "No people available"
+        : label === "Move to feature" ? "No features available" : "No sprints available";
       pane.append(empty);
       return;
     }
@@ -4051,6 +4068,7 @@ function closeBacklogRowMenus() {
 
 function syncBacklogWorkItem(itemId, result) {
   const normalized = normalizeWorkItem(result);
+  const parentFeature = state.backlogFeatures.find(feature => Number(feature.id) === Number(normalized.parentId));
   const collections = [state.backlogItems, state.stories, state.backlogEpics, state.backlogFeatures];
   collections.forEach(collection => collection.forEach(candidate => {
     if (Number(candidate.id) !== Number(itemId)) return;
@@ -4059,6 +4077,8 @@ function syncBacklogWorkItem(itemId, result) {
     candidate.assigneeId = normalized.assigneeId;
     candidate.iterationPath = normalized.iterationPath;
     candidate.iterationName = normalized.iterationName;
+    candidate.parentId = normalized.parentId;
+    candidate.featureLabel = parentFeature ? backlogFeatureLabel(parentFeature) : "";
     candidate.changedDate = normalized.changedDate;
   }));
   state.detailsCache.delete(Number(itemId));
@@ -4067,24 +4087,93 @@ function syncBacklogWorkItem(itemId, result) {
   state.iterationStoriesCache.clear();
 }
 
-async function updateBacklogItemField(item, field, value, progress, label) {
+async function moveBacklogTargetToFeature(target, feature) {
+  const current = await azure(`/_apis/wit/workitems/${target.id}?$expand=relations&api-version=7.1`);
+  const parentIndexes = (current.relations || [])
+    .map((relation, index) => ({ relation, index }))
+    .filter(({ relation }) => relation.rel === "System.LinkTypes.Hierarchy-Reverse")
+    .map(({ index }) => index)
+    .sort((left, right) => right - left);
+  const operations = parentIndexes.map(index => ({ op: "remove", path: `/relations/${index}` }));
+  operations.push({
+    op: "add",
+    path: "/relations/-",
+    value: {
+      rel: "System.LinkTypes.Hierarchy-Reverse",
+      url: `${activeAzureContext().base}/_apis/wit/workItems/${Number(feature.id)}`
+    }
+  });
+  return azure(`/_apis/wit/workitems/${target.id}?api-version=7.1`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json-patch+json" },
+    body: JSON.stringify(operations)
+  });
+}
+
+async function updateBacklogItemParent(item, feature) {
   if (state.backlogUpdating || state.backlogDeleting) return;
+  const targets = backlogActionTargets(item);
+  if (!targets.length) return;
   state.backlogUpdating = true;
   renderBacklog();
-  els.backlogMeta.textContent = progress;
+  els.backlogMeta.textContent = targets.length === 1
+    ? `Moving ${workItemKey(targets[0].id)} to ${feature.title}…`
+    : `Moving ${targets.length} work items to ${feature.title}…`;
   try {
-    const result = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+    const results = await Promise.allSettled(targets.map(target => moveBacklogTargetToFeature(target, feature)));
+    const failed = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") syncBacklogWorkItem(targets[index].id, result.value);
+      else {
+        console.error(result.reason);
+        failed.push(result.reason);
+      }
+    });
+    const updated = targets.length - failed.length;
+    if (failed.length) {
+      const auth = failed.some(error => error?.auth);
+      showNotice(`${updated ? `${updated} updated. ` : ""}${failed.length} ${failed.length === 1 ? "work item" : "work items"} could not be moved to the feature.${auth ? " The PAT requires ‘Work Items: Read & write’." : ""}`, "error");
+    } else {
+      showNotice(targets.length === 1
+        ? `${workItemKey(targets[0].id)} moved to feature ${feature.title}.`
+        : `${targets.length} work items moved to feature ${feature.title}.`, "info");
+    }
+  } finally {
+    state.backlogUpdating = false;
+    renderBacklog();
+  }
+}
+
+async function updateBacklogItemField(item, field, value, progress, label) {
+  if (state.backlogUpdating || state.backlogDeleting) return;
+  const targets = backlogActionTargets(item);
+  if (!targets.length) return;
+  state.backlogUpdating = true;
+  renderBacklog();
+  els.backlogMeta.textContent = targets.length === 1 ? progress : `Updating ${label.toLocaleLowerCase("en")} for ${targets.length} work items…`;
+  try {
+    const results = await Promise.allSettled(targets.map(target => azure(`/_apis/wit/workitems/${target.id}?api-version=7.1`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json-patch+json" },
       body: JSON.stringify([{ op: "add", path: `/fields/${field}`, value }])
+    })));
+    const failed = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") syncBacklogWorkItem(targets[index].id, result.value);
+      else {
+        console.error(result.reason);
+        failed.push(result.reason);
+      }
     });
-    syncBacklogWorkItem(item.id, result);
-    showNotice(`${label} for ${workItemKey(item.id)} updated.`, "info");
-  } catch (error) {
-    console.error(error);
-    showNotice(error.auth
-      ? `${label} could not be updated. The PAT requires ‘Work Items: Read & write’.`
-      : error.message || `${label} could not be updated.`, "error");
+    const updated = targets.length - failed.length;
+    if (failed.length) {
+      const auth = failed.some(error => error?.auth);
+      showNotice(`${updated ? `${updated} updated. ` : ""}${label} could not be updated for ${failed.length} ${failed.length === 1 ? "work item" : "work items"}.${auth ? " The PAT requires ‘Work Items: Read & write’." : ""}`, "error");
+    } else {
+      showNotice(targets.length === 1
+        ? `${label} for ${workItemKey(targets[0].id)} updated.`
+        : `${label} updated for ${targets.length} work items.`, "info");
+    }
   } finally {
     state.backlogUpdating = false;
     renderBacklog();
