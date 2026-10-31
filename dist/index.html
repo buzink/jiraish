@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261031-release-readiness-v2" />
+    <link rel="stylesheet" href="styles.css?v=20261031-ai-create-v1" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -547,6 +547,27 @@
             <p id="githubRepoStatus" class="github-owner-status" aria-live="polite"></p>
           </div>
         </fieldset>
+        <fieldset class="ai-settings">
+          <legend>AI-assisted work items</legend>
+          <label for="litellmUrlInput">
+            LiteLLM base URL
+            <input id="litellmUrlInput" name="litellmUrl" type="url" placeholder="https://litellm.example.com" autocomplete="url" />
+          </label>
+          <label for="litellmApiKeyInput">
+            API key
+            <input id="litellmApiKeyInput" name="litellmApiKey" type="password" placeholder="Paste your LiteLLM API key" autocomplete="off" />
+          </label>
+          <label for="litellmModelInput">
+            Model
+            <span class="ai-model-control">
+              <input id="litellmModelInput" name="litellmModel" type="text" list="litellmModelOptions" placeholder="e.g. gpt-4.1-mini" autocomplete="off" />
+              <button id="loadLitellmModels" class="secondary-button" type="button">Load models</button>
+            </span>
+            <datalist id="litellmModelOptions"></datalist>
+            <span class="field-help">The URL, key and selected model are stored only in this browser.</span>
+          </label>
+          <p id="litellmStatus" class="github-owner-status" aria-live="polite"></p>
+        </fieldset>
         <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
         <div id="stateMappings" class="state-mappings"></div>
         <div class="settings-footer">
@@ -565,13 +586,18 @@
           <div>
             <div class="issue-breadcrumb"><span>New work item</span><span aria-hidden="true">/</span><span id="createWorkItemTypeLabel">Work item</span></div>
             <h2 id="createWorkItemHeading">Create <span id="createWorkItemHeadingType">work item</span></h2>
-            <p>Start with a title. Nothing else will be prefilled.</p>
+            <p>Add a title yourself, or describe the requested work and let AI create the item.</p>
           </div>
           <button class="close-button" type="button" data-close-create-work-item aria-label="Close">×</button>
         </div>
         <label for="createWorkItemTitle">
           Title
           <input id="createWorkItemTitle" name="title" type="text" maxlength="255" autocomplete="off" required autofocus />
+        </label>
+        <label for="createWorkItemDescription">
+          Description
+          <textarea id="createWorkItemDescription" name="description" rows="7" placeholder="Describe the request, or paste a chat or email conversation here."></textarea>
+          <span class="field-help">For bugs, this text is saved as repro steps. AI sends this text to the configured LiteLLM model.</span>
         </label>
         <div id="createWorkItemParent" class="create-work-item-parent" hidden>
           <span>Parent</span>
@@ -580,7 +606,8 @@
         <p id="createWorkItemError" class="form-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="secondary-button" type="button" data-close-create-work-item>Cancel</button>
-          <button id="createWorkItemSubmit" class="primary-button" type="submit">Create</button>
+          <button id="createWorkItemAiSubmit" class="secondary-button ai-create-button" type="button" disabled>Create with AI</button>
+          <button id="createWorkItemSubmit" class="primary-button" type="submit" disabled>Create</button>
         </div>
       </form>
     </dialog>
@@ -855,6 +882,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261031-release-readiness-v2" defer></script>
+    <script src="app.js?v=20261031-ai-create-v5" defer></script>
   </body>
 </html>

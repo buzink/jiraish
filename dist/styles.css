@@ -531,7 +531,14 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .create-work-item-dialog { width: min(500px, calc(100vw - 32px)); }
 .create-work-item-dialog .dialog-heading { margin-bottom: 20px; }
 .create-work-item-dialog .issue-breadcrumb { margin-bottom: 6px; }
-.create-work-item-dialog .primary-button:disabled { cursor: wait; opacity: .65; }
+.create-work-item-dialog .primary-button:disabled { cursor: not-allowed; opacity: .65; }
+.create-work-item-dialog textarea { min-height: 132px; line-height: 1.45; }
+.create-work-item-dialog button:disabled { cursor: not-allowed; opacity: .55; }
+.create-work-item-dialog button.is-busy, .create-work-item-dialog .primary-button.is-busy { cursor: wait; }
+.ai-settings { margin: 22px 0 0; padding: 15px; border: 1px solid var(--line); border-radius: 4px; }
+.ai-settings legend { padding: 0 5px; color: var(--navy); font-size: 13px; font-weight: 700; }
+.ai-model-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.ai-model-control .secondary-button { min-width: 104px; }
 .backlog-position-dialog { width: min(460px, calc(100vw - 32px)); }
 .backlog-position-dialog .dialog-heading { margin-bottom: 18px; }
 .backlog-position-dialog .issue-breadcrumb { margin-bottom: 6px; }
@@ -1056,6 +1063,8 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .create-work-item-type-icon { color: #101214; background: #579dff; }
 [data-theme="dark"] .create-work-item-menu-status.is-error { color: #ff7452; }
 [data-theme="dark"] .create-work-item-parent { color: #b6c2cf; background: #22272b; }
+[data-theme="dark"] .ai-settings { border-color: #454f59; }
+[data-theme="dark"] .ai-settings legend { color: #b6c2cf; }
 [data-theme="dark"] .privacy-note { color: #b6c2cf; background: #22272b; }
 [data-theme="dark"] .close-button:hover { background: #38414a; }
 [data-theme="dark"] .mapping-row { border-bottom-color: #38414a; }
@@ -1354,6 +1363,9 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
   .mapping-heading, .mapping-row { grid-template-columns: 1fr 145px; }
   .settings-footer { align-items: stretch; flex-direction: column-reverse; }
   .dialog-actions.inline { display: grid; grid-template-columns: 1fr 1fr; }
+  .create-work-item-dialog .dialog-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .create-work-item-dialog .dialog-actions .secondary-button:first-child { grid-column: 1 / -1; }
+  .ai-model-control { grid-template-columns: 1fr; }
   .work-item-header { padding: 20px 18px 16px; }
   .work-item-header h2 { font-size: 20px; }
   .work-item-main { padding: 20px 18px 28px; }

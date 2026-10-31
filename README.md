@@ -11,6 +11,7 @@ Jiraish is a compact, Jira-style sprint and backlog interface for Azure DevOps. 
 - Global work-item search plus title/ID filters on the Sprint board, Backlog, and For you pages
 - Confluence-style Azure DevOps wiki reader with persistent navigation, title/path filtering, and Markdown rendering
 - Work-item creation from the header and story creation directly inside a Feature
+- AI-assisted work-item creation from a pasted chat, email, or description through a configurable LiteLLM model
 - Work-item editing for titles, states, descriptions, Acceptance Criteria, Repro Steps, System Info, assignees, priorities, estimates, areas, sprints, and tags
 - Rich-text editing in Preview, formatted HTML, or Markdown mode, including code blocks, syntax highlighting, and checkboxes
 - Jira-style `@` mentions and `#` work-item links in descriptions and comments
@@ -74,6 +75,18 @@ Change the connection and optionally add a GitHub API token to show open pull re
 
 The GitHub token is also stored only in the browser's local storage and sent directly to the GitHub API. Use a fine-grained token with read-only access to the repositories you want Jiraish to include.
 
+## Configure LiteLLM
+
+Open **Settings**, enter the LiteLLM base URL and API key under **AI-assisted work items**, and load or manually enter a model name. Jiraish uses the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints. The LiteLLM server must allow browser requests from the Jiraish origin.
+
+When creating a work item, enter a title and optionally a description for the regular **Create** action. Alternatively, paste a description, chat, or email conversation and choose **Create with AI**. The configured model generates the title and content, after which Jiraish creates the item immediately and opens it for review. Descriptions for Bugs are stored as Repro Steps; other work-item types use the Description field.
+
+For AI-created User Stories and Product Backlog Items, generated acceptance criteria are stored as a numbered list in the dedicated Azure DevOps Acceptance Criteria field rather than included in the Description.
+
+New User Stories, Product Backlog Items, and Bugs are always created with the `To be refined` tag, whether they are created manually or with AI.
+
+The LiteLLM URL, API key, and selected model are stored in the browser's local storage. Pasted source text is sent to the configured LiteLLM server only when **Create with AI** is selected. Use a limited API key and review the LiteLLM server's prompt-logging policy before sending sensitive conversations.
+
 Pull-request titles containing an exact marker such as `AB#8374` are shown in that work item's Activity view. Jiraish only searches the repositories selected in the GitHub settings. Build statuses and commit SHAs are also used to correlate GitHub pull requests with Azure DevOps YAML runs.
 
 ## Releases
@@ -124,4 +137,4 @@ dist/
 
 ## Security
 
-Jiraish is a client-side application. Anyone with access to the browser profile may be able to read the locally stored Azure DevOps and GitHub tokens. Use tokens with the minimum required permissions and a short lifetime.
+Jiraish is a client-side application. Anyone with access to the browser profile may be able to read the locally stored Azure DevOps, GitHub, and LiteLLM tokens. Use tokens with the minimum required permissions and a short lifetime.
