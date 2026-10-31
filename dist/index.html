@@ -560,10 +560,13 @@
           <label for="litellmModelInput">
             Model
             <span class="ai-model-control">
-              <input id="litellmModelInput" name="litellmModel" type="text" list="litellmModelOptions" placeholder="e.g. gpt-4.1-mini" autocomplete="off" />
+              <select id="litellmModelInput" name="litellmModel">
+                <option value="">Load models to choose…</option>
+                <option value="__custom__">Enter a model manually…</option>
+              </select>
               <button id="loadLitellmModels" class="secondary-button" type="button">Load models</button>
             </span>
-            <datalist id="litellmModelOptions"></datalist>
+            <input id="litellmCustomModelInput" name="litellmCustomModel" type="text" placeholder="e.g. gpt-4.1-mini" autocomplete="off" hidden />
             <span class="field-help">The URL, key and selected model are stored only in this browser.</span>
           </label>
           <p id="litellmStatus" class="github-owner-status" aria-live="polite"></p>
@@ -882,6 +885,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261031-ai-create-v5" defer></script>
+    <script src="app.js?v=20261031-ai-create-v6" defer></script>
   </body>
 </html>

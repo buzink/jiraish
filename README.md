@@ -77,7 +77,7 @@ The GitHub token is also stored only in the browser's local storage and sent dir
 
 ## Configure LiteLLM
 
-Open **Settings**, enter the LiteLLM base URL and API key under **AI-assisted work items**, and load or manually enter a model name. Jiraish uses the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints. The LiteLLM server must allow browser requests from the Jiraish origin.
+Open **Settings**, enter the LiteLLM base URL and API key under **AI-assisted work items**, and load the available models. Choose a model from the native dropdown, or select **Enter a model manually…** for a model that is not returned by the server. Jiraish uses the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints. The LiteLLM server must allow browser requests from the Jiraish origin.
 
 When creating a work item, enter a title and optionally a description for the regular **Create** action. Alternatively, paste a description, chat, or email conversation and choose **Create with AI**. The configured model generates the title and content, after which Jiraish creates the item immediately and opens it for review. Descriptions for Bugs are stored as Repro Steps; other work-item types use the Description field.
 

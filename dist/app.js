@@ -432,7 +432,7 @@ const els = {
   litellmUrl: document.querySelector("#litellmUrlInput"),
   litellmApiKey: document.querySelector("#litellmApiKeyInput"),
   litellmModel: document.querySelector("#litellmModelInput"),
-  litellmModelOptions: document.querySelector("#litellmModelOptions"),
+  litellmCustomModel: document.querySelector("#litellmCustomModelInput"),
   loadLitellmModels: document.querySelector("#loadLitellmModels"),
   litellmStatus: document.querySelector("#litellmStatus"),
   connectionError: document.querySelector("#connectionError"),
@@ -8963,8 +8963,7 @@ function showSettings() {
   els.githubRepoStatus.classList.remove("is-error");
   els.litellmUrl.value = state.litellmUrl;
   els.litellmApiKey.value = state.litellmApiKey;
-  els.litellmModel.value = state.litellmModel;
-  els.litellmModelOptions.replaceChildren();
+  renderLitellmModelOptions([], state.litellmModel);
   els.litellmStatus.textContent = "";
   els.litellmStatus.classList.remove("is-error");
   updateGithubOwnerSettings();
@@ -8973,9 +8972,56 @@ function showSettings() {
   if (state.githubToken) loadGithubOwnerChoices();
 }
 
+const LITELLM_CUSTOM_MODEL = "__custom__";
+
+function selectedLitellmModelInSettings() {
+  return els.litellmModel.value === LITELLM_CUSTOM_MODEL
+    ? els.litellmCustomModel.value.trim()
+    : els.litellmModel.value.trim();
+}
+
+function updateLitellmCustomModelVisibility(focus = false) {
+  const custom = els.litellmModel.value === LITELLM_CUSTOM_MODEL;
+  els.litellmCustomModel.hidden = !custom;
+  if (custom && focus) requestAnimationFrame(() => els.litellmCustomModel.focus());
+}
+
+function renderLitellmModelOptions(models, selectedModel = "") {
+  const choices = [...new Set(models.map(model => String(model || "").trim()).filter(Boolean))];
+  if (selectedModel && !choices.length) choices.push(selectedModel);
+  const options = [];
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = choices.length ? "Choose a model…" : "Load models to choose…";
+  options.push(placeholder);
+  choices.forEach(model => {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    options.push(option);
+  });
+  const custom = document.createElement("option");
+  custom.value = LITELLM_CUSTOM_MODEL;
+  custom.textContent = "Enter a model manually…";
+  options.push(custom);
+  els.litellmModel.replaceChildren(...options);
+  if (selectedModel && choices.includes(selectedModel)) {
+    els.litellmModel.value = selectedModel;
+    els.litellmCustomModel.value = "";
+  } else if (selectedModel) {
+    els.litellmModel.value = LITELLM_CUSTOM_MODEL;
+    els.litellmCustomModel.value = selectedModel;
+  } else {
+    els.litellmModel.value = "";
+    els.litellmCustomModel.value = "";
+  }
+  updateLitellmCustomModelVisibility();
+}
+
 async function loadLitellmModels() {
   const baseUrl = els.litellmUrl.value.trim();
   const apiKey = els.litellmApiKey.value.trim();
+  const selectedModel = selectedLitellmModelInSettings();
   els.litellmStatus.classList.remove("is-error");
   if (!apiKey) {
     els.litellmStatus.textContent = "Enter an API key before loading models.";
@@ -8993,12 +9039,7 @@ async function loadLitellmModels() {
     if (!response.ok) throw new Error(result?.error?.message || result?.message || `LiteLLM returned error ${response.status}.`);
     const models = [...new Set((result?.data || []).map(model => String(model?.id || "").trim()).filter(Boolean))]
       .sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base", numeric: true }));
-    els.litellmModelOptions.replaceChildren(...models.map(model => {
-      const option = document.createElement("option");
-      option.value = model;
-      return option;
-    }));
-    if (!els.litellmModel.value.trim() && models.length === 1) els.litellmModel.value = models[0];
+    renderLitellmModelOptions(models, selectedModel || (models.length === 1 ? models[0] : ""));
     els.litellmStatus.textContent = models.length
       ? `${models.length} model${models.length === 1 ? "" : "s"} available. Choose or type a model name.`
       : "No models were returned. You can still type a model name manually.";
@@ -9288,7 +9329,7 @@ els.settingsForm.addEventListener("submit", async event => {
   }
   const litellmUrl = els.litellmUrl.value.trim().replace(/\/+$/, "");
   const litellmApiKey = els.litellmApiKey.value.trim();
-  const litellmModel = els.litellmModel.value.trim();
+  const litellmModel = selectedLitellmModelInSettings();
   if (litellmUrl) {
     try { litellmApiUrl(litellmUrl, "models"); }
     catch (error) {
@@ -9587,6 +9628,7 @@ els.githubOwnerOptions.addEventListener("change", event => {
 });
 els.githubAllRepos.addEventListener("change", updateGithubRepositorySettings);
 els.loadLitellmModels.addEventListener("click", loadLitellmModels);
+els.litellmModel.addEventListener("change", () => updateLitellmCustomModelVisibility(true));
 els.githubRepoOptions.addEventListener("change", event => {
   if (!event.target.matches("input[type=checkbox]")) return;
   if (event.target.checked) state.githubRepositoryDraft.add(event.target.value);
