@@ -1863,10 +1863,7 @@ async function restoreRoutedViewAfterBoardLoad() {
   if (state.currentView === "search") return showMainView("search");
 }
 
-async function showMainView(view) {
-  if (!state.routeApplying) writeAppRoute(currentAppRoute({ view, itemId: null }));
-  const enteringForYou = view === "for-you" && state.currentView !== "for-you";
-  state.currentView = view;
+function applyMainViewVisibility(view) {
   const showForYou = view === "for-you";
   const showBacklog = view === "backlog";
   const showBoard = view === "board";
@@ -1890,6 +1887,18 @@ async function showMainView(view) {
   els.backlogNav.toggleAttribute("aria-current", showBacklog);
   els.wikiNav.toggleAttribute("aria-current", showWiki);
   els.releasesNav.toggleAttribute("aria-current", showReleases);
+}
+
+async function showMainView(view) {
+  if (!state.routeApplying) writeAppRoute(currentAppRoute({ view, itemId: null }));
+  const enteringForYou = view === "for-you" && state.currentView !== "for-you";
+  const showForYou = view === "for-you";
+  const showBacklog = view === "backlog";
+  const showWiki = view === "wiki";
+  const showReleases = view === "releases";
+  const showSearch = view === "search";
+  state.currentView = view;
+  applyMainViewVisibility(view);
   if (!showForYou) closeForYouPersonMenu();
   if (showForYou) {
     if (enteringForYou) {
@@ -9940,5 +9949,6 @@ applyTheme(document.documentElement.dataset.theme || "light");
 applyMobileDisclosures(mobileLayoutQuery.matches);
 const initialAppRoute = parseAppRoute();
 primeAppRouteState(initialAppRoute);
+applyMainViewVisibility(initialAppRoute.view);
 writeAppRoute(initialAppRoute, { replace: true });
 if (state.pat) loadBoard(); else { renderEmptyBoard(); showConnection(); }
