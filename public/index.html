@@ -659,6 +659,30 @@
       </form>
     </dialog>
 
+    <dialog id="remainingPointsDialog" class="dialog remaining-points-dialog" aria-labelledby="remainingPointsHeading">
+      <form id="remainingPointsForm">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span id="remainingPointsKey">Work item</span><span aria-hidden="true">/</span><span id="remainingPointsSprint">Sprint</span></div>
+            <h2 id="remainingPointsHeading">Move remaining work</h2>
+            <p id="remainingPointsTitle"></p>
+          </div>
+          <button class="close-button" type="button" data-close-remaining-points aria-label="Close">×</button>
+        </div>
+        <p class="remaining-points-explanation">This work item is already in progress. How many story points are still needed in the new sprint?</p>
+        <fieldset class="remaining-points-fieldset">
+          <legend>Remaining story points</legend>
+          <div id="remainingPointsChoices" class="issue-points-quick remaining-points-choices" role="radiogroup" aria-label="Remaining story points"></div>
+          <span id="remainingPointsHelp" class="field-help"></span>
+        </fieldset>
+        <p id="remainingPointsError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-remaining-points>Cancel</button>
+          <button id="remainingPointsSubmit" class="primary-button" type="submit">Split and move</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="workItemDialog" class="dialog work-item-dialog" aria-labelledby="workItemTitle" tabindex="-1">
       <div class="work-item-shell">
         <div id="workItemLoading" class="work-item-loading" aria-hidden="true"><span></span></div>
@@ -886,6 +910,14 @@
               </div>
               <div><dt>Last changed</dt><dd id="workItemChanged">—</dd></div>
             </dl>
+            <section id="workItemRelationsSection" class="work-item-relations" aria-labelledby="workItemRelationsHeading" hidden>
+              <div class="work-item-relations-heading">
+                <h3 id="workItemRelationsHeading">Linked work items</h3>
+                <span id="workItemRelationCount" class="comment-count">0</span>
+              </div>
+              <div id="workItemRelationsStatus" class="work-item-relations-status" aria-live="polite"></div>
+              <div id="workItemRelations" class="work-item-relation-list"></div>
+            </section>
           </aside>
         </div>
 

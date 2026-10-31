@@ -31,6 +31,7 @@ const ACTIVE_DEFAULT_STATES = [
   "Test on acc",
   "Test on dev"
 ];
+const STORY_POINT_OPTIONS = [1, 2, 3, 5, 8, 13, 21];
 const DEFAULT_MAPPING = {
   New: "todo",
   Proposed: "hidden",
@@ -227,6 +228,8 @@ const state = {
   pendingWorkItemWrites: 0,
   loading: false
 };
+
+let remainingPointsRequest = null;
 
 const FILTER_DEFINITIONS = [
   { key: "type", label: "Types", value: item => item.type },
@@ -477,6 +480,15 @@ const els = {
   backlogPositionHighest: document.querySelector("#backlogPositionHighest"),
   backlogPositionError: document.querySelector("#backlogPositionError"),
   backlogPositionSubmit: document.querySelector("#backlogPositionSubmit"),
+  remainingPointsDialog: document.querySelector("#remainingPointsDialog"),
+  remainingPointsForm: document.querySelector("#remainingPointsForm"),
+  remainingPointsKey: document.querySelector("#remainingPointsKey"),
+  remainingPointsSprint: document.querySelector("#remainingPointsSprint"),
+  remainingPointsTitle: document.querySelector("#remainingPointsTitle"),
+  remainingPointsChoices: document.querySelector("#remainingPointsChoices"),
+  remainingPointsHelp: document.querySelector("#remainingPointsHelp"),
+  remainingPointsError: document.querySelector("#remainingPointsError"),
+  remainingPointsSubmit: document.querySelector("#remainingPointsSubmit"),
   workItemDialog: document.querySelector("#workItemDialog"),
   workItemActions: document.querySelector("#workItemActions"),
   deleteWorkItem: document.querySelector("#deleteWorkItem"),
@@ -552,6 +564,10 @@ const els = {
   workItemTagsHint: document.querySelector("#workItemTagsHint"),
   workItemTagsOptions: document.querySelector("#workItemTagsOptions"),
   workItemChanged: document.querySelector("#workItemChanged"),
+  workItemRelationsSection: document.querySelector("#workItemRelationsSection"),
+  workItemRelationCount: document.querySelector("#workItemRelationCount"),
+  workItemRelationsStatus: document.querySelector("#workItemRelationsStatus"),
+  workItemRelations: document.querySelector("#workItemRelations"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
   workItemPullRequestCount: document.querySelector("#workItemPullRequestCount"),
@@ -3834,7 +3850,7 @@ function createBacklogRow(item) {
       )),
       value: iteration
     })),
-    iteration => updateBacklogItemField(item, "System.IterationPath", iteration.path || iteration.name, `Moving ${workItemKey(item.id)}…`, "Sprint")
+    iteration => updateBacklogItemsToSprint(item, iteration.path || iteration.name)
   );
   const featureMenu = createBacklogRowSubmenu(
     "Move to feature",
@@ -4136,11 +4152,19 @@ function syncBacklogWorkItem(itemId, result) {
   const collections = [state.backlogItems, state.stories, state.backlogEpics, state.backlogFeatures];
   collections.forEach(collection => collection.forEach(candidate => {
     if (Number(candidate.id) !== Number(itemId)) return;
+    candidate.title = normalized.title;
+    candidate.state = normalized.state;
+    candidate.type = normalized.type;
     candidate.assignee = normalized.assignee;
     candidate.assigneeUniqueName = normalized.assigneeUniqueName;
     candidate.assigneeId = normalized.assigneeId;
     candidate.iterationPath = normalized.iterationPath;
     candidate.iterationName = normalized.iterationName;
+    candidate.points = normalized.points;
+    candidate.pointsField = normalized.pointsField;
+    candidate.priority = normalized.priority;
+    candidate.area = normalized.area;
+    candidate.tags = normalized.tags;
     candidate.parentId = normalized.parentId;
     candidate.featureLabel = parentFeature ? backlogFeatureLabel(parentFeature) : "";
     candidate.changedDate = normalized.changedDate;
@@ -4149,6 +4173,194 @@ function syncBacklogWorkItem(itemId, result) {
   state.historyCache.delete(Number(itemId));
   state.historyErrors.delete(Number(itemId));
   state.iterationStoriesCache.clear();
+}
+
+function workItemNeedsSprintSplit(item) {
+  const points = Number(state.detailsCache.get(item.id)?.points ?? item.points);
+  return Number.isFinite(points) && points > 0 && state.mapping[item.state] !== "todo";
+}
+
+function numberedSplitTitles(title) {
+  const value = String(title || "Untitled").trim();
+  const match = value.match(/^(.*) - (\d+)$/);
+  if (match) {
+    return { original: value, copy: `${match[1]} - ${Number(match[2]) + 1}` };
+  }
+  return { original: `${value} - 1`, copy: `${value} - 2` };
+}
+
+function closeRemainingPointsDialog(value = null) {
+  if (!remainingPointsRequest) return;
+  const resolve = remainingPointsRequest.resolve;
+  remainingPointsRequest = null;
+  if (els.remainingPointsDialog.open) els.remainingPointsDialog.close();
+  resolve(value);
+}
+
+function renderStoryPointChoices(container, current, onSelect, maximum = Infinity, options = STORY_POINT_OPTIONS) {
+  container.replaceChildren(...options.filter(value => value <= maximum).map(value => {
+    const selected = Number(current) === value;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = String(value);
+    button.className = selected ? "is-selected" : "";
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", String(selected));
+    button.addEventListener("click", () => onSelect(value));
+    return button;
+  }));
+}
+
+function selectStoryPointChoice(container, value) {
+  [...container.querySelectorAll("button")].forEach(button => {
+    const selected = Number(button.textContent) === Number(value);
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-checked", String(selected));
+  });
+}
+
+function requestRemainingPoints(item, iterationPath) {
+  const points = Number(state.detailsCache.get(item.id)?.points ?? item.points);
+  if (remainingPointsRequest) closeRemainingPointsDialog(null);
+  els.remainingPointsKey.textContent = workItemKey(item.id);
+  els.remainingPointsSprint.textContent = String(iterationPath || "").split("\\").filter(Boolean).pop() || "Sprint";
+  els.remainingPointsTitle.textContent = item.title;
+  const initialValue = STORY_POINT_OPTIONS.includes(points) ? points : null;
+  els.remainingPointsHelp.textContent = `The original has ${formatStoryPoints(points)} story points. Choose how many remain.`;
+  els.remainingPointsError.textContent = "";
+  els.remainingPointsSubmit.disabled = initialValue === null;
+  return new Promise(resolve => {
+    remainingPointsRequest = { resolve, points, value: initialValue };
+    renderStoryPointChoices(els.remainingPointsChoices, initialValue, value => {
+      remainingPointsRequest.value = value;
+      selectStoryPointChoice(els.remainingPointsChoices, value);
+      els.remainingPointsSubmit.disabled = false;
+      els.remainingPointsError.textContent = "";
+    }, points, [0, ...STORY_POINT_OPTIONS]);
+    els.remainingPointsDialog.showModal();
+    requestAnimationFrame(() => (
+      els.remainingPointsChoices.querySelector(".is-selected") || els.remainingPointsChoices.querySelector("button")
+    )?.focus());
+  });
+}
+
+function cloneFieldOperation(fields, field, operations, transform = value => value) {
+  if (fields[field] === undefined || fields[field] === null || fields[field] === "") return;
+  const value = transform(fields[field]);
+  if (value !== undefined && value !== null && value !== "") operations.push({ op: "add", path: `/fields/${field}`, value });
+}
+
+async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
+  const source = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
+  const fields = source.fields || {};
+  const normalized = normalizeWorkItem(source);
+  const pointsField = normalized.pointsField || await resolvePointsField(item);
+  const totalPoints = Number(normalized.points);
+  if (!pointsField || !Number.isFinite(totalPoints) || totalPoints <= 0) {
+    throw new Error(`${workItemKey(item.id)} no longer has story points and could not be split.`);
+  }
+  if (!Number.isFinite(remainingPoints) || remainingPoints < 0 || remainingPoints > totalPoints) {
+    throw new Error(`Remaining story points must be between 0 and ${formatStoryPoints(totalPoints)}.`);
+  }
+
+  const titles = numberedSplitTitles(normalized.title);
+  const operations = [
+    { op: "add", path: "/fields/System.Title", value: titles.copy },
+    { op: "add", path: "/fields/System.IterationPath", value: iterationPath },
+    { op: "add", path: `/fields/${pointsField}`, value: remainingPoints }
+  ];
+  [
+    "System.AreaPath",
+    "System.AssignedTo",
+    "System.Tags",
+    "System.Description",
+    "Microsoft.VSTS.Common.AcceptanceCriteria",
+    "Microsoft.VSTS.TCM.ReproSteps",
+    "Microsoft.VSTS.TCM.SystemInfo",
+    "Microsoft.VSTS.Common.Priority"
+  ].forEach(field => cloneFieldOperation(fields, field, operations, value => (
+    field === "System.AssignedTo" ? value.uniqueName || value.displayName || value : value
+  )));
+  const parent = (source.relations || []).find(relation => relation.rel === "System.LinkTypes.Hierarchy-Reverse");
+  if (parent?.url) {
+    operations.push({
+      op: "add",
+      path: "/relations/-",
+      value: { rel: "System.LinkTypes.Hierarchy-Reverse", url: parent.url }
+    });
+  }
+  operations.push({
+    op: "add",
+    path: "/relations/-",
+    value: {
+      rel: "System.LinkTypes.Dependency-Reverse",
+      url: source.url || `${activeAzureContext().base}/_apis/wit/workItems/${Number(item.id)}`,
+      attributes: { comment: "Continues the remaining work in the next sprint" }
+    }
+  });
+
+  const originalOperations = [
+    { op: "test", path: "/rev", value: source.rev },
+    { op: "add", path: `/fields/${pointsField}`, value: totalPoints - remainingPoints }
+  ];
+  if (titles.original !== normalized.title) {
+    originalOperations.push({ op: "add", path: "/fields/System.Title", value: titles.original });
+  }
+  const updated = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json-patch+json" },
+    body: JSON.stringify(originalOperations)
+  });
+  let created;
+  try {
+    created = await azure(`/_apis/wit/workitems/$${encodeURIComponent(normalized.type)}?api-version=7.1`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify(operations)
+    });
+  } catch (createError) {
+    const rollback = [
+      { op: "test", path: "/rev", value: updated.rev },
+      { op: "add", path: `/fields/${pointsField}`, value: totalPoints }
+    ];
+    if (titles.original !== normalized.title) {
+      rollback.push({ op: "add", path: "/fields/System.Title", value: normalized.title });
+    }
+    try {
+      await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json-patch+json" },
+        body: JSON.stringify(rollback)
+      });
+    } catch (rollbackError) {
+      console.error("The original work item could not be restored after the copy failed.", rollbackError);
+      state.detailsCache.delete(Number(item.id));
+      throw new Error(`${createError.message || "The copy could not be created."} The original could not be restored automatically; reload it before trying again.`);
+    }
+    throw createError;
+  }
+  updated.relations = [
+    ...(source.relations || []),
+    {
+      rel: "System.LinkTypes.Dependency-Forward",
+      url: created.url || `${activeAzureContext().base}/_apis/wit/workItems/${Number(created.id)}`,
+      attributes: { comment: "Continues the remaining work in the next sprint" }
+    }
+  ];
+  return { updated, created };
+}
+
+function addSplitCopyToState(result) {
+  const copy = normalizeWorkItem(result);
+  const parentFeature = state.backlogFeatures.find(feature => Number(feature.id) === Number(copy.parentId));
+  copy.featureLabel = parentFeature ? backlogFeatureLabel(parentFeature) : "";
+  if (!state.backlogItems.some(item => Number(item.id) === Number(copy.id))) state.backlogItems.push(copy);
+  const selectedPath = String(state.iteration?.path || state.iteration?.name || "").toLocaleLowerCase("en");
+  if (selectedPath && String(copy.iterationPath).toLocaleLowerCase("en") === selectedPath
+    && !state.stories.some(item => Number(item.id) === Number(copy.id))) state.stories.push(copy);
+  state.detailsCache.delete(copy.id);
+  state.iterationStoriesCache.clear();
+  return copy;
 }
 
 async function moveBacklogTargetToFeature(target, feature) {
@@ -4201,6 +4413,67 @@ async function updateBacklogItemParent(item, feature) {
       showNotice(targets.length === 1
         ? `${workItemKey(targets[0].id)} moved to feature ${feature.title}.`
         : `${targets.length} work items moved to feature ${feature.title}.`, "info");
+    }
+  } finally {
+    state.backlogUpdating = false;
+    renderBacklog();
+  }
+}
+
+async function updateBacklogItemsToSprint(item, iterationPath) {
+  if (state.backlogUpdating || state.backlogDeleting) return;
+  const targets = backlogActionTargets(item).filter(target => (
+    String(target.iterationPath || "").toLocaleLowerCase("en") !== String(iterationPath || "").toLocaleLowerCase("en")
+  ));
+  if (!targets.length) return;
+
+  const remainingById = new Map();
+  for (const target of targets) {
+    if (!workItemNeedsSprintSplit(target)) continue;
+    const remaining = await requestRemainingPoints(target, iterationPath);
+    if (remaining === null) return;
+    remainingById.set(Number(target.id), remaining);
+  }
+
+  state.backlogUpdating = true;
+  renderBacklog();
+  els.backlogMeta.textContent = targets.length === 1
+    ? `Moving ${workItemKey(targets[0].id)}…`
+    : `Moving ${targets.length} work items…`;
+  try {
+    const results = await Promise.allSettled(targets.map(target => {
+      if (remainingById.has(Number(target.id))) {
+        return splitWorkItemIntoSprint(target, iterationPath, remainingById.get(Number(target.id)));
+      }
+      return azure(`/_apis/wit/workitems/${target.id}?api-version=7.1`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json-patch+json" },
+        body: JSON.stringify([{ op: "add", path: "/fields/System.IterationPath", value: iterationPath }])
+      });
+    }));
+    const failed = [];
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        console.error(result.reason);
+        failed.push(result.reason);
+        return;
+      }
+      const target = targets[index];
+      if (remainingById.has(Number(target.id))) {
+        syncBacklogWorkItem(target.id, result.value.updated);
+        addSplitCopyToState(result.value.created);
+      } else {
+        syncBacklogWorkItem(target.id, result.value);
+      }
+    });
+    const updated = targets.length - failed.length;
+    if (failed.length) {
+      const auth = failed.some(error => error?.auth);
+      showNotice(`${updated ? `${updated} updated. ` : ""}${failed.length} ${failed.length === 1 ? "work item" : "work items"} could not be moved.${auth ? " The PAT requires ‘Work Items: Read & write’." : ""}`, "error");
+    } else {
+      showNotice(targets.length === 1
+        ? `${workItemKey(targets[0].id)} moved to the sprint.`
+        : `${targets.length} work items moved to the sprint.`, "info");
     }
   } finally {
     state.backlogUpdating = false;
@@ -5273,6 +5546,20 @@ async function loadWorkItemDetail(item) {
         console.error("Child work items could not be loaded.", error);
         detail.subtasks = [];
         detail.subtasksError = "Child work items could not be loaded.";
+      }
+    }
+    if (detail.linkedWorkItemReferences.length) {
+      try {
+        const linkedItems = await fetchWorkItems(detail.linkedWorkItemReferences.map(reference => reference.id));
+        const linkedItemsById = new Map(linkedItems.map(linkedItem => [Number(linkedItem.id), linkedItem]));
+        detail.linkedWorkItems = detail.linkedWorkItemReferences.map(reference => ({
+          ...reference,
+          item: linkedItemsById.get(Number(reference.id)) || null
+        }));
+      } catch (error) {
+        console.error("Linked work items could not be loaded.", error);
+        detail.linkedWorkItems = detail.linkedWorkItemReferences.map(reference => ({ ...reference, item: null }));
+        detail.linkedWorkItemsError = "Linked work-item details could not be loaded.";
       }
     }
     if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
@@ -6537,6 +6824,50 @@ function normalizeWorkItemChildIds(item) {
   }).filter(Boolean);
 }
 
+function workItemRelationLabel(relation) {
+  const labels = {
+    "system.linktypes.related": "Related",
+    "system.linktypes.remote.related": "Related",
+    "system.linktypes.dependency-forward": "Successor",
+    "system.linktypes.dependency-reverse": "Predecessor",
+    "system.linktypes.duplicate-forward": "Duplicate",
+    "system.linktypes.duplicate-reverse": "Duplicate of",
+    "microsoft.vsts.common.affects-forward": "Affects",
+    "microsoft.vsts.common.affects-reverse": "Affected by"
+  };
+  const reference = String(relation.rel || "");
+  const known = labels[reference.toLocaleLowerCase("en")];
+  if (known) return known;
+  if (relation.attributes?.name) return String(relation.attributes.name);
+  const fallback = reference.split(".").pop()?.replace(/-(?:Forward|Reverse)$/i, "").replace(/[-_]+/g, " ").trim();
+  return fallback || "Related";
+}
+
+function normalizeLinkedWorkItemReferences(item) {
+  if (!Array.isArray(item.relations)) return state.detailsCache.get(item.id)?.linkedWorkItemReferences || [];
+  const hierarchyRelations = new Set([
+    "System.LinkTypes.Hierarchy-Forward",
+    "System.LinkTypes.Hierarchy-Reverse"
+  ]);
+  const seen = new Set();
+  return item.relations.map(relation => {
+    if (hierarchyRelations.has(relation.rel)) return null;
+    const match = String(relation.url || "").match(/\/workitems\/(\d+)(?:[/?]|$)/i);
+    if (!match) return null;
+    const id = Number(match[1]);
+    const label = workItemRelationLabel(relation);
+    const key = `${String(relation.rel).toLocaleLowerCase("en")}:${id}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return {
+      id,
+      label,
+      relation: relation.rel,
+      comment: String(relation.attributes?.comment || "")
+    };
+  }).filter(Boolean);
+}
+
 function normalizeWorkItemDeploymentReferences(item) {
   if (!Array.isArray(item.relations)) return state.detailsCache.get(item.id)?.deploymentReferences || [];
   const references = new Map();
@@ -6596,6 +6927,9 @@ function normalizeWorkItemDetail(item) {
     parentError: "",
     attachments: normalizeWorkItemAttachments(item),
     childIds: normalizeWorkItemChildIds(item),
+    linkedWorkItemReferences: normalizeLinkedWorkItemReferences(item),
+    linkedWorkItems: state.detailsCache.get(item.id)?.linkedWorkItems || [],
+    linkedWorkItemsError: "",
     deploymentReferences: normalizeWorkItemDeploymentReferences(item),
     subtasks: state.detailsCache.get(item.id)?.subtasks || [],
     subtasksError: ""
@@ -6803,6 +7137,70 @@ function renderWorkItemParent(item, detail) {
   els.workItemParent.replaceChildren(button);
 }
 
+function renderLinkedWorkItems(links = [], error = "") {
+  const visible = Boolean(links.length || error);
+  els.workItemRelationsSection.hidden = !visible;
+  els.workItemRelationCount.textContent = String(links.length);
+  els.workItemRelationsStatus.textContent = error;
+  els.workItemRelationsStatus.classList.toggle("is-error", Boolean(error));
+  if (!visible || !links.length) {
+    els.workItemRelations.replaceChildren();
+    return;
+  }
+
+  const groups = new Map();
+  links.forEach(link => {
+    if (!groups.has(link.label)) groups.set(link.label, []);
+    groups.get(link.label).push(link);
+  });
+  els.workItemRelations.replaceChildren(...[...groups].map(([label, groupLinks]) => {
+    const group = document.createElement("div");
+    group.className = "work-item-relation-group";
+    const heading = document.createElement("div");
+    heading.className = "work-item-relation-label";
+    heading.textContent = label;
+    const items = document.createElement("div");
+    items.className = "work-item-relation-items";
+    items.replaceChildren(...groupLinks.map(link => {
+      const linkedItem = link.item;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "work-item-relation";
+      row.title = link.comment || `Open ${workItemKey(link.id)}`;
+      row.setAttribute("aria-label", `Open ${label.toLocaleLowerCase("en")} work item ${workItemKey(link.id)}${linkedItem ? `: ${linkedItem.title}` : ""}`);
+      const icon = document.createElement("span");
+      icon.className = "work-item-relation-icon";
+      icon.dataset.workItemType = String(linkedItem?.type || "work item").toLocaleLowerCase("en");
+      icon.textContent = String(linkedItem?.type || "W").trim().charAt(0).toLocaleUpperCase("en") || "W";
+      const body = document.createElement("span");
+      body.className = "work-item-relation-body";
+      const title = document.createElement("strong");
+      title.textContent = linkedItem?.title || workItemKey(link.id);
+      const metadata = document.createElement("span");
+      metadata.className = "work-item-relation-meta";
+      const key = document.createElement("span");
+      key.textContent = workItemKey(link.id);
+      metadata.append(key);
+      if (linkedItem?.state) {
+        const linkedState = document.createElement("span");
+        linkedState.className = "card-state work-item-relation-state";
+        linkedState.dataset.stateTone = stateTone(linkedItem.state);
+        linkedState.textContent = linkedItem.state;
+        metadata.append(linkedState);
+      }
+      body.append(title, metadata);
+      const arrow = document.createElement("span");
+      arrow.className = "work-item-relation-arrow";
+      arrow.textContent = "›";
+      row.append(icon, body, arrow);
+      row.addEventListener("click", () => linkedItem ? showWorkItem(linkedItem) : showLinkedWorkItem(link.id));
+      return row;
+    }));
+    group.append(heading, items);
+    return group;
+  }));
+}
+
 function renderWorkItemDetail(item, detail, loading = false, error = "") {
   const { webBase } = activeAzureContext();
   const bug = isBugWorkItem(item);
@@ -6850,6 +7248,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemArea.setAttribute("aria-label", `Area ${detail?.area || item.area || "not set"}. Click to change.`);
   els.workItemIteration.setAttribute("aria-label", `Sprint ${detail?.iteration || state.iteration?.name || "not set"}. Click to change.`);
   renderWorkItemParent(item, detail);
+  renderLinkedWorkItems(detail?.linkedWorkItems || [], detail?.linkedWorkItemsError || "");
   renderDetailTags(detail?.tags || item.tags);
   els.workItemTags.setAttribute("aria-label", `Tags: ${(detail?.tags || item.tags || []).join(", ") || "none"}. Click to change.`);
   els.workItemChanged.textContent = detail?.changedDate ? formatDateTime(detail.changedDate) : "—";
@@ -7341,17 +7740,10 @@ function toggleWorkItemPointsMenu() {
   if (!item || !openDetailFieldMenu(els.workItemPoints, els.workItemPointsMenu)) return;
   const current = state.detailsCache.get(item.id)?.points ?? item.points;
   els.workItemPointsInput.value = current ?? "";
-  els.workItemPointsQuick.replaceChildren(...[1, 2, 3, 5, 8, 13].map(value => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = String(value);
-    button.className = Number(current) === value ? "is-selected" : "";
-    button.addEventListener("click", () => {
-      els.workItemPointsInput.value = String(value);
-      els.workItemPointsForm.requestSubmit();
-    });
-    return button;
-  }));
+  renderStoryPointChoices(els.workItemPointsQuick, current, value => {
+    els.workItemPointsInput.value = String(value);
+    els.workItemPointsForm.requestSubmit();
+  });
   requestAnimationFrame(() => els.workItemPointsInput.select());
 }
 
@@ -7525,18 +7917,34 @@ async function resolvePointsField(item) {
 
 async function updateWorkItemField(item, field, value, label) {
   closeWorkItemDetailFieldMenus();
+  let remainingPoints = null;
+  if (field === "System.IterationPath" && workItemNeedsSprintSplit(item)) {
+    remainingPoints = await requestRemainingPoints(item, value);
+    if (remainingPoints === null) return;
+  }
   els.workItemLoadStatus.textContent = `Saving ${label.toLocaleLowerCase("en")}…`;
   els.workItemLoadStatus.classList.remove("is-error");
   try {
-    await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json-patch+json" },
-      body: JSON.stringify([{ op: "add", path: `/fields/${field}`, value }])
-    });
+    let verifiedItem;
+    let splitCopy = null;
+    if (remainingPoints !== null) {
+      const split = await splitWorkItemIntoSprint(item, value, remainingPoints);
+      verifiedItem = split.updated;
+      splitCopy = addSplitCopyToState(split.created);
+      syncBacklogWorkItem(item.id, verifiedItem);
+    } else {
+      await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json-patch+json" },
+        body: JSON.stringify([{ op: "add", path: `/fields/${field}`, value }])
+      });
+      verifiedItem = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`);
+    }
     state.detailsRequestTokens.set(item.id, (state.detailsRequestTokens.get(item.id) || 0) + 1);
-    const verifiedItem = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`);
     const normalized = normalizeWorkItem(verifiedItem);
     const detail = normalizeWorkItemDetail(verifiedItem);
+    item.title = normalized.title;
+    item.state = normalized.state;
     item.points = normalized.points;
     item.pointsField = normalized.pointsField;
     item.priority = normalized.priority;
@@ -7551,11 +7959,16 @@ async function updateWorkItemField(item, field, value, label) {
     if (isSelectedWorkItem(item.id)) {
       renderWorkItemDetail(item, detail, false);
     }
-    if (!workItemFieldValueMatches(field, verifiedItem.fields?.[field], value)) {
+    if (remainingPoints === null && !workItemFieldValueMatches(field, verifiedItem.fields?.[field], value)) {
       throw new Error(`Azure DevOps did not apply the ${label.toLocaleLowerCase("en")} change. The current value has been reloaded.`);
     }
+    if (splitCopy && isSelectedWorkItem(item.id)) {
+      await loadWorkItemDetail(item);
+    }
     if (isSelectedWorkItem(item.id)) {
-      els.workItemLoadStatus.textContent = `${label} saved.`;
+      els.workItemLoadStatus.textContent = splitCopy
+        ? `${workItemKey(splitCopy.id)} created with ${formatStoryPoints(remainingPoints)} remaining story points.`
+        : `${label} saved.`;
       renderHistory([], true);
       renderCombinedActivity();
       loadWorkItemHistory(item);
@@ -9712,6 +10125,28 @@ els.settingsForm.addEventListener("submit", async event => {
 
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
 document.querySelectorAll("[data-close-create-work-item]").forEach(button => button.addEventListener("click", requestCloseCreateWorkItemDialog));
+document.querySelectorAll("[data-close-remaining-points]").forEach(button => button.addEventListener("click", () => closeRemainingPointsDialog(null)));
+els.remainingPointsForm.addEventListener("submit", event => {
+  event.preventDefault();
+  if (!remainingPointsRequest) return;
+  const value = Number(remainingPointsRequest.value);
+  if (remainingPointsRequest.value === null || !Number.isFinite(value) || value < 0 || value > remainingPointsRequest.points) {
+    els.remainingPointsError.textContent = "Choose the remaining story points.";
+    els.remainingPointsChoices.querySelector("button")?.focus();
+    return;
+  }
+  closeRemainingPointsDialog(value);
+});
+els.remainingPointsDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeRemainingPointsDialog(null);
+});
+els.remainingPointsDialog.addEventListener("close", () => {
+  if (!remainingPointsRequest) return;
+  const resolve = remainingPointsRequest.resolve;
+  remainingPointsRequest = null;
+  resolve(null);
+});
 document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", requestCloseWorkItemDialog));
 els.deleteWorkItem.addEventListener("click", deleteSelectedWorkItem);
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
