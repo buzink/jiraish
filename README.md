@@ -45,10 +45,10 @@ The header search opens a Jira-style results page for work-item titles and IDs, 
 
 ## Run locally
 
-No build step is required. Serve the `dist` directory with a simple web server:
+No build step is required. Serve the `public` directory with a simple web server:
 
 ```bash
-python3 -m http.server 8080 --directory dist
+python3 -m http.server 8080 --directory public
 ```
 
 Then open `http://localhost:8080`.
@@ -104,7 +104,7 @@ Readiness labels are based on the current Azure DevOps work-item state. `Closed`
 
 ## GitHub Pages
 
-The workflow in `.github/workflows/deploy-pages.yml` publishes the contents of `dist` on every push to `main`. For a repository named `jiraish`, the default project site is:
+The workflow in `.github/workflows/deploy-pages.yml` publishes the contents of `public` on every push to `main`. For a repository named `jiraish`, the default project site is:
 
 ```text
 https://<github-user>.github.io/jiraish/
@@ -128,7 +128,7 @@ Refreshing or opening one of these links in a new tab restores the referenced pa
 ## Project structure
 
 ```text
-dist/
+public/
   index.html
   app.js
   styles.css
