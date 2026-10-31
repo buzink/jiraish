@@ -3703,6 +3703,7 @@ function renderBacklogSidebar() {
 }
 
 function renderBacklog() {
+  closeBacklogRowMenus();
   const team = state.teams.find(value => value.id === state.teamId);
   const query = state.backlogSearch.trim().toLocaleLowerCase("en");
   const visibleItems = state.backlogItems.filter(item => matchesFilters(item, query));
@@ -3854,6 +3855,43 @@ function createBacklogRow(item) {
   });
   options.append(assignMenu, sprintMenu, moveToPosition, remove);
   menu.append(trigger, options);
+  const positionOptions = () => {
+    if (!menu.open) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const optionsWidth = options.offsetWidth;
+    const optionsHeight = options.offsetHeight;
+    const viewportGap = 8;
+    const menuGap = 3;
+    const left = Math.max(viewportGap, Math.min(
+      triggerRect.left - optionsWidth - menuGap,
+      window.innerWidth - optionsWidth - viewportGap
+    ));
+    const top = Math.max(viewportGap, Math.min(
+      triggerRect.top + (triggerRect.height - optionsHeight) / 2,
+      window.innerHeight - optionsHeight - viewportGap
+    ));
+    options.style.left = `${left}px`;
+    options.style.top = `${top}px`;
+  };
+  const closeOptions = () => {
+    options.querySelectorAll(".backlog-row-submenu-container").forEach(submenu => {
+      submenu.dispatchEvent(new CustomEvent("backlog-submenu-close"));
+    });
+    options.classList.remove("is-open");
+    window.removeEventListener("resize", positionOptions);
+    window.removeEventListener("scroll", positionOptions, true);
+    options.removeAttribute("style");
+    if (options.parentElement !== menu) menu.append(options);
+  };
+  menu.addEventListener("toggle", () => {
+    if (!menu.open) return closeOptions();
+    options.classList.add("is-open");
+    document.body.append(options);
+    positionOptions();
+    window.addEventListener("resize", positionOptions);
+    window.addEventListener("scroll", positionOptions, true);
+  });
+  menu.addEventListener("backlog-row-menu-close", closeOptions);
   actions.append(menu);
   row.append(type, key, summary, itemState, priority, points, assignee, actions);
   row.addEventListener("click", event => {
@@ -3889,6 +3927,22 @@ function createBacklogRowSubmenu(label, getChoices, onSelect) {
   pane.setAttribute("role", "menu");
   pane.setAttribute("aria-label", label);
   let rendered = false;
+  let closeTimer = 0;
+  const positionPane = () => {
+    if (!container.classList.contains("is-open")) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = container.closest(".backlog-row-menu-options")?.getBoundingClientRect() || triggerRect;
+    const paneWidth = pane.offsetWidth;
+    const paneHeight = pane.offsetHeight;
+    const viewportGap = 8;
+    const menuGap = 4;
+    let left = menuRect.left - paneWidth - menuGap;
+    if (left < viewportGap) left = menuRect.right + menuGap;
+    left = Math.max(viewportGap, Math.min(left, window.innerWidth - paneWidth - viewportGap));
+    const top = Math.max(viewportGap, Math.min(triggerRect.top - 5, window.innerHeight - paneHeight - viewportGap));
+    pane.style.left = `${left}px`;
+    pane.style.top = `${top}px`;
+  };
   const renderChoices = () => {
     if (rendered) return;
     rendered = true;
@@ -3932,34 +3986,66 @@ function createBacklogRowSubmenu(label, getChoices, onSelect) {
   const setOpen = open => {
     if (open) renderChoices();
     container.classList.toggle("is-open", open);
+    pane.classList.toggle("is-open", open);
     trigger.setAttribute("aria-expanded", String(open));
+    if (open) {
+      if (pane.parentElement !== document.body) document.body.append(pane);
+      positionPane();
+      window.addEventListener("resize", positionPane);
+      window.addEventListener("scroll", positionPane, true);
+    } else {
+      window.clearTimeout(closeTimer);
+      window.removeEventListener("resize", positionPane);
+      window.removeEventListener("scroll", positionPane, true);
+      pane.removeAttribute("style");
+      if (pane.parentElement !== container) container.append(pane);
+    }
+  };
+  const scheduleClose = () => {
+    window.clearTimeout(closeTimer);
+    closeTimer = window.setTimeout(() => {
+      const focusInside = container.contains(document.activeElement) || pane.contains(document.activeElement);
+      if (!container.matches(":hover") && !pane.matches(":hover") && !focusInside) setOpen(false);
+    });
   };
   trigger.addEventListener("click", event => {
     event.stopPropagation();
     const open = !container.classList.contains("is-open");
     container.parentElement?.querySelectorAll(".backlog-row-submenu-container.is-open").forEach(other => {
       if (other === container) return;
-      other.classList.remove("is-open");
-      other.querySelector(".backlog-row-submenu-trigger")?.setAttribute("aria-expanded", "false");
+      other.dispatchEvent(new CustomEvent("backlog-submenu-close"));
     });
     setOpen(open);
+    if (open && event.detail === 0) pane.querySelector("button:not(:disabled)")?.focus();
   });
   container.addEventListener("mouseenter", () => setOpen(true));
-  container.addEventListener("mouseleave", () => {
-    if (!container.contains(document.activeElement)) setOpen(false);
-  });
+  container.addEventListener("mouseleave", scheduleClose);
+  pane.addEventListener("mouseenter", () => window.clearTimeout(closeTimer));
+  pane.addEventListener("mouseleave", scheduleClose);
   container.addEventListener("focusout", event => {
-    if (!container.contains(event.relatedTarget)) setOpen(false);
+    if (!container.contains(event.relatedTarget) && !pane.contains(event.relatedTarget)) scheduleClose();
   });
+  pane.addEventListener("focusout", event => {
+    if (!container.contains(event.relatedTarget) && !pane.contains(event.relatedTarget)) scheduleClose();
+  });
+  pane.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    setOpen(false);
+    trigger.focus();
+  });
+  container.addEventListener("backlog-submenu-close", () => setOpen(false));
   container.append(trigger, pane);
   return container;
 }
 
 function closeBacklogRowMenus() {
-  document.querySelectorAll(".backlog-row-menu[open]").forEach(menu => { menu.open = false; });
   document.querySelectorAll(".backlog-row-submenu-container.is-open").forEach(menu => {
-    menu.classList.remove("is-open");
-    menu.querySelector(".backlog-row-submenu-trigger")?.setAttribute("aria-expanded", "false");
+    menu.dispatchEvent(new CustomEvent("backlog-submenu-close"));
+  });
+  document.querySelectorAll(".backlog-row-menu[open]").forEach(menu => {
+    menu.dispatchEvent(new CustomEvent("backlog-row-menu-close"));
+    menu.open = false;
   });
 }
 
