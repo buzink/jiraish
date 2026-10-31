@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261031-ai-create-v1" />
+    <link rel="stylesheet" href="styles.css?v=20261031-sprint-progress-v3" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -192,6 +192,24 @@
       <section id="statusRegion" class="status-region" aria-live="polite" data-list-view></section>
 
       <section id="board" class="board" aria-label="Sprint Kanban board" data-board-view>
+        <div id="sprintProgress" class="sprint-progress" aria-labelledby="sprintProgressTitle">
+          <div class="sprint-progress-heading">
+            <div>
+              <h2 id="sprintProgressTitle">Sprint progress</h2>
+              <p id="sprintProgressPoints">0 total story points</p>
+            </div>
+            <div class="sprint-progress-summary">
+              <strong id="sprintProgressPercent">0% done</strong>
+              <span id="sprintWorkingDays">— working days left</span>
+            </div>
+          </div>
+          <div id="sprintProgressBar" class="sprint-progress-bar" role="img" aria-label="No estimated story points"></div>
+          <div class="sprint-progress-legend" aria-hidden="true">
+            <span><i class="is-done"></i>Done <strong id="sprintProgressDonePoints">0</strong></span>
+            <span><i class="is-doing"></i>Doing <strong id="sprintProgressDoingPoints">0</strong></span>
+            <span><i class="is-todo"></i>To do <strong id="sprintProgressTodoPoints">0</strong></span>
+          </div>
+        </div>
         <article class="column" data-column="todo">
           <header class="column-header">
             <div><span class="column-dot todo-dot"></span><h2>To do</h2><span class="count" data-count="todo">0</span></div>
@@ -885,6 +903,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261031-ai-create-v6" defer></script>
+    <script src="app.js?v=20261031-sprint-progress-v3" defer></script>
   </body>
 </html>

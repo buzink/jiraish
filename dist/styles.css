@@ -12,6 +12,7 @@
   --board-bg: #f4f5f7;
   --green: #00875a;
   --yellow: #ffab00;
+  --progress-doing: #ff991f;
   --shadow: 0 1px 2px rgba(9, 30, 66, .18), 0 0 1px rgba(9, 30, 66, .31);
 }
 
@@ -103,6 +104,20 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .sprint-badge[data-sprint-kind="filtered-view"] { color: #5e4db2; background: #f3f0ff; }
 .sprint-meta { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
 .heading-actions { display: flex; align-items: center; gap: 10px; }
+.sprint-progress { grid-column: 1 / -1; width: 100%; padding: 14px 16px 13px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 1px 1px rgba(9, 30, 66, .06); }
+.sprint-progress-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.sprint-progress-heading h2 { margin: 0; color: var(--navy); font-size: 13px; }
+.sprint-progress-heading p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+.sprint-progress-summary { display: flex; align-items: baseline; gap: 14px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.sprint-progress-summary strong { color: var(--green); font-size: 13px; }
+.sprint-progress-bar { height: 12px; overflow: hidden; margin-top: 12px; border: 1px solid #c1c7d0; border-radius: 6px; background-color: var(--surface); background-repeat: no-repeat; }
+.sprint-progress-legend { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 9px; color: var(--muted); font-size: 11px; }
+.sprint-progress-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.sprint-progress-legend i { width: 9px; height: 9px; border: 1px solid transparent; border-radius: 2px; }
+.sprint-progress-legend i.is-done { background: var(--green); }
+.sprint-progress-legend i.is-doing { background: var(--progress-doing); }
+.sprint-progress-legend i.is-todo { border-color: #a5adba; background: var(--surface); }
+.sprint-progress-legend strong { color: var(--text); }
 .mobile-disclosure-toggle { display: none; }
 .mobile-disclosure-icon { width: 20px; flex: 0 0 auto; color: var(--blue-600); text-align: center; }
 .mobile-disclosure-chevron { margin-left: auto; align-self: flex-start; color: var(--muted); font-size: 15px; line-height: 1; }
@@ -990,6 +1005,7 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
   --surface: #1d2125;
   --board-bg: #22272b;
   --green: #4bce97;
+  --progress-doing: #f5cd47;
   --shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 0 1px rgba(255, 255, 255, .08);
 }
 [data-theme="dark"] .topbar { background: #0c1524; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
@@ -1000,6 +1016,9 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .sprint-badge[data-sprint-kind="next-sprint"] { color: #dfd8fd; background: #352c63; }
 [data-theme="dark"] .sprint-badge[data-sprint-kind="future-sprint"] { color: #baf3db; background: #164b35; }
 [data-theme="dark"] .sprint-badge[data-sprint-kind="filtered-view"] { color: #dfd8fd; background: #352c63; }
+[data-theme="dark"] .sprint-progress { background: #22272b; box-shadow: none; }
+[data-theme="dark"] .sprint-progress-bar { border-color: #596773; background: #282e33; }
+[data-theme="dark"] .sprint-progress-legend i.is-todo { border-color: #738496; background: #282e33; }
 [data-theme="dark"] .sprint-menu { border-color: #596773; background: #282e33; box-shadow: 0 10px 28px rgba(0, 0, 0, .5); }
 [data-theme="dark"] .sprint-menu-search input { border-color: #596773; color: #b6c2cf; background: #22272b; }
 [data-theme="dark"] .sprint-menu-label { color: #b6c2cf; background: #38414a; }
@@ -1283,6 +1302,8 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
   .wiki-page { padding: 25px 24px 45px; }
   .sprint-title-trigger { max-width: calc(100vw - 60px); }
   .page-heading { align-items: stretch; flex-direction: column; }
+  .sprint-progress-heading { align-items: stretch; flex-direction: column; gap: 8px; }
+  .sprint-progress-summary { justify-content: space-between; }
   .heading-actions { flex-wrap: wrap; }
   .heading-actions .search-field { flex: 1 1 200px; }
   .page-heading > .search-field { width: 100%; height: 38px; flex: 0 0 38px; }

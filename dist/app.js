@@ -424,6 +424,13 @@ const els = {
   sprintMenuSearch: document.querySelector("#sprintMenuSearch"),
   sprintMenuOptions: document.querySelector("#sprintMenuOptions"),
   sprintMeta: document.querySelector("#sprintMeta"),
+  sprintProgressPoints: document.querySelector("#sprintProgressPoints"),
+  sprintProgressPercent: document.querySelector("#sprintProgressPercent"),
+  sprintWorkingDays: document.querySelector("#sprintWorkingDays"),
+  sprintProgressBar: document.querySelector("#sprintProgressBar"),
+  sprintProgressDonePoints: document.querySelector("#sprintProgressDonePoints"),
+  sprintProgressDoingPoints: document.querySelector("#sprintProgressDoingPoints"),
+  sprintProgressTodoPoints: document.querySelector("#sprintProgressTodoPoints"),
   connectionDialog: document.querySelector("#connectionDialog"),
   connectionForm: document.querySelector("#connectionForm"),
   orgUrl: document.querySelector("#orgUrlInput"),
@@ -1464,6 +1471,64 @@ function renderBoardColumn(list, stories) {
   list.replaceChildren(...orderedGroups.map(([title, groupStories]) => createBoardGroup(title, groupStories)));
 }
 
+function storyPointValue(item) {
+  const points = Number(item.points);
+  return Number.isFinite(points) && points > 0 ? points : 0;
+}
+
+function formatStoryPoints(points) {
+  return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(points);
+}
+
+function remainingWorkingDays(iterations) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dates = new Set();
+  for (const iteration of iterations) {
+    const finish = new Date(iteration?.attributes?.finishDate || "");
+    if (Number.isNaN(finish.getTime())) continue;
+    finish.setHours(0, 0, 0, 0);
+    const start = new Date(iteration?.attributes?.startDate || today);
+    if (Number.isNaN(start.getTime())) start.setTime(today.getTime());
+    start.setHours(0, 0, 0, 0);
+    const firstDay = new Date(Math.max(today.getTime(), start.getTime()));
+    for (const day = firstDay; day <= finish; day.setDate(day.getDate() + 1)) {
+      if (day.getDay() !== 0 && day.getDay() !== 6) dates.add(`${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`);
+    }
+  }
+  return dates.size;
+}
+
+function renderSprintProgress() {
+  const totals = { todo: 0, active: 0, done: 0 };
+  state.stories.forEach(item => {
+    const column = state.mapping[item.state];
+    if (column in totals) totals[column] += storyPointValue(item);
+  });
+  const total = totals.todo + totals.active + totals.done;
+  const donePercent = total ? Math.round((totals.done / total) * 100) : 0;
+  const iterations = selectedSprintIterations();
+  if (!iterations.length && state.iteration) iterations.push(state.iteration);
+  const workingDays = remainingWorkingDays(iterations);
+  const pointLabel = total === 1 ? "story point" : "story points";
+  const dayLabel = workingDays === 1 ? "working day left" : "working days left";
+
+  els.sprintProgressPoints.textContent = `${formatStoryPoints(total)} total ${pointLabel}`;
+  els.sprintProgressPercent.textContent = `${donePercent}% done`;
+  els.sprintWorkingDays.textContent = iterations.length ? `${workingDays} ${dayLabel}` : "— working days left";
+  els.sprintProgressDonePoints.textContent = formatStoryPoints(totals.done);
+  els.sprintProgressDoingPoints.textContent = formatStoryPoints(totals.active);
+  els.sprintProgressTodoPoints.textContent = formatStoryPoints(totals.todo);
+  const doneWidth = total ? (totals.done / total) * 100 : 0;
+  const doingEnd = total ? doneWidth + (totals.active / total) * 100 : 0;
+  els.sprintProgressBar.style.backgroundImage = total
+    ? `linear-gradient(to right, var(--green) 0%, var(--green) ${doneWidth}%, var(--progress-doing) ${doneWidth}%, var(--progress-doing) ${doingEnd}%, transparent ${doingEnd}%, transparent 100%)`
+    : "none";
+  els.sprintProgressBar.setAttribute("aria-label", total
+    ? `${donePercent}% done. ${formatStoryPoints(totals.done)} done, ${formatStoryPoints(totals.active)} doing, and ${formatStoryPoints(totals.todo)} to do out of ${formatStoryPoints(total)} story points.`
+    : "No estimated story points in this sprint.");
+}
+
 function render() {
   const team = state.teams.find(item => item.id === state.teamId);
   const filteredIterations = selectedSprintIterations();
@@ -1491,6 +1556,7 @@ function render() {
 
   const query = state.search.trim().toLowerCase();
   const visibleStories = state.stories.filter(item => matchesFilters(item, query));
+  renderSprintProgress();
   renderBoardGroupControl();
   renderFilters();
   for (const column of ["todo", "active", "done"]) {
