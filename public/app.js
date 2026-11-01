@@ -132,7 +132,15 @@ const state = {
   roadmapData: null,
   roadmapCacheKey: "",
   roadmapError: "",
+  roadmapMessage: "",
   roadmapRequestToken: 0,
+  roadmapPortfolioTeamId: "",
+  roadmapPortfolioFeatures: [],
+  roadmapPortfolioEpics: [],
+  roadmapEpicContext: null,
+  roadmapEpicUpdating: false,
+  roadmapForecastContext: null,
+  roadmapForecastUpdating: false,
   wikis: [],
   wikiId: localStorage.getItem(STORAGE.wiki) || "",
   wikiProjectName: "",
@@ -304,6 +312,16 @@ const els = {
   roadmapStatus: document.querySelector("#roadmapStatus"),
   roadmapContent: document.querySelector("#roadmapContent"),
   roadmapCurrentQuarter: document.querySelector("#roadmapCurrentQuarter"),
+  roadmapForecastDialog: document.querySelector("#roadmapForecastDialog"),
+  roadmapForecastLane: document.querySelector("#roadmapForecastLane"),
+  roadmapForecastContext: document.querySelector("#roadmapForecastContext"),
+  roadmapForecastSearch: document.querySelector("#roadmapForecastSearch"),
+  roadmapForecastChoices: document.querySelector("#roadmapForecastChoices"),
+  roadmapForecastError: document.querySelector("#roadmapForecastError"),
+  roadmapEpicDialog: document.querySelector("#roadmapEpicDialog"),
+  roadmapEpicSearch: document.querySelector("#roadmapEpicSearch"),
+  roadmapEpicChoices: document.querySelector("#roadmapEpicChoices"),
+  roadmapEpicError: document.querySelector("#roadmapEpicError"),
   releasesRefresh: document.querySelector("#releasesRefresh"),
   releaseReadinessStatus: document.querySelector("#releaseReadinessStatus"),
   releaseReadinessNotice: document.querySelector("#releaseReadinessNotice"),
@@ -1728,8 +1746,97 @@ function createRoadmapWorkItemButton(item, className) {
   return button;
 }
 
-function createRoadmapFeatureCard(entry) {
-  const card = createRoadmapWorkItemButton(entry.feature, "roadmap-feature-card");
+function roadmapCanonicalLaneTag(lane) {
+  return lane === "backend" ? "Backend" : "Frontend";
+}
+
+function roadmapTagMatchesLane(tag, lane) {
+  const value = String(tag || "").toLocaleLowerCase("en").replace(/[^a-z0-9]+/g, "");
+  return lane === "backend" ? ["backend", "back"].includes(value) : ["frontend", "front"].includes(value);
+}
+
+function roadmapForecastIterationKey(iteration) {
+  return String(iteration?.name || iteration?.path?.split("\\").at(-1) || "")
+    .toLocaleLowerCase("en")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function roadmapForecastTag(iteration, lane) {
+  return `forecast:${roadmapForecastIterationKey(iteration)}:${lane}`;
+}
+
+function roadmapForecastPlacements(feature, iterations = state.iterations) {
+  const iterationsByKey = new Map(iterations.map(iteration => [roadmapForecastIterationKey(iteration), iteration]));
+  return (feature?.tags || []).flatMap(tag => {
+    const match = String(tag).trim().match(/^forecast:([^:]+):(frontend|backend)$/i);
+    if (!match) return [];
+    const iteration = iterationsByKey.get(String(match[1]).toLocaleLowerCase("en").replace(/[^a-z0-9]+/g, ""));
+    return iteration ? [{ tag, iteration, lane: match[2].toLocaleLowerCase("en") }] : [];
+  });
+}
+
+function roadmapEpicPeriodTag(year = state.roadmapYear, quarter = state.roadmapQuarter) {
+  return `forecast:${year}:Q${quarter}`;
+}
+
+function roadmapEpicHasPeriodTag(epic, year = state.roadmapYear, quarter = state.roadmapQuarter) {
+  const periodTag = roadmapEpicPeriodTag(year, quarter).toLocaleLowerCase("en");
+  return (epic?.tags || []).some(tag => String(tag).trim().toLocaleLowerCase("en") === periodTag);
+}
+
+async function loadRoadmapPortfolioItems(team, force = false) {
+  if (!force && state.roadmapPortfolioTeamId === team.id) {
+    return { features: state.roadmapPortfolioFeatures, epics: state.roadmapPortfolioEpics };
+  }
+  if (!force && state.backlogTeamId === team.id && (state.backlogFeatures.length || state.backlogEpics.length)) {
+    state.roadmapPortfolioTeamId = team.id;
+    state.roadmapPortfolioFeatures = [...state.backlogFeatures];
+    state.roadmapPortfolioEpics = [...state.backlogEpics];
+    return { features: state.roadmapPortfolioFeatures, epics: state.roadmapPortfolioEpics };
+  }
+  const teamSegment = encodeURIComponent(team.name);
+  const levels = await azure(`/${teamSegment}/_apis/work/backlogs?api-version=7.1`);
+  const portfolioBacklogs = (levels.value || []).filter(level => String(level.type).toLocaleLowerCase("en") === "portfolio");
+  const results = await Promise.all(portfolioBacklogs.map(level => (
+    azure(`/${teamSegment}/_apis/work/backlogs/${encodeURIComponent(level.id)}/workItems?api-version=7.1`)
+  )));
+  const ids = [...new Set(results.flatMap(result => (result.workItems || []).map(link => link.target?.id).filter(Boolean)))];
+  const items = await fetchWorkItems(ids);
+  state.roadmapPortfolioTeamId = team.id;
+  state.roadmapPortfolioFeatures = items.filter(item => item.type.trim().toLocaleLowerCase("en") === "feature");
+  state.roadmapPortfolioEpics = items.filter(item => item.type.trim().toLocaleLowerCase("en") === "epic");
+  return { features: state.roadmapPortfolioFeatures, epics: state.roadmapPortfolioEpics };
+}
+
+function syncRoadmapFeature(result) {
+  const normalized = normalizeWorkItem(result);
+  [state.roadmapPortfolioFeatures, state.backlogFeatures].forEach(collection => {
+    const existing = collection.find(feature => Number(feature.id) === Number(normalized.id));
+    if (existing) Object.assign(existing, normalized);
+  });
+  state.detailsCache.delete(Number(normalized.id));
+  state.historyCache.delete(Number(normalized.id));
+  state.historyErrors.delete(Number(normalized.id));
+  return normalized;
+}
+
+function syncRoadmapEpic(result) {
+  const normalized = normalizeWorkItem(result);
+  [state.roadmapPortfolioEpics, state.backlogEpics].forEach(collection => {
+    const existing = collection.find(epic => Number(epic.id) === Number(normalized.id));
+    if (existing) Object.assign(existing, normalized);
+  });
+  state.detailsCache.delete(Number(normalized.id));
+  state.historyCache.delete(Number(normalized.id));
+  state.historyErrors.delete(Number(normalized.id));
+  return normalized;
+}
+
+function createRoadmapFeatureCard(entry, iteration, lane) {
+  const committed = entry.stories.length > 0;
+  const card = document.createElement("article");
+  card.className = `roadmap-feature-card ${committed ? "is-committed" : "is-forecasted"}`;
+  const open = createRoadmapWorkItemButton(entry.feature, "roadmap-feature-open");
   const icon = document.createElement("span");
   icon.className = "roadmap-feature-icon";
   icon.textContent = "F";
@@ -1740,9 +1847,22 @@ function createRoadmapFeatureCard(entry) {
   title.textContent = entry.feature.title;
   const meta = document.createElement("small");
   const storyCount = entry.stories.length;
-  meta.textContent = `${workItemKey(entry.feature.id)} · Committed · ${storyCount} ${storyCount === 1 ? "story" : "stories"}`;
+  meta.textContent = committed
+    ? `${workItemKey(entry.feature.id)} · Committed · ${storyCount} ${storyCount === 1 ? "story" : "stories"}`
+    : `${workItemKey(entry.feature.id)} · Forecasted`;
   copy.append(title, meta);
-  card.append(icon, copy);
+  open.append(icon, copy);
+  card.append(open);
+  if (!committed) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "roadmap-feature-remove";
+    remove.textContent = "×";
+    remove.disabled = state.roadmapForecastUpdating;
+    remove.setAttribute("aria-label", `Remove ${entry.feature.title} from ${iteration.name} ${lane}`);
+    remove.addEventListener("click", () => removeRoadmapForecast(entry.feature, iteration, lane));
+    card.append(remove);
+  }
   return card;
 }
 
@@ -1755,21 +1875,295 @@ function createRoadmapLane(epic, iteration, lane, label) {
   heading.className = "roadmap-lane-heading";
   const name = document.createElement("span");
   name.innerHTML = `<i aria-hidden="true"></i>${label}`;
+  const actions = document.createElement("span");
+  actions.className = "roadmap-lane-actions";
   const count = document.createElement("span");
   count.className = "roadmap-lane-count";
   count.textContent = String(entries.length);
-  heading.append(name, count);
+  actions.append(count);
+  if (lane !== "unassigned") {
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "roadmap-lane-add";
+    add.textContent = "+";
+    add.disabled = state.roadmapForecastUpdating;
+    add.setAttribute("aria-label", `Forecast a Feature for ${epic.title}, ${iteration.name}, ${label}`);
+    add.addEventListener("click", () => openRoadmapForecastDialog(epic, iteration, lane));
+    actions.append(add);
+  }
+  heading.append(name, actions);
   const cards = document.createElement("div");
   cards.className = "roadmap-lane-cards";
-  if (entries.length) cards.append(...entries.map(createRoadmapFeatureCard));
+  if (entries.length) cards.append(...entries.map(entry => createRoadmapFeatureCard(entry, iteration, lane)));
   else {
     const empty = document.createElement("span");
     empty.className = "roadmap-lane-empty";
-    empty.textContent = "No committed features";
+    empty.textContent = "No features";
     cards.append(empty);
   }
   section.append(heading, cards);
   return section;
+}
+
+function renderRoadmapForecastChoices() {
+  const context = state.roadmapForecastContext;
+  if (!context || !state.roadmapData) return;
+  const query = els.roadmapForecastSearch.value.trim().toLocaleLowerCase("en");
+  const features = [...(state.roadmapData.featuresByEpic.get(Number(context.epic.id)) || [])]
+    .filter(feature => !query || feature.title.toLocaleLowerCase("en").includes(query) || String(feature.id).includes(query))
+    .sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }));
+  if (!features.length) {
+    const empty = document.createElement("p");
+    empty.className = "roadmap-forecast-empty";
+    empty.textContent = query ? "No matching Features in this Epic." : "This Epic has no Features.";
+    els.roadmapForecastChoices.replaceChildren(empty);
+    return;
+  }
+  els.roadmapForecastChoices.replaceChildren(...features.map(feature => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "roadmap-forecast-choice";
+    const targetEntry = state.roadmapData.cells.get(roadmapCellKey(context.epic.id, context.iteration.id, context.lane))?.get(feature.id);
+    const committed = Boolean(targetEntry?.stories.length);
+    const placements = roadmapForecastPlacements(feature);
+    const forecastedHere = placements.some(placement => (
+      placement.iteration.id === context.iteration.id && placement.lane === context.lane
+    ));
+    button.disabled = committed || forecastedHere || state.roadmapForecastUpdating;
+    const icon = document.createElement("span");
+    icon.className = "roadmap-feature-icon";
+    icon.textContent = "F";
+    const copy = document.createElement("span");
+    copy.className = "roadmap-forecast-choice-copy";
+    const title = document.createElement("strong");
+    title.textContent = feature.title;
+    const key = document.createElement("small");
+    key.textContent = workItemKey(feature.id);
+    copy.append(title, key);
+    const status = document.createElement("span");
+    status.className = "roadmap-forecast-choice-status";
+    if (committed) status.textContent = "Committed";
+    else if (forecastedHere) status.textContent = "Forecasted";
+    else if (placements.length) status.textContent = `${placements.length} forecast${placements.length === 1 ? "" : "s"}`;
+    else status.textContent = "+";
+    button.append(icon, copy, status);
+    button.addEventListener("click", () => saveRoadmapForecast(feature, context.iteration, context.lane));
+    return button;
+  }));
+}
+
+function openRoadmapForecastDialog(epic, iteration, lane) {
+  state.roadmapForecastContext = { epic, iteration, lane };
+  els.roadmapForecastLane.textContent = roadmapCanonicalLaneTag(lane);
+  els.roadmapForecastContext.textContent = `${epic.title} · ${iteration.name} · ${roadmapForecastTag(iteration, lane)}`;
+  els.roadmapForecastSearch.value = "";
+  els.roadmapForecastError.textContent = "";
+  renderRoadmapForecastChoices();
+  els.roadmapForecastDialog.showModal();
+  requestAnimationFrame(() => els.roadmapForecastSearch.focus());
+}
+
+function closeRoadmapForecastDialog() {
+  if (state.roadmapForecastUpdating) return;
+  state.roadmapForecastContext = null;
+  els.roadmapForecastDialog.close();
+}
+
+async function saveRoadmapForecast(feature, iteration, lane) {
+  if (state.roadmapForecastUpdating) return;
+  state.roadmapForecastUpdating = true;
+  els.roadmapForecastError.textContent = "Saving forecast…";
+  renderRoadmapForecastChoices();
+  try {
+    const source = await azure(`/_apis/wit/workitems/${feature.id}?api-version=7.1`);
+    const current = normalizeWorkItem(source);
+    const forecastTag = roadmapForecastTag(iteration, lane);
+    const nextTags = [...current.tags];
+    if (!nextTags.some(tag => String(tag).toLocaleLowerCase("en") === forecastTag)) nextTags.push(forecastTag);
+    const updated = await azure(`/_apis/wit/workitems/${feature.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{
+        op: current.tags.length ? "replace" : "add",
+        path: "/fields/System.Tags",
+        value: nextTags.join("; ")
+      }])
+    });
+    syncRoadmapFeature(updated);
+    state.roadmapMessage = `${feature.title} forecasted in ${iteration.name} · ${roadmapCanonicalLaneTag(lane)}.`;
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapForecastUpdating = false;
+    closeRoadmapForecastDialog();
+    await loadRoadmap();
+  } catch (error) {
+    console.error(error);
+    state.roadmapForecastUpdating = false;
+    els.roadmapForecastError.textContent = error.auth
+      ? "The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The Feature could not be forecasted.";
+    renderRoadmapForecastChoices();
+  }
+}
+
+async function removeRoadmapForecast(feature, iteration, lane) {
+  if (state.roadmapForecastUpdating) return;
+  state.roadmapForecastUpdating = true;
+  renderRoadmap();
+  try {
+    const source = await azure(`/_apis/wit/workitems/${feature.id}?api-version=7.1`);
+    const current = normalizeWorkItem(source);
+    const forecastTag = roadmapForecastTag(iteration, lane);
+    const nextTags = current.tags.filter(tag => String(tag).toLocaleLowerCase("en") !== forecastTag);
+    const updated = await azure(`/_apis/wit/workitems/${feature.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{
+        op: current.tags.length ? "replace" : "add",
+        path: "/fields/System.Tags",
+        value: nextTags.join("; ")
+      }])
+    });
+    syncRoadmapFeature(updated);
+    state.roadmapMessage = `${feature.title} removed from ${iteration.name} · ${roadmapCanonicalLaneTag(lane)} forecast.`;
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapForecastUpdating = false;
+    await loadRoadmap();
+  } catch (error) {
+    console.error(error);
+    state.roadmapForecastUpdating = false;
+    state.roadmapError = error.auth
+      ? "The forecast could not be removed. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The forecast could not be removed.";
+    renderRoadmap();
+  }
+}
+
+function renderRoadmapEpicChoices() {
+  const context = state.roadmapEpicContext;
+  if (!context || !state.roadmapData) return;
+  const query = els.roadmapEpicSearch.value.trim().toLocaleLowerCase("en");
+  const epics = [...state.roadmapData.availableEpics]
+    .filter(epic => !query || epic.title.toLocaleLowerCase("en").includes(query) || String(epic.id).includes(query))
+    .sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }));
+  if (!epics.length) {
+    const empty = document.createElement("p");
+    empty.className = "roadmap-forecast-empty";
+    empty.textContent = query ? "No matching Epics." : "No Epics available.";
+    els.roadmapEpicChoices.replaceChildren(empty);
+    return;
+  }
+  els.roadmapEpicChoices.replaceChildren(...epics.map(epic => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "roadmap-forecast-choice";
+    const automatic = state.roadmapData.epicFeatureCounts.has(epic.id);
+    const added = roadmapEpicHasPeriodTag(epic, context.year, context.quarter);
+    button.disabled = automatic || added || state.roadmapEpicUpdating;
+    const icon = document.createElement("span");
+    icon.className = "roadmap-epic-icon roadmap-epic-choice-icon";
+    icon.textContent = "⚡";
+    const copy = document.createElement("span");
+    copy.className = "roadmap-forecast-choice-copy";
+    const title = document.createElement("strong");
+    title.textContent = epic.title;
+    const key = document.createElement("small");
+    key.textContent = workItemKey(epic.id);
+    copy.append(title, key);
+    const status = document.createElement("span");
+    status.className = "roadmap-forecast-choice-status";
+    status.textContent = automatic ? "Automatic" : added ? "Added" : "+";
+    button.append(icon, copy, status);
+    button.addEventListener("click", () => saveRoadmapEpic(epic, context.year, context.quarter));
+    return button;
+  }));
+}
+
+function openRoadmapEpicDialog() {
+  state.roadmapEpicContext = { year: state.roadmapYear, quarter: state.roadmapQuarter };
+  els.roadmapEpicSearch.value = "";
+  els.roadmapEpicError.textContent = "";
+  renderRoadmapEpicChoices();
+  els.roadmapEpicDialog.showModal();
+  requestAnimationFrame(() => els.roadmapEpicSearch.focus());
+}
+
+function closeRoadmapEpicDialog() {
+  if (state.roadmapEpicUpdating) return;
+  state.roadmapEpicContext = null;
+  els.roadmapEpicDialog.close();
+}
+
+async function saveRoadmapEpic(epic, year, quarter) {
+  if (state.roadmapEpicUpdating) return;
+  state.roadmapEpicUpdating = true;
+  els.roadmapEpicError.textContent = "Adding Epic…";
+  renderRoadmapEpicChoices();
+  try {
+    const source = await azure(`/_apis/wit/workitems/${epic.id}?api-version=7.1`);
+    const current = normalizeWorkItem(source);
+    const periodTag = roadmapEpicPeriodTag(year, quarter);
+    const nextTags = [...current.tags];
+    if (!nextTags.some(tag => String(tag).trim().toLocaleLowerCase("en") === periodTag.toLocaleLowerCase("en"))) nextTags.push(periodTag);
+    const updated = await azure(`/_apis/wit/workitems/${epic.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{
+        op: current.tags.length ? "replace" : "add",
+        path: "/fields/System.Tags",
+        value: nextTags.join("; ")
+      }])
+    });
+    syncRoadmapEpic(updated);
+    state.roadmapMessage = `${epic.title} added to Q${quarter} ${year}.`;
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapEpicUpdating = false;
+    closeRoadmapEpicDialog();
+    await loadRoadmap();
+  } catch (error) {
+    console.error(error);
+    state.roadmapEpicUpdating = false;
+    els.roadmapEpicError.textContent = error.auth
+      ? "The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The Epic could not be added.";
+    renderRoadmapEpicChoices();
+  }
+}
+
+async function removeRoadmapEpic(epic) {
+  if (state.roadmapEpicUpdating) return;
+  state.roadmapEpicUpdating = true;
+  renderRoadmap();
+  try {
+    const source = await azure(`/_apis/wit/workitems/${epic.id}?api-version=7.1`);
+    const current = normalizeWorkItem(source);
+    const periodTag = roadmapEpicPeriodTag();
+    const nextTags = current.tags.filter(tag => String(tag).trim().toLocaleLowerCase("en") !== periodTag.toLocaleLowerCase("en"));
+    const updated = await azure(`/_apis/wit/workitems/${epic.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{
+        op: current.tags.length ? "replace" : "add",
+        path: "/fields/System.Tags",
+        value: nextTags.join("; ")
+      }])
+    });
+    syncRoadmapEpic(updated);
+    state.roadmapMessage = `${epic.title} removed from Q${state.roadmapQuarter} ${state.roadmapYear}.`;
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapEpicUpdating = false;
+    await loadRoadmap();
+  } catch (error) {
+    console.error(error);
+    state.roadmapEpicUpdating = false;
+    state.roadmapError = error.auth
+      ? "The Epic could not be removed. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The Epic could not be removed.";
+    renderRoadmap();
+  }
 }
 
 function renderRoadmap() {
@@ -1780,9 +2174,9 @@ function renderRoadmap() {
   const currentPeriod = roadmapPeriodForIteration(state.iterations.find(iteration => iteration.id === state.currentIterationId) || state.iteration);
   els.roadmapCurrentQuarter.disabled = state.roadmapYear === currentPeriod.year && state.roadmapQuarter === currentPeriod.quarter;
   els.roadmapMeta.textContent = team
-    ? `${team.name} · Q${state.roadmapQuarter} ${state.roadmapYear} · ${iterations.length} ${iterations.length === 1 ? "sprint" : "sprints"}${data ? ` · ${data.featureCount} committed ${data.featureCount === 1 ? "Feature" : "Features"}` : ""}`
-    : "Connect Azure DevOps to load committed Features.";
-  els.roadmapStatus.textContent = state.roadmapError;
+    ? `${team.name} · Q${state.roadmapQuarter} ${state.roadmapYear} · ${iterations.length} ${iterations.length === 1 ? "sprint" : "sprints"}${data ? ` · ${data.featureCount} committed · ${data.forecastCount} forecasted` : ""}`
+    : "Connect Azure DevOps to load the roadmap.";
+  els.roadmapStatus.textContent = state.roadmapError || state.roadmapMessage;
   els.roadmapStatus.classList.toggle("is-error", Boolean(state.roadmapError));
 
   const shell = document.createElement("div");
@@ -1851,11 +2245,17 @@ function renderRoadmap() {
   const epicCorner = document.createElement("th");
   epicCorner.className = "roadmap-corner roadmap-epic-corner";
   const epicCornerLabel = document.createElement("span");
-  epicCornerLabel.textContent = "Committed Epics";
+  epicCornerLabel.textContent = "Roadmap Epics";
   const rowCount = document.createElement("b");
   rowCount.textContent = `${data?.epics.length || 0} roadmap ${data?.epics.length === 1 ? "row" : "rows"}`;
   epicCornerLabel.append(rowCount);
-  epicCorner.append(epicCornerLabel);
+  const addEpic = document.createElement("button");
+  addEpic.type = "button";
+  addEpic.className = "roadmap-add-epic";
+  addEpic.textContent = "+ Add Epic";
+  addEpic.disabled = !data || state.roadmapEpicUpdating;
+  addEpic.addEventListener("click", openRoadmapEpicDialog);
+  epicCorner.append(epicCornerLabel, addEpic);
   sprintRow.append(epicCorner);
   iterations.forEach(iteration => {
     const heading = document.createElement("th");
@@ -1890,8 +2290,23 @@ function renderRoadmap() {
       committed.className = "roadmap-committed-count";
       const featureCount = data.epicFeatureCounts.get(epic.id)?.size || 0;
       committed.textContent = `${featureCount} Committed`;
-      button.append(icon, title, key, committed);
+      const forecasted = document.createElement("span");
+      forecasted.className = "roadmap-forecast-count";
+      const forecastCount = data.epicForecastCounts.get(epic.id)?.size || 0;
+      forecasted.textContent = `${forecastCount} Forecasted`;
+      button.append(icon, title, key, committed, forecasted);
       label.append(button);
+      const automatic = data.epicFeatureCounts.has(epic.id);
+      if (!automatic && roadmapEpicHasPeriodTag(epic)) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "roadmap-epic-remove";
+        remove.textContent = "×";
+        remove.disabled = state.roadmapEpicUpdating;
+        remove.setAttribute("aria-label", `Remove ${epic.title} from Q${state.roadmapQuarter} ${state.roadmapYear}`);
+        remove.addEventListener("click", () => removeRoadmapEpic(epic));
+        label.append(remove);
+      }
       row.append(label);
       iterations.forEach(iteration => {
         const cell = document.createElement("td");
@@ -1913,7 +2328,7 @@ function renderRoadmap() {
     empty.className = "roadmap-empty";
     empty.colSpan = Math.max(1, iterations.length + 1);
     empty.innerHTML = iterations.length
-      ? "<strong>No committed Features in this quarter</strong><span>Assign Stories with a Feature parent to one of these sprints to show them here.</span>"
+      ? "<strong>No Features available for this roadmap</strong><span>Add Features below an Epic or assign Stories to these sprints.</span>"
       : "<strong>No sprints in this quarter</strong><span>Choose another year or quarter.</span>";
     row.append(empty);
     body.append(row);
@@ -1941,28 +2356,42 @@ async function loadRoadmap(force = false) {
   if (!force && state.roadmapCacheKey === cacheKey && state.roadmapData) return renderRoadmap();
   const requestToken = ++state.roadmapRequestToken;
   state.roadmapError = "";
-  els.roadmapStatus.textContent = "Loading committed Features…";
+  els.roadmapStatus.textContent = "Loading committed and forecasted Features…";
   els.roadmapStatus.classList.remove("is-error");
   els.roadmapContent.innerHTML = '<div class="roadmap-loading" aria-hidden="true"><span></span><span></span><span></span></div>';
   try {
-    const groups = await Promise.all(iterations.map(async iteration => ({
-      iteration,
-      stories: await fetchIterationStories(team, iteration)
-    })));
+    const [groups, portfolio] = await Promise.all([
+      Promise.all(iterations.map(async iteration => ({
+        iteration,
+        stories: await fetchIterationStories(team, iteration)
+      }))),
+      loadRoadmapPortfolioItems(team, force)
+    ]);
     if (requestToken !== state.roadmapRequestToken) return;
     const storyRecords = groups.flatMap(group => group.stories
       .filter(story => story.parentId)
       .map(story => ({ story, iteration: group.iteration })));
     const possibleFeatures = await fetchWorkItems(storyRecords.map(record => record.story.parentId));
     if (requestToken !== state.roadmapRequestToken) return;
-    const features = possibleFeatures.filter(item => item.type.trim().toLocaleLowerCase("en") === "feature");
+    const features = [...new Map([...portfolio.features, ...possibleFeatures]
+      .filter(item => item.type.trim().toLocaleLowerCase("en") === "feature")
+      .map(feature => [Number(feature.id), feature])).values()];
     const featuresById = new Map(features.map(feature => [Number(feature.id), feature]));
-    const epics = (await fetchWorkItems(features.map(feature => feature.parentId)))
-      .filter(item => item.type.trim().toLocaleLowerCase("en") === "epic");
+    const parentEpics = await fetchWorkItems(features.map(feature => feature.parentId));
+    const epics = [...new Map([...portfolio.epics, ...parentEpics]
+      .filter(item => item.type.trim().toLocaleLowerCase("en") === "epic")
+      .map(epic => [Number(epic.id), epic])).values()];
     if (requestToken !== state.roadmapRequestToken) return;
     const epicsById = new Map(epics.map(epic => [Number(epic.id), epic]));
     const cells = new Map();
     const epicFeatureCounts = new Map();
+    const epicForecastCounts = new Map();
+    const featuresByEpic = new Map();
+    features.forEach(feature => {
+      if (!epicsById.has(Number(feature.parentId))) return;
+      if (!featuresByEpic.has(Number(feature.parentId))) featuresByEpic.set(Number(feature.parentId), []);
+      featuresByEpic.get(Number(feature.parentId)).push(feature);
+    });
     let storyCount = 0;
     storyRecords.forEach(({ story, iteration }) => {
       const feature = featuresById.get(Number(story.parentId));
@@ -1975,18 +2404,38 @@ async function loadRoadmap(force = false) {
         const key = roadmapCellKey(epic.id, iteration.id, lane);
         if (!cells.has(key)) cells.set(key, new Map());
         const entries = cells.get(key);
-        if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [] });
+        if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [], forecast: false });
         entries.get(feature.id).stories.push(story);
       });
     });
-    const committedEpics = epics.filter(epic => epicFeatureCounts.has(epic.id))
+    features.forEach(feature => {
+      const epic = epicsById.get(Number(feature.parentId));
+      const placements = roadmapForecastPlacements(feature, iterations);
+      if (!epic || !placements.length) return;
+      if (!epicForecastCounts.has(epic.id)) epicForecastCounts.set(epic.id, new Set());
+      epicForecastCounts.get(epic.id).add(feature.id);
+      placements.forEach(({ iteration, lane }) => {
+        const key = roadmapCellKey(epic.id, iteration.id, lane);
+        if (!cells.has(key)) cells.set(key, new Map());
+        const entries = cells.get(key);
+        if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [], forecast: true });
+        else entries.get(feature.id).forecast = true;
+      });
+    });
+    const roadmapEpics = epics.filter(epic => (
+      epicFeatureCounts.has(epic.id) || roadmapEpicHasPeriodTag(epic, state.roadmapYear, state.roadmapQuarter)
+    ))
       .sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }));
     state.roadmapData = {
       iterations,
-      epics: committedEpics,
+      epics: roadmapEpics,
+      availableEpics: epics,
       cells,
       epicFeatureCounts,
+      epicForecastCounts,
+      featuresByEpic,
       featureCount: new Set([...epicFeatureCounts.values()].flatMap(values => [...values])).size,
+      forecastCount: new Set([...epicForecastCounts.values()].flatMap(values => [...values])).size,
       storyCount
     };
     state.roadmapCacheKey = cacheKey;
@@ -2006,6 +2455,7 @@ function selectRoadmapPeriod(year, quarter) {
   if (!Number.isInteger(year) || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) return;
   state.roadmapYear = year;
   state.roadmapQuarter = quarter;
+  state.roadmapMessage = "";
   if (!state.routeApplying) writeAppRoute(currentAppRoute({ view: "roadmap", year, quarter }), { replace: true });
   loadRoadmap();
 }
@@ -4596,6 +5046,7 @@ function syncBacklogWorkItem(itemId, result) {
   state.iterationStoriesCache.clear();
   state.roadmapData = null;
   state.roadmapCacheKey = "";
+  if (["feature", "epic"].includes(normalized.type.trim().toLocaleLowerCase("en"))) state.roadmapPortfolioTeamId = "";
 }
 
 function workItemNeedsSprintSplit(item) {
@@ -5892,6 +6343,8 @@ function removeDeletedWorkItem(itemId) {
   state.forYouMentions = state.forYouMentions.filter(entry => keep(entry.item));
   state.forYouActivity = state.forYouActivity.filter(entry => keep(entry.item));
   state.globalSearchResults = state.globalSearchResults.filter(keep);
+  state.roadmapPortfolioFeatures = state.roadmapPortfolioFeatures.filter(keep);
+  state.roadmapPortfolioEpics = state.roadmapPortfolioEpics.filter(keep);
   state.iterationStoriesCache.clear();
   state.roadmapData = null;
   state.roadmapCacheKey = "";
@@ -8083,6 +8536,9 @@ async function updateWorkItemTags(item, nextTags) {
     const detail = normalizeWorkItemDetail(verifiedItem);
     const verifiedTags = detail.tags;
     item.tags = verifiedTags;
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    if (["feature", "epic"].includes(item.type.trim().toLocaleLowerCase("en"))) state.roadmapPortfolioTeamId = "";
     state.detailsCache.set(item.id, detail);
     state.historyCache.delete(item.id);
     state.historyErrors.delete(item.id);
@@ -8382,6 +8838,7 @@ async function updateWorkItemField(item, field, value, label) {
     state.iterationStoriesCache.clear();
     state.roadmapData = null;
     state.roadmapCacheKey = "";
+    if (["feature", "epic"].includes(item.type.trim().toLocaleLowerCase("en"))) state.roadmapPortfolioTeamId = "";
     state.detailsCache.set(item.id, detail);
     state.historyCache.delete(item.id);
     state.historyErrors.delete(item.id);
@@ -10023,6 +10480,14 @@ function renderEmptyBoard() {
   state.roadmapData = null;
   state.roadmapCacheKey = "";
   state.roadmapError = "";
+  state.roadmapMessage = "";
+  state.roadmapPortfolioTeamId = "";
+  state.roadmapPortfolioFeatures = [];
+  state.roadmapPortfolioEpics = [];
+  state.roadmapEpicContext = null;
+  state.roadmapEpicUpdating = false;
+  state.roadmapForecastContext = null;
+  state.roadmapForecastUpdating = false;
   state.roadmapRequestToken++;
   state.wikis = [];
   state.wikiProjectName = "";
@@ -10553,6 +11018,10 @@ els.settingsForm.addEventListener("submit", async event => {
     state.roadmapData = null;
     state.roadmapCacheKey = "";
     state.roadmapError = "";
+    state.roadmapMessage = "";
+    state.roadmapPortfolioTeamId = "";
+    state.roadmapPortfolioFeatures = [];
+    state.roadmapPortfolioEpics = [];
     state.roadmapYear = null;
     state.roadmapQuarter = null;
     loadBoard();
@@ -10567,6 +11036,30 @@ els.settingsForm.addEventListener("submit", async event => {
 document.querySelectorAll("[data-close-settings]").forEach(button => button.addEventListener("click", () => els.settingsDialog.close()));
 document.querySelectorAll("[data-close-create-work-item]").forEach(button => button.addEventListener("click", requestCloseCreateWorkItemDialog));
 document.querySelectorAll("[data-close-remaining-points]").forEach(button => button.addEventListener("click", () => closeRemainingPointsDialog(null)));
+document.querySelectorAll("[data-close-roadmap-forecast]").forEach(button => button.addEventListener("click", closeRoadmapForecastDialog));
+document.querySelectorAll("[data-close-roadmap-epic]").forEach(button => button.addEventListener("click", closeRoadmapEpicDialog));
+els.roadmapForecastSearch.addEventListener("input", renderRoadmapForecastChoices);
+els.roadmapEpicSearch.addEventListener("input", renderRoadmapEpicChoices);
+els.roadmapForecastDialog.addEventListener("cancel", event => {
+  if (!state.roadmapForecastUpdating) return;
+  event.preventDefault();
+});
+els.roadmapForecastDialog.addEventListener("click", event => {
+  if (event.target === els.roadmapForecastDialog) closeRoadmapForecastDialog();
+});
+els.roadmapForecastDialog.addEventListener("close", () => {
+  if (!state.roadmapForecastUpdating) state.roadmapForecastContext = null;
+});
+els.roadmapEpicDialog.addEventListener("cancel", event => {
+  if (!state.roadmapEpicUpdating) return;
+  event.preventDefault();
+});
+els.roadmapEpicDialog.addEventListener("click", event => {
+  if (event.target === els.roadmapEpicDialog) closeRoadmapEpicDialog();
+});
+els.roadmapEpicDialog.addEventListener("close", () => {
+  if (!state.roadmapEpicUpdating) state.roadmapEpicContext = null;
+});
 els.remainingPointsForm.addEventListener("submit", event => {
   event.preventDefault();
   if (!remainingPointsRequest) return;
