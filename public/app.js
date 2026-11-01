@@ -127,6 +127,12 @@ const state = {
   backlogUpdating: false,
   backlogPositionItemIds: [],
   backlogPositionGroupKey: "",
+  roadmapYear: null,
+  roadmapQuarter: null,
+  roadmapData: null,
+  roadmapCacheKey: "",
+  roadmapError: "",
+  roadmapRequestToken: 0,
   wikis: [],
   wikiId: localStorage.getItem(STORAGE.wiki) || "",
   wikiProjectName: "",
@@ -279,6 +285,7 @@ const els = {
   forYouNav: document.querySelector("#forYouNav"),
   sprintBoardNav: document.querySelector("#sprintBoardNav"),
   backlogNav: document.querySelector("#backlogNav"),
+  roadmapNav: document.querySelector("#roadmapNav"),
   wikiNav: document.querySelector("#wikiNav"),
   releasesNav: document.querySelector("#releasesNav"),
   createWorkItemControl: document.querySelector("#createWorkItemControl"),
@@ -288,10 +295,15 @@ const els = {
   listViews: [...document.querySelectorAll("[data-list-view]")],
   boardViews: [...document.querySelectorAll("[data-board-view]")],
   backlogViews: [...document.querySelectorAll("[data-backlog-view]")],
+  roadmapViews: [...document.querySelectorAll("[data-roadmap-view]")],
   forYouViews: [...document.querySelectorAll("[data-for-you-view]")],
   wikiViews: [...document.querySelectorAll("[data-wiki-view]")],
   releasesViews: [...document.querySelectorAll("[data-releases-view]")],
   searchViews: [...document.querySelectorAll("[data-search-view]")],
+  roadmapMeta: document.querySelector("#roadmapMeta"),
+  roadmapStatus: document.querySelector("#roadmapStatus"),
+  roadmapContent: document.querySelector("#roadmapContent"),
+  roadmapCurrentQuarter: document.querySelector("#roadmapCurrentQuarter"),
   releasesRefresh: document.querySelector("#releasesRefresh"),
   releaseReadinessStatus: document.querySelector("#releaseReadinessStatus"),
   releaseReadinessNotice: document.querySelector("#releaseReadinessNotice"),
@@ -1207,6 +1219,10 @@ async function loadBoard({ openSettings = false } = {}) {
     ]);
     state.iterations = iterationsResult.value || [];
     state.iterationStoriesCache.clear();
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapError = "";
+    state.roadmapRequestToken++;
     state.currentIterationId = currentIterationResult.value?.[0]?.id || "";
     const storedIterationId = localStorage.getItem(STORAGE.iteration) || "";
     state.iteration = iterationForRoute(state.routeSprint)
@@ -1617,6 +1633,389 @@ function iterationLabel(iteration) {
   return currentIndex >= 0 && iterationIndex < currentIndex ? "Closed sprint" : "Future sprint";
 }
 
+function roadmapIterationDate(iteration) {
+  const value = iteration?.attributes?.startDate || iteration?.attributes?.finishDate;
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function roadmapPeriodForDate(date) {
+  const value = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  return { year: value.getFullYear(), quarter: Math.floor(value.getMonth() / 3) + 1 };
+}
+
+function roadmapPeriodForIteration(iteration) {
+  return roadmapPeriodForDate(roadmapIterationDate(iteration) || new Date());
+}
+
+function ensureRoadmapPeriod() {
+  if (state.roadmapYear && state.roadmapQuarter) return;
+  const current = state.iterations.find(iteration => iteration.id === state.currentIterationId)
+    || state.iteration;
+  const period = roadmapPeriodForIteration(current);
+  state.roadmapYear = period.year;
+  state.roadmapQuarter = period.quarter;
+}
+
+function roadmapYears() {
+  const years = [...new Set(state.iterations.map(roadmapIterationDate).filter(Boolean).map(date => date.getFullYear()))];
+  if (state.roadmapYear && !years.includes(state.roadmapYear)) years.push(state.roadmapYear);
+  if (!years.length) years.push(new Date().getFullYear());
+  return years.sort((left, right) => left - right);
+}
+
+function roadmapPeriodIterations() {
+  ensureRoadmapPeriod();
+  return chronologicalIterations().filter(iteration => {
+    const date = roadmapIterationDate(iteration);
+    if (!date) return false;
+    const period = roadmapPeriodForDate(date);
+    return period.year === state.roadmapYear && period.quarter === state.roadmapQuarter;
+  });
+}
+
+function roadmapNormalizedTags(item) {
+  return (item?.tags || []).map(tag => String(tag).toLocaleLowerCase("en").replace(/[^a-z0-9]+/g, ""));
+}
+
+function roadmapTaggedLanes(item) {
+  const tags = new Set(roadmapNormalizedTags(item));
+  const lanes = [];
+  if (tags.has("frontend") || tags.has("front")) lanes.push("frontend");
+  if (tags.has("backend") || tags.has("back")) lanes.push("backend");
+  return lanes;
+}
+
+function roadmapStoryLanes(story, feature) {
+  const storyLanes = roadmapTaggedLanes(story);
+  if (storyLanes.length) return storyLanes;
+  const featureLanes = roadmapTaggedLanes(feature);
+  return featureLanes.length ? featureLanes : ["unassigned"];
+}
+
+function roadmapCellKey(epicId, iterationId, lane) {
+  return `${epicId}:${iterationId}:${lane}`;
+}
+
+function roadmapMonthGroups(iterations) {
+  const formatter = new Intl.DateTimeFormat("en", { month: "long", year: "numeric" });
+  return iterations.reduce((groups, iteration) => {
+    const date = roadmapIterationDate(iteration);
+    const label = date ? formatter.format(date) : "Sprints";
+    const previous = groups.at(-1);
+    if (previous?.label === label) previous.count++;
+    else groups.push({ label, count: 1 });
+    return groups;
+  }, []);
+}
+
+function roadmapIterationDates(iteration) {
+  const formatter = new Intl.DateTimeFormat("en", { day: "numeric", month: "short" });
+  const start = iteration.attributes?.startDate ? new Date(iteration.attributes.startDate) : null;
+  const finish = iteration.attributes?.finishDate ? new Date(iteration.attributes.finishDate) : null;
+  if (start && finish && !Number.isNaN(start.getTime()) && !Number.isNaN(finish.getTime())) {
+    return `${formatter.format(start)} – ${formatter.format(finish)}`;
+  }
+  return iteration.path || "";
+}
+
+function createRoadmapWorkItemButton(item, className) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.setAttribute("aria-label", `Open ${item.type} ${workItemKey(item.id)}: ${item.title}`);
+  button.addEventListener("click", () => showWorkItem(item));
+  return button;
+}
+
+function createRoadmapFeatureCard(entry) {
+  const card = createRoadmapWorkItemButton(entry.feature, "roadmap-feature-card");
+  const icon = document.createElement("span");
+  icon.className = "roadmap-feature-icon";
+  icon.textContent = "F";
+  icon.setAttribute("aria-hidden", "true");
+  const copy = document.createElement("span");
+  copy.className = "roadmap-feature-copy";
+  const title = document.createElement("strong");
+  title.textContent = entry.feature.title;
+  const meta = document.createElement("small");
+  const storyCount = entry.stories.length;
+  meta.textContent = `${workItemKey(entry.feature.id)} · Committed · ${storyCount} ${storyCount === 1 ? "story" : "stories"}`;
+  copy.append(title, meta);
+  card.append(icon, copy);
+  return card;
+}
+
+function createRoadmapLane(epic, iteration, lane, label) {
+  const section = document.createElement("section");
+  section.className = `roadmap-lane is-${lane}`;
+  const entries = [...(state.roadmapData?.cells.get(roadmapCellKey(epic.id, iteration.id, lane))?.values() || [])]
+    .sort((left, right) => left.feature.title.localeCompare(right.feature.title, "en", { numeric: true, sensitivity: "base" }));
+  const heading = document.createElement("header");
+  heading.className = "roadmap-lane-heading";
+  const name = document.createElement("span");
+  name.innerHTML = `<i aria-hidden="true"></i>${label}`;
+  const count = document.createElement("span");
+  count.className = "roadmap-lane-count";
+  count.textContent = String(entries.length);
+  heading.append(name, count);
+  const cards = document.createElement("div");
+  cards.className = "roadmap-lane-cards";
+  if (entries.length) cards.append(...entries.map(createRoadmapFeatureCard));
+  else {
+    const empty = document.createElement("span");
+    empty.className = "roadmap-lane-empty";
+    empty.textContent = "No committed features";
+    cards.append(empty);
+  }
+  section.append(heading, cards);
+  return section;
+}
+
+function renderRoadmap() {
+  ensureRoadmapPeriod();
+  const team = state.teams.find(value => value.id === state.teamId);
+  const iterations = roadmapPeriodIterations();
+  const data = state.roadmapData;
+  const currentPeriod = roadmapPeriodForIteration(state.iterations.find(iteration => iteration.id === state.currentIterationId) || state.iteration);
+  els.roadmapCurrentQuarter.disabled = state.roadmapYear === currentPeriod.year && state.roadmapQuarter === currentPeriod.quarter;
+  els.roadmapMeta.textContent = team
+    ? `${team.name} · Q${state.roadmapQuarter} ${state.roadmapYear} · ${iterations.length} ${iterations.length === 1 ? "sprint" : "sprints"}${data ? ` · ${data.featureCount} committed ${data.featureCount === 1 ? "Feature" : "Features"}` : ""}`
+    : "Connect Azure DevOps to load committed Features.";
+  els.roadmapStatus.textContent = state.roadmapError;
+  els.roadmapStatus.classList.toggle("is-error", Boolean(state.roadmapError));
+
+  const shell = document.createElement("div");
+  shell.className = "roadmap-shell";
+  const table = document.createElement("table");
+  table.className = "roadmap-table";
+  const columns = document.createElement("colgroup");
+  const epicColumn = document.createElement("col");
+  epicColumn.className = "roadmap-epic-column";
+  columns.append(epicColumn);
+  iterations.forEach(() => {
+    const sprintColumn = document.createElement("col");
+    sprintColumn.className = "roadmap-sprint-column";
+    columns.append(sprintColumn);
+  });
+  table.append(columns);
+  const head = document.createElement("thead");
+  const monthRow = document.createElement("tr");
+  monthRow.className = "roadmap-month-row";
+  const periodCorner = document.createElement("th");
+  periodCorner.className = "roadmap-corner roadmap-period-corner";
+  const periodControls = document.createElement("div");
+  periodControls.className = "roadmap-period-controls";
+  const yearLabel = document.createElement("label");
+  yearLabel.className = "sr-only";
+  yearLabel.htmlFor = "roadmapYear";
+  yearLabel.textContent = "Roadmap year";
+  const year = document.createElement("select");
+  year.id = "roadmapYear";
+  year.setAttribute("aria-label", "Roadmap year");
+  year.append(...roadmapYears().map(value => {
+    const option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = String(value);
+    option.selected = value === state.roadmapYear;
+    return option;
+  }));
+  const quarterLabel = document.createElement("label");
+  quarterLabel.className = "sr-only";
+  quarterLabel.htmlFor = "roadmapQuarter";
+  quarterLabel.textContent = "Roadmap quarter";
+  const quarter = document.createElement("select");
+  quarter.id = "roadmapQuarter";
+  quarter.setAttribute("aria-label", "Roadmap quarter");
+  quarter.append(...[1, 2, 3, 4].map(value => {
+    const option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = `Q${value}`;
+    option.selected = value === state.roadmapQuarter;
+    return option;
+  }));
+  year.addEventListener("change", () => selectRoadmapPeriod(Number(year.value), state.roadmapQuarter));
+  quarter.addEventListener("change", () => selectRoadmapPeriod(state.roadmapYear, Number(quarter.value)));
+  periodControls.append(yearLabel, year, quarterLabel, quarter);
+  periodCorner.append(periodControls);
+  monthRow.append(periodCorner);
+  roadmapMonthGroups(iterations).forEach(group => {
+    const heading = document.createElement("th");
+    heading.colSpan = group.count;
+    heading.textContent = group.label;
+    monthRow.append(heading);
+  });
+
+  const sprintRow = document.createElement("tr");
+  sprintRow.className = "roadmap-sprint-row";
+  const epicCorner = document.createElement("th");
+  epicCorner.className = "roadmap-corner roadmap-epic-corner";
+  const epicCornerLabel = document.createElement("span");
+  epicCornerLabel.textContent = "Committed Epics";
+  const rowCount = document.createElement("b");
+  rowCount.textContent = `${data?.epics.length || 0} roadmap ${data?.epics.length === 1 ? "row" : "rows"}`;
+  epicCornerLabel.append(rowCount);
+  epicCorner.append(epicCornerLabel);
+  sprintRow.append(epicCorner);
+  iterations.forEach(iteration => {
+    const heading = document.createElement("th");
+    if (iteration.id === state.currentIterationId) heading.classList.add("is-current");
+    heading.dataset.roadmapSprint = iteration.id;
+    const name = document.createElement("strong");
+    name.textContent = iteration.name;
+    const dates = document.createElement("small");
+    dates.textContent = roadmapIterationDates(iteration);
+    heading.append(name, dates);
+    sprintRow.append(heading);
+  });
+  head.append(monthRow, sprintRow);
+
+  const body = document.createElement("tbody");
+  if (data?.epics.length && iterations.length) {
+    data.epics.forEach(epic => {
+      const row = document.createElement("tr");
+      const label = document.createElement("th");
+      label.className = "roadmap-epic-label";
+      label.scope = "row";
+      const button = createRoadmapWorkItemButton(epic, "roadmap-epic-button");
+      const icon = document.createElement("span");
+      icon.className = "roadmap-epic-icon";
+      icon.textContent = "⚡";
+      icon.setAttribute("aria-hidden", "true");
+      const title = document.createElement("strong");
+      title.textContent = epic.title;
+      const key = document.createElement("small");
+      key.textContent = workItemKey(epic.id);
+      const committed = document.createElement("span");
+      committed.className = "roadmap-committed-count";
+      const featureCount = data.epicFeatureCounts.get(epic.id)?.size || 0;
+      committed.textContent = `${featureCount} Committed`;
+      button.append(icon, title, key, committed);
+      label.append(button);
+      row.append(label);
+      iterations.forEach(iteration => {
+        const cell = document.createElement("td");
+        cell.className = "roadmap-cell";
+        if (iteration.id === state.currentIterationId) cell.classList.add("is-current");
+        cell.append(
+          createRoadmapLane(epic, iteration, "frontend", "Frontend"),
+          createRoadmapLane(epic, iteration, "backend", "Backend")
+        );
+        const unassigned = state.roadmapData.cells.get(roadmapCellKey(epic.id, iteration.id, "unassigned"));
+        if (unassigned?.size) cell.append(createRoadmapLane(epic, iteration, "unassigned", "Lane not tagged"));
+        row.append(cell);
+      });
+      body.append(row);
+    });
+  } else {
+    const row = document.createElement("tr");
+    const empty = document.createElement("td");
+    empty.className = "roadmap-empty";
+    empty.colSpan = Math.max(1, iterations.length + 1);
+    empty.innerHTML = iterations.length
+      ? "<strong>No committed Features in this quarter</strong><span>Assign Stories with a Feature parent to one of these sprints to show them here.</span>"
+      : "<strong>No sprints in this quarter</strong><span>Choose another year or quarter.</span>";
+    row.append(empty);
+    body.append(row);
+  }
+  table.append(head, body);
+  shell.append(table);
+  els.roadmapContent.replaceChildren(shell);
+  requestAnimationFrame(() => {
+    const current = shell.querySelector(`[data-roadmap-sprint="${state.currentIterationId}"]`);
+    if (current) shell.scrollTo({ left: Math.max(0, current.offsetLeft - 252), behavior: "auto" });
+  });
+}
+
+async function loadRoadmap(force = false) {
+  const team = state.teams.find(value => value.id === state.teamId);
+  ensureRoadmapPeriod();
+  if (!team) {
+    state.roadmapData = null;
+    state.roadmapError = "";
+    renderRoadmap();
+    return;
+  }
+  const iterations = roadmapPeriodIterations();
+  const cacheKey = `${team.id}:${state.roadmapYear}:Q${state.roadmapQuarter}`;
+  if (!force && state.roadmapCacheKey === cacheKey && state.roadmapData) return renderRoadmap();
+  const requestToken = ++state.roadmapRequestToken;
+  state.roadmapError = "";
+  els.roadmapStatus.textContent = "Loading committed Features…";
+  els.roadmapStatus.classList.remove("is-error");
+  els.roadmapContent.innerHTML = '<div class="roadmap-loading" aria-hidden="true"><span></span><span></span><span></span></div>';
+  try {
+    const groups = await Promise.all(iterations.map(async iteration => ({
+      iteration,
+      stories: await fetchIterationStories(team, iteration)
+    })));
+    if (requestToken !== state.roadmapRequestToken) return;
+    const storyRecords = groups.flatMap(group => group.stories
+      .filter(story => story.parentId)
+      .map(story => ({ story, iteration: group.iteration })));
+    const possibleFeatures = await fetchWorkItems(storyRecords.map(record => record.story.parentId));
+    if (requestToken !== state.roadmapRequestToken) return;
+    const features = possibleFeatures.filter(item => item.type.trim().toLocaleLowerCase("en") === "feature");
+    const featuresById = new Map(features.map(feature => [Number(feature.id), feature]));
+    const epics = (await fetchWorkItems(features.map(feature => feature.parentId)))
+      .filter(item => item.type.trim().toLocaleLowerCase("en") === "epic");
+    if (requestToken !== state.roadmapRequestToken) return;
+    const epicsById = new Map(epics.map(epic => [Number(epic.id), epic]));
+    const cells = new Map();
+    const epicFeatureCounts = new Map();
+    let storyCount = 0;
+    storyRecords.forEach(({ story, iteration }) => {
+      const feature = featuresById.get(Number(story.parentId));
+      const epic = feature ? epicsById.get(Number(feature.parentId)) : null;
+      if (!feature || !epic) return;
+      storyCount++;
+      if (!epicFeatureCounts.has(epic.id)) epicFeatureCounts.set(epic.id, new Set());
+      epicFeatureCounts.get(epic.id).add(feature.id);
+      roadmapStoryLanes(story, feature).forEach(lane => {
+        const key = roadmapCellKey(epic.id, iteration.id, lane);
+        if (!cells.has(key)) cells.set(key, new Map());
+        const entries = cells.get(key);
+        if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [] });
+        entries.get(feature.id).stories.push(story);
+      });
+    });
+    const committedEpics = epics.filter(epic => epicFeatureCounts.has(epic.id))
+      .sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }));
+    state.roadmapData = {
+      iterations,
+      epics: committedEpics,
+      cells,
+      epicFeatureCounts,
+      featureCount: new Set([...epicFeatureCounts.values()].flatMap(values => [...values])).size,
+      storyCount
+    };
+    state.roadmapCacheKey = cacheKey;
+    state.roadmapError = "";
+    renderRoadmap();
+  } catch (error) {
+    if (requestToken !== state.roadmapRequestToken) return;
+    console.error(error);
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapError = error.message || "The roadmap could not be loaded.";
+    renderRoadmap();
+  }
+}
+
+function selectRoadmapPeriod(year, quarter) {
+  if (!Number.isInteger(year) || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) return;
+  state.roadmapYear = year;
+  state.roadmapQuarter = quarter;
+  if (!state.routeApplying) writeAppRoute(currentAppRoute({ view: "roadmap", year, quarter }), { replace: true });
+  loadRoadmap();
+}
+
+function selectCurrentRoadmapQuarter() {
+  const current = state.iterations.find(iteration => iteration.id === state.currentIterationId) || state.iteration;
+  const period = roadmapPeriodForIteration(current);
+  selectRoadmapPeriod(period.year, period.quarter);
+}
+
 function toggleSprintMenu() {
   if (!els.sprintMenu.hidden) return closeSprintMenu();
   if (!state.iterations.length || state.loading) return;
@@ -1718,6 +2117,7 @@ async function applySprintFilter() {
 const APP_ROUTE_PATHS = {
   board: "sprint-board",
   backlog: "backlog",
+  roadmap: "roadmap",
   "for-you": "for-you",
   wiki: "wiki",
   releases: "releases",
@@ -1738,6 +2138,8 @@ function parseAppRoute(hash = window.location.hash) {
     query: params.get("q") || "",
     itemId: Number.isInteger(itemId) && itemId > 0 ? itemId : null,
     sprint: params.get("sprint") || "",
+    year: Number(params.get("year")) || null,
+    quarter: Number(params.get("quarter")) || null,
     wikiId: params.get("wiki") || "",
     wikiPath: params.get("path") || ""
   };
@@ -1774,6 +2176,8 @@ function currentAppRoute(overrides = {}) {
     query: overrides.query !== undefined ? overrides.query : appQueryForView(view),
     itemId: overrides.itemId !== undefined ? overrides.itemId : state.selectedItemId,
     sprint: overrides.sprint !== undefined ? overrides.sprint : (view === "board" ? sprintRouteValue() : ""),
+    year: overrides.year !== undefined ? overrides.year : (view === "roadmap" ? state.roadmapYear : null),
+    quarter: overrides.quarter !== undefined ? overrides.quarter : (view === "roadmap" ? state.roadmapQuarter : null),
     wikiId: overrides.wikiId !== undefined ? overrides.wikiId : (view === "wiki" ? state.wikiId : ""),
     wikiPath: overrides.wikiPath !== undefined
       ? overrides.wikiPath
@@ -1785,6 +2189,8 @@ function appRouteHash(route) {
   const view = APP_ROUTE_PATHS[route.view] ? route.view : "board";
   const params = new URLSearchParams();
   if (view === "board" && route.sprint) params.set("sprint", route.sprint);
+  if (view === "roadmap" && route.year) params.set("year", String(route.year));
+  if (view === "roadmap" && route.quarter) params.set("quarter", String(route.quarter));
   if (route.query) params.set("q", route.query);
   if (view === "wiki" && route.wikiId) params.set("wiki", route.wikiId);
   if (view === "wiki" && route.wikiPath) params.set("path", route.wikiPath);
@@ -1804,6 +2210,10 @@ function primeAppRouteState(route) {
   if (route.view === "board") state.search = route.query;
   if (route.view === "board") state.routeSprint = route.sprint;
   if (route.view === "backlog") state.backlogSearch = route.query;
+  if (route.view === "roadmap") {
+    if (Number.isInteger(route.year) && route.year > 0) state.roadmapYear = route.year;
+    if (Number.isInteger(route.quarter) && route.quarter >= 1 && route.quarter <= 4) state.roadmapQuarter = route.quarter;
+  }
   if (route.view === "for-you") state.forYouSearch = route.query;
   if (route.view === "wiki") {
     state.wikiQuery = route.query;
@@ -1874,6 +2284,7 @@ async function applyInitialAppRoute() {
 
 async function restoreRoutedViewAfterBoardLoad() {
   if (!state.routeReady) return applyInitialAppRoute();
+  if (state.currentView === "roadmap") return showMainView("roadmap");
   if (state.currentView === "wiki") return showMainView("wiki");
   if (state.currentView === "search" && state.globalSearchQuery) return runGlobalSearch(state.globalSearchQuery);
   if (state.currentView === "search") return showMainView("search");
@@ -1883,12 +2294,14 @@ function applyMainViewVisibility(view) {
   const showForYou = view === "for-you";
   const showBacklog = view === "backlog";
   const showBoard = view === "board";
+  const showRoadmap = view === "roadmap";
   const showWiki = view === "wiki";
   const showReleases = view === "releases";
   const showSearch = view === "search";
-  els.listViews.forEach(element => { element.hidden = showForYou || showWiki || showReleases || showSearch; });
+  els.listViews.forEach(element => { element.hidden = showForYou || showRoadmap || showWiki || showReleases || showSearch; });
   els.boardViews.forEach(element => { element.hidden = !showBoard; });
   els.backlogViews.forEach(element => { element.hidden = !showBacklog; });
+  els.roadmapViews.forEach(element => { element.hidden = !showRoadmap; });
   els.forYouViews.forEach(element => { element.hidden = !showForYou; });
   els.wikiViews.forEach(element => { element.hidden = !showWiki; });
   els.releasesViews.forEach(element => { element.hidden = !showReleases; });
@@ -1896,20 +2309,24 @@ function applyMainViewVisibility(view) {
   els.forYouNav.classList.toggle("is-active", showForYou);
   els.sprintBoardNav.classList.toggle("is-active", showBoard);
   els.backlogNav.classList.toggle("is-active", showBacklog);
+  els.roadmapNav.classList.toggle("is-active", showRoadmap);
   els.wikiNav.classList.toggle("is-active", showWiki);
   els.releasesNav.classList.toggle("is-active", showReleases);
   els.forYouNav.toggleAttribute("aria-current", showForYou);
   els.sprintBoardNav.toggleAttribute("aria-current", showBoard);
   els.backlogNav.toggleAttribute("aria-current", showBacklog);
+  els.roadmapNav.toggleAttribute("aria-current", showRoadmap);
   els.wikiNav.toggleAttribute("aria-current", showWiki);
   els.releasesNav.toggleAttribute("aria-current", showReleases);
 }
 
 async function showMainView(view) {
+  if (view === "roadmap") ensureRoadmapPeriod();
   if (!state.routeApplying) writeAppRoute(currentAppRoute({ view, itemId: null }));
   const enteringForYou = view === "for-you" && state.currentView !== "for-you";
   const showForYou = view === "for-you";
   const showBacklog = view === "backlog";
+  const showRoadmap = view === "roadmap";
   const showWiki = view === "wiki";
   const showReleases = view === "releases";
   const showSearch = view === "search";
@@ -1927,6 +2344,10 @@ async function showMainView(view) {
   }
   if (showBacklog) {
     await loadBacklog();
+    return;
+  }
+  if (showRoadmap) {
+    await loadRoadmap();
     return;
   }
   if (showWiki) {
@@ -4173,6 +4594,8 @@ function syncBacklogWorkItem(itemId, result) {
   state.historyCache.delete(Number(itemId));
   state.historyErrors.delete(Number(itemId));
   state.iterationStoriesCache.clear();
+  state.roadmapData = null;
+  state.roadmapCacheKey = "";
 }
 
 function workItemNeedsSprintSplit(item) {
@@ -4360,6 +4783,8 @@ function addSplitCopyToState(result) {
     && !state.stories.some(item => Number(item.id) === Number(copy.id))) state.stories.push(copy);
   state.detailsCache.delete(copy.id);
   state.iterationStoriesCache.clear();
+  state.roadmapData = null;
+  state.roadmapCacheKey = "";
   return copy;
 }
 
@@ -5259,6 +5684,7 @@ function pruneFilters(items = activeFilterItems()) {
 function renderCurrentView() {
   if (state.currentView === "for-you") renderForYou();
   else if (state.currentView === "backlog") renderBacklog();
+  else if (state.currentView === "roadmap") renderRoadmap();
   else if (state.currentView === "search") renderGlobalSearch();
   else render();
 }
@@ -5467,6 +5893,8 @@ function removeDeletedWorkItem(itemId) {
   state.forYouActivity = state.forYouActivity.filter(entry => keep(entry.item));
   state.globalSearchResults = state.globalSearchResults.filter(keep);
   state.iterationStoriesCache.clear();
+  state.roadmapData = null;
+  state.roadmapCacheKey = "";
   state.detailsCache.delete(Number(itemId));
   state.detailsRequestTokens.delete(Number(itemId));
   state.commentsCache.delete(Number(itemId));
@@ -7951,6 +8379,9 @@ async function updateWorkItemField(item, field, value, label) {
     item.area = normalized.area;
     item.tags = normalized.tags;
     item.iterationPath = normalized.iterationPath;
+    state.iterationStoriesCache.clear();
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
     state.detailsCache.set(item.id, detail);
     state.historyCache.delete(item.id);
     state.historyErrors.delete(item.id);
@@ -9589,6 +10020,10 @@ function renderEmptyBoard() {
   state.backlogTeamId = "";
   state.backlogCollapsedEpics.clear();
   state.backlogCollapsedFeatures.clear();
+  state.roadmapData = null;
+  state.roadmapCacheKey = "";
+  state.roadmapError = "";
+  state.roadmapRequestToken++;
   state.wikis = [];
   state.wikiProjectName = "";
   state.wikiRoot = null;
@@ -9641,6 +10076,7 @@ function renderEmptyBoard() {
     els.backlogSidebarStatus.textContent = "Connect Azure DevOps to load epics and features.";
     els.backlogHierarchy.replaceChildren();
   }
+  if (state.currentView === "roadmap") renderRoadmap();
   if (state.currentView === "for-you") renderForYou();
   if (state.currentView === "wiki") {
     els.wikiTreeStatus.textContent = "Connect Azure DevOps to load the wiki.";
@@ -10114,6 +10550,11 @@ els.settingsForm.addEventListener("submit", async event => {
     state.backlogCollapsedFeatures.clear();
     state.backlogSelectedIds.clear();
     state.backlogSelectionAnchorId = null;
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapError = "";
+    state.roadmapYear = null;
+    state.roadmapQuarter = null;
     loadBoard();
   } else if (githubConfigChanged && state.currentView === "for-you") {
     state.githubPullRequestsKey = "";
@@ -10505,6 +10946,8 @@ els.globalSearchPageForm.addEventListener("submit", event => {
 });
 els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
+els.roadmapNav.addEventListener("click", () => showMainView("roadmap"));
+els.roadmapCurrentQuarter.addEventListener("click", selectCurrentRoadmapQuarter);
 els.wikiNav.addEventListener("click", () => showMainView("wiki"));
 els.releasesNav.addEventListener("click", () => showMainView("releases"));
 els.releasesRefresh.addEventListener("click", () => loadReleaseDebugPage(true));
@@ -10530,6 +10973,10 @@ els.backlogShowAllFeatures.addEventListener("click", () => {
 els.refresh.addEventListener("click", () => {
   if (state.currentView === "wiki") return loadWiki(true);
   if (state.currentView === "releases") return loadReleaseDebugPage(true);
+  if (state.currentView === "roadmap") {
+    state.iterationStoriesCache.clear();
+    return loadRoadmap(true);
+  }
   if (state.currentView === "search") return runGlobalSearch(state.globalSearchQuery);
   return loadBoard();
 });

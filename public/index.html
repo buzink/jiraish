@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261031-backlog-feature-hierarchy-v4" />
+    <link rel="stylesheet" href="styles.css?v=20261101-roadmap-committed-v2" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -28,6 +28,7 @@
         <button id="forYouNav" class="nav-item" type="button">For you</button>
         <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint board</button>
         <button id="backlogNav" class="nav-item" type="button">Backlog</button>
+        <button id="roadmapNav" class="nav-item" type="button"><span class="roadmap-nav-full">Roadmap</span><span class="roadmap-nav-short">Map</span></button>
         <button id="wikiNav" class="nav-item" type="button">Wiki</button>
         <button id="releasesNav" class="nav-item" type="button"><span class="releases-nav-full">Releases</span><span class="releases-nav-short">Rel.</span></button>
         <div id="createWorkItemControl" class="create-work-item-control">
@@ -251,6 +252,19 @@
           </aside>
           <div id="backlogContent" class="backlog-content"></div>
         </div>
+      </section>
+
+      <section id="roadmapView" class="roadmap-view" aria-labelledby="roadmapTitle" data-roadmap-view hidden>
+        <header class="page-heading roadmap-heading">
+          <div>
+            <div class="eyebrow" data-project-team>PROJECT</div>
+            <h1 id="roadmapTitle">Roadmap</h1>
+            <p id="roadmapMeta" class="sprint-meta">Committed Features are derived from Stories assigned to sprints.</p>
+          </div>
+          <button id="roadmapCurrentQuarter" class="secondary-button" type="button">Current quarter</button>
+        </header>
+        <div id="roadmapStatus" class="roadmap-status" aria-live="polite"></div>
+        <div id="roadmapContent" class="roadmap-content"></div>
       </section>
 
       <section id="wikiView" class="wiki-view" aria-label="Azure DevOps wiki" data-wiki-view hidden>
@@ -935,6 +949,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261031-backlog-feature-hierarchy-v4" defer></script>
+    <script src="app.js?v=20261101-roadmap-committed-v2" defer></script>
   </body>
 </html>
