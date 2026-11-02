@@ -740,6 +740,21 @@
       </div>
     </dialog>
 
+    <dialog id="boardStateDialog" class="dialog board-state-dialog" aria-labelledby="boardStateHeading">
+      <div class="board-state-dialog-body">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span id="boardStateKey">Work item</span><span aria-hidden="true">/</span><span id="boardStateColumn">Column</span></div>
+            <h2 id="boardStateHeading">Choose a status</h2>
+            <p id="boardStateTitle"></p>
+          </div>
+          <button class="close-button" type="button" data-close-board-state aria-label="Close">×</button>
+        </div>
+        <div id="boardStateChoices" class="board-state-choices" role="listbox" aria-label="Statuses in this column"></div>
+        <p id="boardStateError" class="form-error" role="alert"></p>
+      </div>
+    </dialog>
+
     <dialog id="workItemDialog" class="dialog work-item-dialog" aria-labelledby="workItemTitle" tabindex="-1">
       <div class="work-item-shell">
         <div id="workItemLoading" class="work-item-loading" aria-hidden="true"><span></span></div>
@@ -1000,6 +1015,8 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261102-work-item-view-sync-v1" defer></script>
+    <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
+
+    <script src="app.js?v=20261102-board-drag-v1" defer></script>
   </body>
 </html>

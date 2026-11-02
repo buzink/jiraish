@@ -258,6 +258,8 @@ const state = {
 };
 
 let remainingPointsRequest = null;
+let boardDrag = null;
+let pendingBoardStateMove = null;
 
 const FILTER_DEFINITIONS = [
   { key: "type", label: "Types", value: item => item.type },
@@ -460,6 +462,13 @@ const els = {
   boardGroupControl: document.querySelector("#boardGroupControl"),
   boardGroupLabel: document.querySelector("#boardGroupLabel"),
   boardGroupOptions: [...document.querySelectorAll("[data-board-group]")],
+  boardStateDialog: document.querySelector("#boardStateDialog"),
+  boardStateKey: document.querySelector("#boardStateKey"),
+  boardStateColumn: document.querySelector("#boardStateColumn"),
+  boardStateTitle: document.querySelector("#boardStateTitle"),
+  boardStateChoices: document.querySelector("#boardStateChoices"),
+  boardStateError: document.querySelector("#boardStateError"),
+  boardDragLiveRegion: document.querySelector("#boardDragLiveRegion"),
   filterPanelToggle: document.querySelector("#filterPanelToggle"),
   filterPanelBody: document.querySelector("#filterPanelBody"),
   filterControls: document.querySelector("#filterControls"),
@@ -6310,14 +6319,26 @@ function syncWorkItemAcrossViews(source) {
 }
 
 function createCard(item) {
-  const card = document.createElement("button");
-  card.type = "button";
+  const card = document.createElement("article");
   card.className = "story-card";
-  card.setAttribute("aria-label", `${item.type} ${item.id}: ${item.title}. View details`);
-  card.addEventListener("click", () => showWorkItem(item));
+  card.dataset.itemId = String(item.id);
+  card.dataset.column = state.mapping[item.state] || "";
+  const dragHandle = document.createElement("button");
+  dragHandle.type = "button";
+  dragHandle.className = "card-drag-handle";
+  dragHandle.innerHTML = '<span aria-hidden="true">⠿</span>';
+  dragHandle.setAttribute("aria-label", `Move ${workItemKey(item.id)}: ${item.title}`);
+  dragHandle.title = "Drag to move";
+  dragHandle.addEventListener("pointerdown", event => beginBoardPointerDrag(event, item, card, dragHandle));
+  dragHandle.addEventListener("keydown", event => handleBoardDragKeydown(event, item, card, dragHandle));
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "story-card-open";
+  openButton.setAttribute("aria-label", `${item.type} ${item.id}: ${item.title}. View details`);
+  openButton.addEventListener("click", () => showWorkItem(item));
   const initials = item.assignee ? item.assignee.split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase() : "?";
   const isBug = item.type.toLowerCase() === "bug";
-  card.innerHTML = `
+  openButton.innerHTML = `
     <div class="card-topline">
       <span class="work-type"><span class="type-icon ${isBug ? "bug" : ""}">${isBug ? "!" : "◆"}</span>${escapeHtml(item.type)}</span>
       <span class="card-state" data-state-tone="${stateTone(item.state)}">${escapeHtml(item.state)}</span>
@@ -6328,7 +6349,432 @@ function createCard(item) {
       ${item.points !== null ? `<span class="points" title="Story points">${escapeHtml(String(item.points))}</span>` : ""}
       <span class="assignee ${item.assignee ? "" : "unassigned"}" title="${escapeHtml(item.assignee || "Unassigned")}">${initials}</span>
     </div>`;
+  card.append(dragHandle, openButton);
   return card;
+}
+
+function boardColumnLabel(column) {
+  return { todo: "To do", active: "Doing", done: "Done" }[column] || column;
+}
+
+function mappedBoardStates(column) {
+  return [...state.knownStates]
+    .filter(itemState => state.mapping[itemState] === column)
+    .sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base", numeric: true }));
+}
+
+function announceBoardDrag(message) {
+  els.boardDragLiveRegion.textContent = "";
+  window.setTimeout(() => { els.boardDragLiveRegion.textContent = message; }, 20);
+}
+
+function boardDropGroup(container) {
+  return container?.closest?.(".board-item-group")?.dataset.boardGroupValue || "";
+}
+
+function boardDropContainerAt(pointTarget, column, item) {
+  const list = column.querySelector(".card-list");
+  if (!list) return null;
+  const group = pointTarget?.closest?.(".board-item-group");
+  if (!group || !column.contains(group)) return list;
+  if (["assignee", "priority"].includes(state.boardGroupBy) && group.dataset.boardGroupValue !== boardGroupValue(item)) {
+    return column.dataset.column === state.mapping[item.state] ? null : list;
+  }
+  return group.querySelector(".board-group-cards") || null;
+}
+
+function boardColumnAcceptsItem(column, item) {
+  const key = column?.dataset.column;
+  return Boolean(key && (key === state.mapping[item.state] || mappedBoardStates(key).length));
+}
+
+function createBoardPlaceholder(card, item, keyboard = false) {
+  const placeholder = document.createElement("div");
+  placeholder.className = `board-card-placeholder${keyboard ? " is-keyboard" : ""}`;
+  placeholder.style.height = `${Math.max(72, card.getBoundingClientRect().height)}px`;
+  if (keyboard) placeholder.textContent = item.title;
+  placeholder.setAttribute("aria-hidden", "true");
+  return placeholder;
+}
+
+function beginBoardPointerDrag(event, item, card, handle) {
+  if (event.button !== 0 || boardDrag || pendingBoardStateMove) return;
+  event.stopPropagation();
+  const isTouch = event.pointerType === "touch" || event.pointerType === "pen";
+  boardDrag = {
+    mode: "pointer", item, card, handle, pointerId: event.pointerId, isTouch,
+    startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY,
+    active: false, placeholder: null, ghost: null, targetColumn: null, targetContainer: null
+  };
+  if (isTouch) {
+    boardDrag.pressTimer = window.setTimeout(() => {
+      if (!boardDrag || boardDrag.pointerId !== event.pointerId) return;
+      activateBoardPointerDrag(boardDrag);
+      navigator.vibrate?.(12);
+    }, 400);
+  }
+  document.addEventListener("pointermove", moveBoardPointerDrag, { passive: false });
+  document.addEventListener("pointerup", endBoardPointerDrag);
+  document.addEventListener("pointercancel", cancelBoardPointerDrag);
+}
+
+function activateBoardPointerDrag(drag) {
+  if (!drag || drag.active) return;
+  drag.active = true;
+  window.clearTimeout(drag.pressTimer);
+  const rect = drag.card.getBoundingClientRect();
+  drag.placeholder = createBoardPlaceholder(drag.card, drag.item);
+  drag.card.before(drag.placeholder);
+  drag.card.classList.add("is-drag-source");
+  drag.ghost = drag.card.cloneNode(true);
+  drag.ghost.className = "story-card board-card-ghost";
+  drag.ghost.style.width = `${rect.width}px`;
+  drag.ghost.querySelectorAll("button").forEach(button => { button.tabIndex = -1; button.disabled = true; });
+  document.body.append(drag.ghost);
+  document.body.classList.add("is-dragging-board-card");
+  document.addEventListener("keydown", handleBoardPointerEscape);
+  document.querySelectorAll(".column[data-column]").forEach(column => {
+    column.classList.toggle("is-drop-available", boardColumnAcceptsItem(column, drag.item));
+  });
+  positionBoardGhost(drag);
+  updateBoardPointerTarget(drag);
+  announceBoardDrag(`${workItemKey(drag.item.id)} picked up. Move to a column and release.`);
+}
+
+function handleBoardPointerEscape(event) {
+  if (event.key !== "Escape" || boardDrag?.mode !== "pointer" || !boardDrag.active) return;
+  event.preventDefault();
+  cancelBoardDrag(true);
+}
+
+function positionBoardGhost(drag) {
+  if (drag.ghost) drag.ghost.style.transform = `translate3d(${drag.x + 14}px, ${drag.y + 14}px, 0)`;
+}
+
+function moveBoardPointerDrag(event) {
+  const drag = boardDrag;
+  if (!drag || drag.mode !== "pointer" || event.pointerId !== drag.pointerId) return;
+  drag.x = event.clientX;
+  drag.y = event.clientY;
+  const distance = Math.hypot(drag.x - drag.startX, drag.y - drag.startY);
+  if (!drag.active) {
+    if (drag.isTouch) {
+      if (distance > 8) cancelBoardDrag();
+      return;
+    }
+    if (distance < 6) return;
+    activateBoardPointerDrag(drag);
+  }
+  event.preventDefault();
+  positionBoardGhost(drag);
+  updateBoardPointerTarget(drag);
+}
+
+function updateBoardPointerTarget(drag) {
+  document.querySelectorAll(".column.is-drop-target, .column.is-drop-forbidden").forEach(column => {
+    column.classList.remove("is-drop-target", "is-drop-forbidden");
+  });
+  document.querySelectorAll(".card-list.is-drag-over, .board-group-cards.is-drag-over").forEach(list => list.classList.remove("is-drag-over"));
+  const pointTarget = document.elementFromPoint(drag.x, drag.y);
+  const column = pointTarget?.closest?.(".column[data-column]");
+  if (!column) {
+    drag.targetColumn = null;
+    drag.targetContainer = null;
+    drag.ghost?.classList.add("is-forbidden");
+    return;
+  }
+  const container = boardColumnAcceptsItem(column, drag.item) ? boardDropContainerAt(pointTarget, column, drag.item) : null;
+  if (!container) {
+    column.classList.add("is-drop-forbidden");
+    drag.targetColumn = null;
+    drag.targetContainer = null;
+    drag.ghost?.classList.add("is-forbidden");
+    return;
+  }
+  drag.ghost?.classList.remove("is-forbidden");
+  column.classList.add("is-drop-target");
+  container.classList.add("is-drag-over");
+  drag.targetColumn = column.dataset.column;
+  drag.targetContainer = container;
+  const cards = [...container.children].filter(node => node.classList?.contains("story-card") && node !== drag.card);
+  const before = cards.find(candidate => drag.y < candidate.getBoundingClientRect().top + candidate.getBoundingClientRect().height / 2);
+  container.insertBefore(drag.placeholder, before || null);
+}
+
+function endBoardPointerDrag(event) {
+  const drag = boardDrag;
+  if (!drag || drag.mode !== "pointer" || event.pointerId !== drag.pointerId) return;
+  if (!drag.active || !drag.targetColumn || !drag.targetContainer) return cancelBoardDrag();
+  finishBoardDrop(drag);
+}
+
+function cancelBoardPointerDrag(event) {
+  if (!boardDrag || boardDrag.mode !== "pointer" || event.pointerId !== boardDrag.pointerId) return;
+  cancelBoardDrag();
+}
+
+function boardDropPosition(drag) {
+  let nextCard = drag.placeholder?.nextElementSibling || null;
+  while (nextCard && (!nextCard.classList?.contains("story-card") || nextCard === drag.card)) nextCard = nextCard.nextElementSibling;
+  return {
+    column: drag.targetColumn,
+    group: boardDropGroup(drag.targetContainer),
+    beforeId: nextCard ? Number(nextCard.dataset.itemId) : null
+  };
+}
+
+function cleanupBoardDrag() {
+  if (!boardDrag) return null;
+  const drag = boardDrag;
+  window.clearTimeout(drag.pressTimer);
+  drag.placeholder?.remove();
+  drag.ghost?.remove();
+  drag.card?.classList.remove("is-drag-source", "is-keyboard-drag-source");
+  document.body.classList.remove("is-dragging-board-card");
+  document.querySelectorAll(".column, .card-list, .board-group-cards").forEach(node => {
+    node.classList.remove("is-drop-available", "is-drop-target", "is-drop-forbidden", "is-drag-over");
+  });
+  document.removeEventListener("pointermove", moveBoardPointerDrag);
+  document.removeEventListener("pointerup", endBoardPointerDrag);
+  document.removeEventListener("pointercancel", cancelBoardPointerDrag);
+  document.removeEventListener("keydown", handleActiveKeyboardBoardDrag);
+  document.removeEventListener("keydown", handleBoardPointerEscape);
+  boardDrag = null;
+  return drag;
+}
+
+function cancelBoardDrag(announce = false) {
+  const drag = cleanupBoardDrag();
+  if (!drag) return;
+  if (announce) announceBoardDrag(`Move cancelled. ${workItemKey(drag.item.id)} stayed in ${boardColumnLabel(state.mapping[drag.item.state])}.`);
+  requestAnimationFrame(() => document.querySelector(`.story-card[data-item-id="${drag.item.id}"] .card-drag-handle`)?.focus());
+}
+
+function finishBoardDrop(drag) {
+  const position = boardDropPosition(drag);
+  const sourceColumn = state.mapping[drag.item.state];
+  const stateGroupChanged = state.boardGroupBy === "state" && position.group && position.group !== drag.item.state;
+  const item = drag.item;
+  cleanupBoardDrag();
+  if (position.column !== sourceColumn || stateGroupChanged) {
+    openBoardStateDialog(item, position);
+  } else {
+    reorderBoardItem(item, position);
+    render();
+    focusMovedBoardCard(item, position.column);
+  }
+}
+
+function reorderBoardItem(item, position) {
+  const currentIndex = state.stories.findIndex(story => Number(story.id) === Number(item.id));
+  if (currentIndex < 0) return;
+  state.stories.splice(currentIndex, 1);
+  const actualGroup = state.boardGroupBy === "none" ? "" : boardGroupValue(item);
+  const beforeStory = position.beforeId == null
+    ? null
+    : state.stories.find(story => Number(story.id) === Number(position.beforeId));
+  let insertAt = beforeStory
+    && state.mapping[beforeStory.state] === position.column
+    && (state.boardGroupBy === "none" || boardGroupValue(beforeStory) === actualGroup)
+    ? state.stories.indexOf(beforeStory)
+    : -1;
+  if (insertAt < 0) {
+    const matchingIndexes = state.stories
+      .map((story, index) => ({ story, index }))
+      .filter(entry => state.mapping[entry.story.state] === position.column
+        && (state.boardGroupBy === "none" || boardGroupValue(entry.story) === actualGroup))
+      .map(entry => entry.index);
+    insertAt = matchingIndexes.length ? matchingIndexes.at(-1) + 1 : state.stories.length;
+  }
+  state.stories.splice(insertAt, 0, item);
+}
+
+function movedCardPosition(item) {
+  const card = document.querySelector(`.story-card[data-item-id="${item.id}"]`);
+  if (!card) return 1;
+  const container = card.parentElement;
+  return [...container.children].filter(node => node.classList?.contains("story-card")).indexOf(card) + 1;
+}
+
+function focusMovedBoardCard(item, column) {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const handle = document.querySelector(`.story-card[data-item-id="${item.id}"] .card-drag-handle`);
+    handle?.focus();
+    announceBoardDrag(`Issue moved to ${boardColumnLabel(column)}, position ${movedCardPosition(item)}.`);
+  }));
+}
+
+function boardContainerForKeyboard(column, item) {
+  const list = column.querySelector(".card-list");
+  if (!list?.classList.contains("is-grouped")) return list;
+  const matchingGroup = [...list.querySelectorAll(".board-item-group")]
+    .find(group => group.dataset.boardGroupValue === boardGroupValue(item));
+  return matchingGroup?.querySelector(".board-group-cards")
+    || (["assignee", "priority"].includes(state.boardGroupBy) ? list : null)
+    || list.querySelector(".board-group-cards")
+    || list;
+}
+
+function handleBoardDragKeydown(event, item, card, handle) {
+  if (![' ', 'Enter'].includes(event.key) || boardDrag || pendingBoardStateMove) return;
+  event.preventDefault();
+  event.stopPropagation();
+  boardDrag = {
+    mode: "keyboard", item, card, handle, active: true,
+    targetColumn: state.mapping[item.state], targetContainer: card.parentElement,
+    placeholder: createBoardPlaceholder(card, item, true), ghost: null
+  };
+  card.after(boardDrag.placeholder);
+  card.classList.add("is-keyboard-drag-source");
+  document.body.classList.add("is-dragging-board-card");
+  document.querySelectorAll(".column[data-column]").forEach(column => {
+    column.classList.toggle("is-drop-available", boardColumnAcceptsItem(column, item));
+  });
+  card.closest(".column")?.classList.add("is-drop-target");
+  document.addEventListener("keydown", handleActiveKeyboardBoardDrag);
+  announceBoardDrag(`${workItemKey(item.id)} picked up. Use arrow keys to move, Enter to confirm, or Escape to cancel.`);
+}
+
+function handleActiveKeyboardBoardDrag(event) {
+  const drag = boardDrag;
+  if (!drag || drag.mode !== "keyboard") return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    cancelBoardDrag(true);
+    return;
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    finishBoardDrop(drag);
+    return;
+  }
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+  event.preventDefault();
+  if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+    const columns = [...document.querySelectorAll(".column[data-column]")];
+    const currentIndex = columns.findIndex(column => column.dataset.column === drag.targetColumn);
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    let nextIndex = currentIndex + direction;
+    while (columns[nextIndex] && !boardColumnAcceptsItem(columns[nextIndex], drag.item)) nextIndex += direction;
+    const column = columns[nextIndex];
+    if (!column) return;
+    const container = boardContainerForKeyboard(column, drag.item);
+    if (!container) return;
+    drag.targetColumn = column.dataset.column;
+    drag.targetContainer = container;
+    container.append(drag.placeholder);
+  } else {
+    const siblings = [...drag.targetContainer.children];
+    const placeholderIndex = siblings.indexOf(drag.placeholder);
+    if (event.key === "ArrowUp") {
+      const previous = [...siblings.slice(0, placeholderIndex)].reverse().find(node => node.classList?.contains("story-card") && node !== drag.card);
+      if (previous) drag.targetContainer.insertBefore(drag.placeholder, previous);
+    } else {
+      const next = siblings.slice(placeholderIndex + 1).find(node => node.classList?.contains("story-card") && node !== drag.card);
+      if (next) drag.targetContainer.insertBefore(drag.placeholder, next.nextSibling);
+    }
+  }
+  document.querySelectorAll(".column.is-drop-target").forEach(column => column.classList.remove("is-drop-target"));
+  document.querySelector(`.column[data-column="${drag.targetColumn}"]`)?.classList.add("is-drop-target");
+  const position = boardDropPosition(drag);
+  announceBoardDrag(`${boardColumnLabel(drag.targetColumn)}, ${position.beforeId ? "before the next issue" : "at the end"}.`);
+}
+
+async function workItemTypeStates(type) {
+  let pending = state.workItemTypeStatesCache.get(type);
+  if (!pending) {
+    pending = azure(`/_apis/wit/workitemtypes/${encodeURIComponent(type)}/states?api-version=7.1`)
+      .then(result => result.value || []);
+    state.workItemTypeStatesCache.set(type, pending);
+    pending.catch(() => state.workItemTypeStatesCache.delete(type));
+  }
+  return pending;
+}
+
+async function openBoardStateDialog(item, position) {
+  pendingBoardStateMove = { item, position };
+  els.boardStateKey.textContent = workItemKey(item.id);
+  els.boardStateColumn.textContent = boardColumnLabel(position.column);
+  els.boardStateTitle.textContent = item.title;
+  els.boardStateError.textContent = "";
+  const loading = document.createElement("div");
+  loading.className = "board-state-message";
+  loading.textContent = "Loading statuses…";
+  els.boardStateChoices.replaceChildren(loading);
+  els.boardStateDialog.showModal();
+  try {
+    const options = await workItemTypeStates(item.type);
+    if (pendingBoardStateMove?.item !== item) return;
+    const allowedNames = new Set(mappedBoardStates(position.column));
+    const choices = options.filter(option => allowedNames.has(option.name));
+    if (!choices.length) {
+      els.boardStateChoices.replaceChildren();
+      els.boardStateError.textContent = `No ${item.type} statuses are connected to ${boardColumnLabel(position.column)}.`;
+      return;
+    }
+    els.boardStateChoices.replaceChildren(...choices.map(option => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "board-state-choice";
+      button.setAttribute("role", "option");
+      const dot = document.createElement("span");
+      dot.className = "issue-state-dot";
+      dot.style.backgroundColor = /^[0-9a-f]{6}$/i.test(option.color || "") ? `#${option.color}` : "#6b778c";
+      const label = document.createElement("span");
+      label.textContent = option.name;
+      button.append(dot, label);
+      button.addEventListener("click", () => moveBoardItemToState(item, option.name, position));
+      return button;
+    }));
+    els.boardStateChoices.querySelector("button")?.focus();
+  } catch (error) {
+    console.error(error);
+    els.boardStateChoices.replaceChildren();
+    els.boardStateError.textContent = error.message || "Statuses could not be loaded.";
+  }
+}
+
+function closeBoardStateDialog() {
+  pendingBoardStateMove = null;
+  if (els.boardStateDialog.open) els.boardStateDialog.close();
+}
+
+async function moveBoardItemToState(item, nextState, position) {
+  if (!pendingBoardStateMove || pendingBoardStateMove.item !== item) return;
+  els.boardStateError.textContent = "";
+  els.boardStateChoices.querySelectorAll("button").forEach(button => { button.disabled = true; });
+  try {
+    const result = await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: "/fields/System.State", value: nextState }])
+    });
+    const fields = result.fields || {};
+    item.state = fields["System.State"] || nextState;
+    item.changedDate = fields["System.ChangedDate"] || item.changedDate;
+    state.knownStates.add(item.state);
+    if (!state.mapping[item.state]) addSmartMappings();
+    const detail = state.detailsCache.get(item.id);
+    if (detail) {
+      detail.state = item.state;
+      detail.reason = fields["System.Reason"] || detail.reason;
+      detail.changedDate = item.changedDate;
+    }
+    syncWorkItemAcrossViews(item);
+    state.historyCache.delete(item.id);
+    state.historyErrors.delete(item.id);
+    reorderBoardItem(item, position);
+    pruneFilters();
+    closeBoardStateDialog();
+    render();
+    focusMovedBoardCard(item, position.column);
+  } catch (error) {
+    console.error(error);
+    els.boardStateError.textContent = error.auth
+      ? "The status could not be changed. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The status could not be changed.";
+    els.boardStateChoices.querySelectorAll("button").forEach(button => { button.disabled = false; });
+  }
 }
 
 function workItemTitleHasUnsavedChanges() {
@@ -12009,6 +12455,14 @@ els.boardGroupOptions.forEach(option => option.addEventListener("click", () => {
   els.boardGroupControl.open = false;
   render();
 }));
+document.querySelector("[data-close-board-state]").addEventListener("click", closeBoardStateDialog);
+els.boardStateDialog.addEventListener("close", () => {
+  const cancelledMove = pendingBoardStateMove;
+  pendingBoardStateMove = null;
+  if (!cancelledMove) return;
+  announceBoardDrag(`Move cancelled. ${workItemKey(cancelledMove.item.id)} was not changed.`);
+  requestAnimationFrame(() => document.querySelector(`.story-card[data-item-id="${cancelledMove.item.id}"] .card-drag-handle`)?.focus());
+});
 els.clearFilters.addEventListener("click", async () => {
   const hadSprintFilter = Boolean(state.filters.sprint.size);
   Object.values(state.filters).forEach(values => values.clear());
