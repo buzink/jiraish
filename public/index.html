@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261102-mobile-header-v1" />
+    <link rel="stylesheet" href="styles.css?v=20261102-work-item-refresh-v1" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -759,6 +759,9 @@
             </form>
           </div>
           <div class="work-item-header-actions">
+            <button id="workItemRefresh" class="work-item-header-icon" type="button" aria-label="Refresh work item" title="Refresh work item">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"></path></svg>
+            </button>
             <details id="workItemActions" class="work-item-actions">
               <summary aria-label="More work item actions" title="More actions">•••</summary>
               <div class="work-item-actions-menu" role="menu">
@@ -846,7 +849,12 @@
               <div class="section-heading-row work-item-attachments-heading">
                 <h3 id="workItemAttachmentsHeading">Attachments</h3>
                 <span id="workItemAttachmentCount" class="comment-count">0</span>
+                <button id="workItemAttachmentAdd" class="work-item-attachment-add" type="button" aria-label="Add attachment" title="Add attachment">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                </button>
+                <input id="workItemAttachmentInput" class="sr-only" type="file" multiple tabindex="-1" aria-hidden="true">
               </div>
+              <div id="workItemAttachmentsStatus" class="work-item-attachments-status" role="status" aria-live="polite"></div>
               <div id="workItemAttachments" class="work-item-attachment-list"></div>
             </section>
 
@@ -992,6 +1000,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261102-mobile-header-v1" defer></script>
+    <script src="app.js?v=20261102-work-item-view-sync-v1" defer></script>
   </body>
 </html>

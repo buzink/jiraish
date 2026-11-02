@@ -216,6 +216,11 @@ const state = {
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
   commentsRequestTokens: new Map(),
+  editingCommentId: null,
+  uploadingAttachments: false,
+  deletingAttachmentId: null,
+  attachmentPickerOpen: false,
+  attachmentPickerToken: 0,
   historyCache: new Map(),
   githubWorkItemPullRequestsCache: new Map(),
   githubWorkItemPullRequestsErrors: new Map(),
@@ -529,6 +534,7 @@ const els = {
   remainingPointsError: document.querySelector("#remainingPointsError"),
   remainingPointsSubmit: document.querySelector("#remainingPointsSubmit"),
   workItemDialog: document.querySelector("#workItemDialog"),
+  workItemRefresh: document.querySelector("#workItemRefresh"),
   workItemActions: document.querySelector("#workItemActions"),
   deleteWorkItem: document.querySelector("#deleteWorkItem"),
   workItemLoading: document.querySelector("#workItemLoading"),
@@ -613,6 +619,9 @@ const els = {
   workItemReleaseCount: document.querySelector("#workItemReleaseCount"),
   workItemAttachmentsSection: document.querySelector("#workItemAttachmentsSection"),
   workItemAttachmentCount: document.querySelector("#workItemAttachmentCount"),
+  workItemAttachmentAdd: document.querySelector("#workItemAttachmentAdd"),
+  workItemAttachmentInput: document.querySelector("#workItemAttachmentInput"),
+  workItemAttachmentsStatus: document.querySelector("#workItemAttachmentsStatus"),
   workItemAttachments: document.querySelector("#workItemAttachments"),
   workItemSubtasksSection: document.querySelector("#workItemSubtasksSection"),
   workItemSubtasksProgress: document.querySelector("#workItemSubtasksProgress"),
@@ -6253,7 +6262,51 @@ function renderCurrentView() {
   else if (state.currentView === "backlog") renderBacklog();
   else if (state.currentView === "roadmap") renderRoadmap();
   else if (state.currentView === "search") renderGlobalSearch();
+  else if (state.currentView === "releases") renderReleaseDebugPage();
+  else if (state.currentView === "wiki") renderWikiTree();
   else render();
+}
+
+function syncWorkItemAcrossViews(source) {
+  if (!source?.id) return;
+  const fields = [
+    "title", "state", "type", "assignee", "assigneeUniqueName", "assigneeId", "priority",
+    "iterationPath", "iterationName", "area", "tags", "points", "pointsField", "changedDate"
+  ];
+  const roadmapItems = state.roadmapData ? [
+    ...(state.roadmapData.epics || []),
+    ...(state.roadmapData.availableEpics || []),
+    ...[...(state.roadmapData.featuresByEpic?.values() || [])].flat(),
+    ...[...(state.roadmapData.cells?.values() || [])].flatMap(entries =>
+      [...entries.values()].flatMap(entry => [entry.feature, ...(entry.stories || [])]))
+  ] : [];
+  const readinessItems = [
+    ...(state.releaseReadiness.development || []),
+    ...(state.releaseReadiness.acceptance || [])
+  ].flatMap(group => group.items || []);
+  const items = [
+    ...state.stories,
+    ...state.backlogItems,
+    ...state.backlogEpics,
+    ...state.backlogFeatures,
+    ...state.forYouCustomItems,
+    ...state.forYouWorkItems,
+    ...state.forYouCreated,
+    ...state.forYouUpdated,
+    ...state.forYouCompleted,
+    ...state.forYouMentions.map(entry => entry.item),
+    ...state.forYouActivity.map(entry => entry.item),
+    ...state.globalSearchResults,
+    ...state.roadmapPortfolioFeatures,
+    ...state.roadmapPortfolioEpics,
+    ...roadmapItems,
+    ...readinessItems
+  ].filter(item => item && Number(item.id) === Number(source.id));
+  items.forEach(item => {
+    fields.forEach(field => {
+      if (Object.hasOwn(source, field)) item[field] = Array.isArray(source[field]) ? [...source[field]] : source[field];
+    });
+  });
 }
 
 function createCard(item) {
@@ -6292,6 +6345,11 @@ function descriptionHasUnsavedChanges() {
 function commentHasUnsavedChanges() {
   if (els.commentComposerForm.hidden) return false;
   const html = richEditorHtml(els.commentComposerInput);
+  if (state.editingCommentId !== null) {
+    const item = selectedWorkItem();
+    const comment = (state.commentsCache.get(item?.id) || []).find(entry => entry.id === state.editingCommentId);
+    return sanitizedRichHtmlString(html) !== sanitizedRichHtmlString(comment?.html || "");
+  }
   return Boolean(htmlToText(html).trim() || /<img\b/i.test(html));
 }
 
@@ -6308,6 +6366,8 @@ function workItemHasUnsavedChanges() {
     || descriptionHasUnsavedChanges()
     || commentHasUnsavedChanges()
     || pointsHaveUnsavedChanges()
+    || state.uploadingAttachments
+    || state.deletingAttachmentId !== null
     || state.pendingWorkItemWrites > 0
   );
 }
@@ -6330,6 +6390,10 @@ function confirmDiscardChanges(message = "You have unsaved changes. Discard them
 
 function requestCloseWorkItemDialog() {
   if (!els.workItemDialog.open) return true;
+  if (state.uploadingAttachments || state.deletingAttachmentId !== null) {
+    els.workItemAttachmentsStatus.textContent = "Wait for the attachment change to finish.";
+    return false;
+  }
   if (workItemHasUnsavedChanges() && !confirmDiscardChanges()) return false;
   els.workItemDialog.close();
   return true;
@@ -6365,6 +6429,10 @@ function discardCommentComposer() {
 }
 
 async function showWorkItem(item) {
+  if (els.workItemDialog.open && (state.uploadingAttachments || state.deletingAttachmentId !== null)) {
+    els.workItemAttachmentsStatus.textContent = "Wait for the attachment change to finish.";
+    return;
+  }
   if (els.workItemDialog.open && workItemHasUnsavedChanges() && !confirmDiscardChanges(
     `Discard your unsaved changes and open ${workItemKey(item.id)}?`
   )) return;
@@ -6420,6 +6488,71 @@ async function showWorkItem(item) {
   }
   if (hasCachedDetail) {
     syncWorkItemDeployments(item, cachedDetail.deploymentReferences || []);
+  }
+}
+
+async function refreshSelectedWorkItem() {
+  const item = selectedWorkItem();
+  if (!item || els.workItemRefresh.disabled) return;
+  if (state.uploadingAttachments || state.deletingAttachmentId !== null || state.pendingWorkItemWrites > 0) {
+    els.workItemLoadStatus.textContent = "Wait for the current work-item change to finish.";
+    return;
+  }
+  if (workItemHasUnsavedChanges() && !confirmDiscardChanges("Discard your unsaved changes and refresh this work item?")) return;
+
+  resetWorkItemTitleEditor();
+  resetDescriptionEditor();
+  resetCommentComposer();
+  closeWorkItemStateMenu();
+  closeWorkItemAssigneeMenu();
+  closeWorkItemTagsMenu();
+  closeWorkItemDetailFieldMenus();
+  const itemId = item.id;
+  state.detailsCache.delete(itemId);
+  state.commentsCache.delete(itemId);
+  state.commentsErrors.delete(itemId);
+  state.historyCache.delete(itemId);
+  state.historyErrors.delete(itemId);
+  state.githubWorkItemPullRequestsCache.delete(itemId);
+  state.githubWorkItemPullRequestsErrors.delete(itemId);
+  state.githubWorkItemPullRequestsRequestTokens.set(itemId, (state.githubWorkItemPullRequestsRequestTokens.get(itemId) || 0) + 1);
+  state.workItemDeploymentsCache.delete(itemId);
+  state.workItemDeploymentsErrors.delete(itemId);
+  state.workItemDeploymentsRequestTokens.set(itemId, (state.workItemDeploymentsRequestTokens.get(itemId) || 0) + 1);
+  state.workItemDeploymentSourceKeys.delete(itemId);
+  state.workItemYamlReferencesCache.delete(itemId);
+  state.workItemYamlDiscoveryErrors.delete(itemId);
+  state.workItemYamlDiscoveryRequestTokens.delete(itemId);
+
+  els.workItemRefresh.disabled = true;
+  els.workItemRefresh.classList.add("is-spinning");
+  els.workItemLoadStatus.textContent = "Refreshing work item…";
+  els.workItemLoadStatus.classList.remove("is-error");
+  renderWorkItemDetail(item, null, true);
+  renderComments([], true);
+  renderHistory([], true);
+  renderWorkItemPullRequests([], Boolean(state.githubToken));
+  renderWorkItemDeployments([], true);
+  renderCombinedActivity();
+
+  try {
+    await Promise.allSettled([
+      loadWorkItemDetail(item),
+      loadWorkItemComments(item),
+      loadWorkItemHistory(item),
+      state.githubToken ? loadWorkItemPullRequests(item) : Promise.resolve()
+    ]);
+    if (isSelectedWorkItem(itemId)) {
+      const refreshFailed = !state.detailsCache.has(itemId)
+        || state.commentsErrors.has(itemId)
+        || state.historyErrors.has(itemId)
+        || (Boolean(state.githubToken) && state.githubWorkItemPullRequestsErrors.has(itemId));
+      els.workItemLoadStatus.textContent = refreshFailed ? "Work item refresh finished with errors." : "Work item refreshed.";
+      els.workItemLoadStatus.classList.toggle("is-error", refreshFailed);
+    }
+  } finally {
+    els.workItemRefresh.disabled = false;
+    els.workItemRefresh.classList.remove("is-spinning");
   }
 }
 
@@ -6515,15 +6648,16 @@ async function loadWorkItemDetail(item) {
   state.detailsRequestTokens.set(item.id, requestToken);
   try {
     const result = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
+    const refreshedItem = normalizeWorkItem(result);
     const detail = normalizeWorkItemDetail(result);
-    detail.parentId ||= item.parentId || null;
+    detail.parentId ||= refreshedItem.parentId || null;
     if (detail.parentId) {
       try {
         const [parent] = await fetchWorkItems([detail.parentId]);
         detail.parent = parent || null;
         if (parent) {
-          item.parentId = parent.id;
-          item.featureLabel = `${parent.title} (#${parent.id})`;
+          refreshedItem.parentId = parent.id;
+          refreshedItem.featureLabel = `${parent.title} (#${parent.id})`;
         }
       } catch (error) {
         console.error("Parent work item could not be loaded.", error);
@@ -6560,6 +6694,7 @@ async function loadWorkItemDetail(item) {
       }
     }
     if (state.detailsRequestTokens.get(item.id) !== requestToken) return;
+    Object.assign(item, refreshedItem);
     state.detailsCache.set(item.id, detail);
     if (isSelectedWorkItem(item.id)) renderWorkItemDetail(item, detail, false);
     syncWorkItemDeployments(item, detail.deploymentReferences);
@@ -7790,27 +7925,28 @@ function isSelectedWorkItem(itemId) {
 function normalizeWorkItemAttachments(item) {
   if (!Array.isArray(item.relations)) return state.detailsCache.get(item.id)?.attachments || [];
   return item.relations.filter(relation => relation.rel === "AttachedFile").map(relation => {
-    const attributes = relation.attributes || {};
-    let url = "";
-    let fallbackName = "";
-    try {
-      const attachmentUrl = new URL(relation.url);
-      fallbackName = attachmentUrl.searchParams.get("fileName") || "";
-      if (!attachmentUrl.searchParams.has("api-version")) attachmentUrl.searchParams.set("api-version", "7.1");
-      if (!attachmentUrl.searchParams.has("fileName") && attributes.name) attachmentUrl.searchParams.set("fileName", attributes.name);
-      attachmentUrl.searchParams.set("download", "true");
-      url = isConfiguredAzureUrl(attachmentUrl.href) ? attachmentUrl.href : "";
-    } catch {}
-    const name = String(attributes.name || fallbackName || "Attachment");
-    return {
-      id: String(attributes.id || relation.url || name),
-      name,
-      url,
-      size: Number(attributes.resourceSize) || 0,
-      createdDate: attributes.resourceCreatedDate || attributes.authorizedDate || "",
-      comment: String(attributes.comment || "")
-    };
-  }).filter(attachment => attachment.url);
+      const attributes = relation.attributes || {};
+      let url = "";
+      let fallbackName = "";
+      try {
+        const attachmentUrl = new URL(relation.url);
+        fallbackName = attachmentUrl.searchParams.get("fileName") || "";
+        if (!attachmentUrl.searchParams.has("api-version")) attachmentUrl.searchParams.set("api-version", "7.1");
+        if (!attachmentUrl.searchParams.has("fileName") && attributes.name) attachmentUrl.searchParams.set("fileName", attributes.name);
+        attachmentUrl.searchParams.set("download", "true");
+        url = isConfiguredAzureUrl(attachmentUrl.href) ? attachmentUrl.href : "";
+      } catch {}
+      const name = String(attributes.name || fallbackName || "Attachment");
+      return {
+        id: String(attributes.id || relation.url || name),
+        relationUrl: String(relation.url || ""),
+        name,
+        url,
+        size: Number(attributes.resourceSize) || 0,
+        createdDate: attributes.resourceCreatedDate || attributes.authorizedDate || "",
+        comment: String(attributes.comment || "")
+      };
+    }).filter(attachment => attachment.url);
 }
 
 function normalizeWorkItemChildIds(item) {
@@ -7950,6 +8086,17 @@ function normalizeComment(comment) {
   };
 }
 
+function isOwnComment(comment) {
+  const user = state.authenticatedUser;
+  if (!comment || !user) return false;
+  const normalize = value => String(value || "").trim().toLocaleLowerCase("en");
+  if (comment.authorId && user.id) return normalize(comment.authorId) === normalize(user.id);
+  if (comment.authorUniqueName && user.uniqueName) {
+    return normalize(comment.authorUniqueName) === normalize(user.uniqueName);
+  }
+  return Boolean(comment.author && user.displayName && normalize(comment.author) === normalize(user.displayName));
+}
+
 function normalizeHistory(result) {
   return (result.value || []).map(normalizeHistoryUpdate)
     .filter(entry => entry.created || entry.changes.length)
@@ -8027,13 +8174,26 @@ function isUserStoryWorkItem(item) {
   return isStoryCreateType(item?.type);
 }
 
-function renderWorkItemAttachments(attachments = []) {
-  els.workItemAttachmentsSection.hidden = !attachments.length;
+function renderWorkItemAttachments(attachments = [], loading = false) {
+  els.workItemAttachmentsSection.hidden = false;
   els.workItemAttachmentCount.textContent = String(attachments.length);
-  if (!attachments.length) return els.workItemAttachments.replaceChildren();
+  const changingAttachment = state.uploadingAttachments || state.deletingAttachmentId !== null;
+  els.workItemAttachmentAdd.disabled = loading || changingAttachment;
+  if (!changingAttachment) {
+    els.workItemAttachmentsStatus.textContent = "";
+    els.workItemAttachmentsStatus.classList.remove("is-error");
+  }
+  if (!attachments.length) {
+    const empty = document.createElement("p");
+    empty.className = "work-item-attachments-empty";
+    empty.textContent = loading ? "Loading attachments…" : "No attachments yet.";
+    return els.workItemAttachments.replaceChildren(empty);
+  }
   els.workItemAttachments.replaceChildren(...attachments.map(attachment => {
+    const card = document.createElement("div");
+    card.className = "work-item-attachment";
     const link = document.createElement("a");
-    link.className = "work-item-attachment";
+    link.className = "work-item-attachment-link";
     link.href = attachment.url;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
@@ -8059,8 +8219,115 @@ function renderWorkItemAttachments(attachments = []) {
     external.textContent = "↗";
     external.setAttribute("aria-hidden", "true");
     link.append(icon, body, external);
-    return link;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "work-item-attachment-remove";
+    remove.textContent = "×";
+    remove.title = `Remove ${attachment.name}`;
+    remove.setAttribute("aria-label", `Remove attachment ${attachment.name}`);
+    remove.disabled = changingAttachment;
+    remove.addEventListener("click", () => removeWorkItemAttachment(attachment));
+    card.append(link, remove);
+    return card;
   }));
+}
+
+async function removeWorkItemAttachment(attachment) {
+  const item = selectedWorkItem();
+  if (!item || state.uploadingAttachments || state.deletingAttachmentId !== null) return;
+  if (!window.confirm(`Remove “${attachment.name}” from ${workItemKey(item.id)}?\n\nThis cannot be undone.`)) return;
+  state.deletingAttachmentId = attachment.id;
+  els.workItemAttachmentAdd.disabled = true;
+  els.workItemAttachments.querySelectorAll(".work-item-attachment-remove").forEach(button => { button.disabled = true; });
+  els.workItemAttachmentsStatus.textContent = `Removing ${attachment.name}…`;
+  els.workItemAttachmentsStatus.classList.remove("is-error");
+  try {
+    const latest = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
+    const relationIndex = (latest.relations || []).findIndex(relation =>
+      relation.rel === "AttachedFile" && String(relation.url || "") === attachment.relationUrl);
+    if (relationIndex < 0) throw new Error("This attachment is no longer linked to the work item.");
+    await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([
+        { op: "test", path: "/rev", value: latest.rev },
+        { op: "remove", path: `/relations/${relationIndex}` }
+      ])
+    });
+    state.detailsCache.delete(item.id);
+    await loadWorkItemDetail(item);
+    if (isSelectedWorkItem(item.id)) {
+      els.workItemAttachmentsStatus.textContent = `${attachment.name} removed.`;
+      els.workItemLoadStatus.textContent = "Attachment removed.";
+      els.workItemLoadStatus.classList.remove("is-error");
+    }
+  } catch (error) {
+    console.error(error);
+    if (isSelectedWorkItem(item.id)) {
+      els.workItemAttachmentsStatus.textContent = error.auth
+        ? "The attachment could not be removed. The PAT requires ‘Work Items: Read & write’."
+        : error.message || "The attachment could not be removed.";
+      els.workItemAttachmentsStatus.classList.add("is-error");
+    }
+  } finally {
+    state.deletingAttachmentId = null;
+    if (isSelectedWorkItem(item.id)) {
+      els.workItemAttachmentAdd.disabled = false;
+      els.workItemAttachments.querySelectorAll(".work-item-attachment-remove").forEach(button => { button.disabled = false; });
+    }
+  }
+}
+
+async function uploadWorkItemAttachments(event) {
+  const files = [...(event.target.files || [])];
+  state.attachmentPickerOpen = false;
+  event.target.value = "";
+  const item = selectedWorkItem();
+  if (!item || !files.length || state.uploadingAttachments || state.deletingAttachmentId !== null) return;
+  state.uploadingAttachments = true;
+  els.workItemAttachmentAdd.disabled = true;
+  els.workItemAttachmentsStatus.classList.remove("is-error");
+  try {
+    const uploaded = [];
+    for (const [index, file] of files.entries()) {
+      els.workItemAttachmentsStatus.textContent = `Uploading ${index + 1} of ${files.length}: ${file.name}…`;
+      const attachment = await azure(`/_apis/wit/attachments?fileName=${encodeURIComponent(file.name)}&uploadType=Simple&api-version=7.1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: file
+      });
+      if (!attachment?.url) throw new Error(`Azure DevOps did not return an attachment URL for ${file.name}.`);
+      uploaded.push(attachment);
+    }
+    els.workItemAttachmentsStatus.textContent = `Adding ${files.length === 1 ? "attachment" : "attachments"} to ${workItemKey(item.id)}…`;
+    await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify(uploaded.map(attachment => ({
+        op: "add",
+        path: "/relations/-",
+        value: { rel: "AttachedFile", url: attachment.url, attributes: { comment: "" } }
+      })))
+    });
+    state.detailsCache.delete(item.id);
+    await loadWorkItemDetail(item);
+    if (isSelectedWorkItem(item.id)) {
+      els.workItemAttachmentsStatus.textContent = `${files.length} ${files.length === 1 ? "attachment" : "attachments"} added.`;
+      els.workItemLoadStatus.textContent = `${files.length === 1 ? files[0].name : `${files.length} attachments`} uploaded.`;
+      els.workItemLoadStatus.classList.remove("is-error");
+    }
+  } catch (error) {
+    console.error(error);
+    if (isSelectedWorkItem(item.id)) {
+      els.workItemAttachmentsStatus.textContent = error.auth
+        ? "The attachment could not be added. The PAT requires ‘Work Items: Read & write’."
+        : error.message || "The attachment could not be added.";
+      els.workItemAttachmentsStatus.classList.add("is-error");
+    }
+  } finally {
+    state.uploadingAttachments = false;
+    if (isSelectedWorkItem(item.id)) els.workItemAttachmentAdd.disabled = false;
+  }
 }
 
 function subtaskPriority(priority) {
@@ -8228,7 +8495,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   }
   els.workItemSystemInfoSection.hidden = !bug;
   if (bug) setRichContent(els.workItemSystemInfo, detail?.systemInfoHtml, loading ? "Loading system information…" : "No system information added.");
-  renderWorkItemAttachments(detail?.attachments || []);
+  renderWorkItemAttachments(detail?.attachments || [], loading);
   renderWorkItemSubtasks(detail?.subtasks || [], detail?.subtasksError || "");
   els.descriptionEditButton.disabled = loading;
   els.acceptanceCriteriaEditButton.disabled = loading;
@@ -9952,7 +10219,10 @@ function setCommentComposerExpanded(expanded) {
 }
 
 function resetCommentComposer() {
+  state.editingCommentId = null;
   els.commentComposerInput.replaceChildren();
+  els.commentComposerInput.setAttribute("aria-label", "Comment");
+  els.commentComposerInput.dataset.placeholder = "Write a comment…";
   els.commentComposerStatus.textContent = "";
   els.commentComposerStatus.classList.remove("is-error");
   els.commentComposerInput.contentEditable = "true";
@@ -9966,7 +10236,27 @@ function setCommentComposerBusy(busy) {
   els.commentComposerInput.contentEditable = String(!busy);
   els.commentComposerCancel.disabled = busy;
   els.commentComposerSubmit.disabled = busy;
-  els.commentComposerSubmit.textContent = busy ? "Saving…" : "Save";
+  els.commentComposerSubmit.textContent = busy ? "Saving…" : state.editingCommentId !== null ? "Update" : "Save";
+}
+
+function editComment(comment) {
+  if (!isOwnComment(comment)) return;
+  if (commentHasUnsavedChanges() && !confirmDiscardChanges("Discard the current unsaved comment?")) return;
+  setActivityTab("comments");
+  closeMentionMenu("description");
+  state.editingCommentId = comment.id;
+  els.commentComposerInput.replaceChildren(sanitizeRichHtml(comment.html || ""));
+  els.commentComposerInput.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
+  hydrateRichTextImages(els.commentComposerInput);
+  highlightCodeBlocks(els.commentComposerInput);
+  activateEditorCheckboxes(els.commentComposerInput);
+  els.commentComposerInput.setAttribute("aria-label", "Edit comment");
+  els.commentComposerInput.dataset.placeholder = "Edit your comment…";
+  els.commentComposerStatus.textContent = "Editing your comment.";
+  els.commentComposerStatus.classList.remove("is-error");
+  els.commentComposerSubmit.textContent = "Update";
+  setCommentComposerExpanded(true);
+  els.commentComposerForm.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 async function submitWorkItemComment(event) {
@@ -9974,18 +10264,30 @@ async function submitWorkItemComment(event) {
   const item = selectedWorkItem();
   let text = richEditorHtml(els.commentComposerInput);
   if (!item || (!htmlToText(text).trim() && !/<img\b/i.test(text))) return;
+  const editingCommentId = state.editingCommentId;
+  const editingComment = editingCommentId === null
+    ? null
+    : (state.commentsCache.get(item.id) || []).find(comment => comment.id === editingCommentId);
+  if (editingCommentId !== null && !isOwnComment(editingComment)) {
+    els.commentComposerStatus.textContent = "Only your own comments can be edited.";
+    els.commentComposerStatus.classList.add("is-error");
+    return;
+  }
   setCommentComposerBusy(true);
   els.commentComposerStatus.classList.remove("is-error");
   try {
     const embeddedImageCount = embeddedRichTextImages(els.commentComposerInput).length;
     els.commentComposerStatus.textContent = embeddedImageCount
       ? `Uploading ${embeddedImageCount === 1 ? "image" : `${embeddedImageCount} images`}…`
-      : "Posting comment…";
+      : editingCommentId !== null ? "Updating comment…" : "Posting comment…";
     await persistEmbeddedRichTextImages(els.commentComposerInput);
     text = richEditorHtml(els.commentComposerInput);
-    els.commentComposerStatus.textContent = "Posting comment…";
-    const result = await azure(`/_apis/wit/workItems/${item.id}/comments?api-version=7.1-preview.4`, {
-      method: "POST",
+    els.commentComposerStatus.textContent = editingCommentId !== null ? "Updating comment…" : "Posting comment…";
+    const commentPath = editingCommentId !== null
+      ? `/_apis/wit/workItems/${item.id}/comments/${editingCommentId}?format=html&api-version=7.1-preview.4`
+      : `/_apis/wit/workItems/${item.id}/comments?format=html&api-version=7.1-preview.4`;
+    const result = await azure(commentPath, {
+      method: editingCommentId !== null ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text })
     });
@@ -9999,7 +10301,7 @@ async function submitWorkItemComment(event) {
       renderComments(comments, false);
       renderCombinedActivity();
       resetCommentComposer();
-      els.workItemLoadStatus.textContent = "Comment posted.";
+      els.workItemLoadStatus.textContent = editingCommentId !== null ? "Comment updated." : "Comment posted.";
       els.workItemLoadStatus.classList.remove("is-error");
     }
     loadWorkItemComments(item);
@@ -10007,8 +10309,8 @@ async function submitWorkItemComment(event) {
     console.error(error);
     if (isSelectedWorkItem(item.id)) {
       els.commentComposerStatus.textContent = error.auth
-        ? "The comment could not be posted. The PAT requires ‘Work Items: Read & write’."
-        : error.message || "The comment could not be posted.";
+        ? `The comment could not be ${editingCommentId !== null ? "updated" : "posted"}. The PAT requires ‘Work Items: Read & write’.`
+        : error.message || `The comment could not be ${editingCommentId !== null ? "updated" : "posted"}.`;
       els.commentComposerStatus.classList.add("is-error");
     }
   } finally {
@@ -10031,6 +10333,22 @@ function createComment(comment) {
   time.dateTime = comment.createdDate;
   time.textContent = comment.createdDate ? formatDateTime(comment.createdDate) : "";
   header.append(author, time);
+  if (comment.modifiedDate && new Date(comment.modifiedDate).getTime() > new Date(comment.createdDate).getTime() + 1000) {
+    const edited = document.createElement("span");
+    edited.className = "comment-edited";
+    edited.textContent = "Edited";
+    edited.title = `Edited ${formatDateTime(comment.modifiedDate)}`;
+    header.append(edited);
+  }
+  if (isOwnComment(comment)) {
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "comment-edit-button";
+    editButton.textContent = "Edit";
+    editButton.setAttribute("aria-label", `Edit comment by ${comment.author}`);
+    editButton.addEventListener("click", () => editComment(comment));
+    header.append(editButton);
+  }
   const content = document.createElement("div");
   content.className = "comment-content rich-content";
   setRichContent(content, comment.html, "Empty comment");
@@ -11237,6 +11555,7 @@ els.remainingPointsDialog.addEventListener("close", () => {
   resolve(null);
 });
 document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", requestCloseWorkItemDialog));
+els.workItemRefresh.addEventListener("click", refreshSelectedWorkItem);
 els.deleteWorkItem.addEventListener("click", deleteSelectedWorkItem);
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
 els.workItemState.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemStateMenu(); });
@@ -11381,6 +11700,21 @@ els.sprintMenuSearch.addEventListener("keydown", event => {
   closeSprintMenu();
   els.sprintTitle.focus();
 });
+els.workItemAttachmentAdd.addEventListener("click", () => {
+  if (!selectedWorkItem() || state.uploadingAttachments || state.deletingAttachmentId !== null) return;
+  els.workItemAttachmentInput.value = "";
+  state.attachmentPickerToken++;
+  state.attachmentPickerOpen = true;
+  els.workItemAttachmentInput.click();
+});
+els.workItemAttachmentInput.addEventListener("change", uploadWorkItemAttachments);
+const releaseAttachmentPickerGuard = (delay = 350) => {
+  const token = state.attachmentPickerToken;
+  setTimeout(() => {
+    if (state.attachmentPickerToken === token) state.attachmentPickerOpen = false;
+  }, delay);
+};
+els.workItemAttachmentInput.addEventListener("cancel", () => releaseAttachmentPickerGuard());
 els.commentComposerPrompt.addEventListener("click", () => setCommentComposerExpanded(true));
 els.commentComposerCancel.addEventListener("click", discardCommentComposer);
 els.commentComposerForm.addEventListener("submit", submitWorkItemComment);
@@ -11397,6 +11731,13 @@ els.commentComposerInput.addEventListener("keydown", event => {
 });
 els.commentComposerInput.addEventListener("input", () => updateMentionSuggestions("comment"));
 els.workItemDialog.addEventListener("cancel", event => {
+  if (event.target !== els.workItemDialog) return;
+  if (state.attachmentPickerOpen) {
+    event.preventDefault();
+    event.stopPropagation();
+    releaseAttachmentPickerGuard(0);
+    return;
+  }
   if (!els.workItemTitleForm.hidden) {
     event.preventDefault();
     discardWorkItemTitleEditor();
@@ -11436,6 +11777,7 @@ els.workItemDialog.addEventListener("cancel", event => {
   requestCloseWorkItemDialog();
 });
 els.workItemDialog.addEventListener("close", () => {
+  const closedItem = state.selectedItem;
   els.workItemActions.open = false;
   closeWorkItemStateMenu();
   closeWorkItemAssigneeMenu();
@@ -11444,10 +11786,10 @@ els.workItemDialog.addEventListener("close", () => {
   resetWorkItemTitleEditor();
   resetDescriptionEditor();
   resetCommentComposer();
-  if (state.currentView === "backlog") renderBacklog();
-  if (state.currentView === "for-you") renderForYou();
+  syncWorkItemAcrossViews(closedItem);
   state.selectedItemId = null;
   state.selectedItem = null;
+  renderCurrentView();
   if (!state.routeApplying) writeAppRoute(currentAppRoute({ itemId: null }));
 });
 els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) requestCloseWorkItemDialog(); });
@@ -11455,6 +11797,9 @@ window.addEventListener("beforeunload", event => {
   if (!hasUnsavedChanges()) return;
   event.preventDefault();
   event.returnValue = "";
+});
+window.addEventListener("focus", () => {
+  if (state.attachmentPickerOpen) releaseAttachmentPickerGuard();
 });
 window.addEventListener("resize", scheduleMentionMenuPosition);
 document.addEventListener("scroll", scheduleMentionMenuPosition, true);

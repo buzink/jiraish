@@ -14,9 +14,11 @@ Jiraish is a compact, Jira-style sprint and backlog interface for Azure DevOps. 
 - Work-item creation from the header and story creation directly inside a Feature
 - AI-assisted work-item creation from a pasted chat, email, or description through a configurable LiteLLM model
 - Work-item editing for titles, states, descriptions, Acceptance Criteria, Repro Steps, System Info, assignees, priorities, estimates, areas, sprints, and tags
+- Per-work-item refresh for details, comments, history, pull requests, and releases
 - Rich-text editing in Preview, formatted HTML, or Markdown mode, including code blocks, syntax highlighting, and checkboxes
 - Jira-style `@` mentions and `#` work-item links in descriptions and comments
-- Attachments, child work items, pull requests, Classic releases, and YAML deployments in the work-item view
+- Inline editing of your own work-item comments
+- Attachment uploads and removal, child work items, pull requests, Classic releases, and YAML deployments in the work-item view
 - Safeguards for unsaved work and confirmation before deleting one or multiple work items
 - Release diagnostics and readiness comparisons for Development → Acceptance and Acceptance → Production
 - Persistent deep links for pages, searches, wiki pages, sprint numbers, and open work items
