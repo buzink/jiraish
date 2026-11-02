@@ -55,6 +55,9 @@ const DEFAULT_MAPPING = {
 };
 
 const STATE_TONES = {
+  "new": "gray-light",
+  "ready for sprint": "gray",
+  "on hold": "red",
   "active": "blue",
   "pr under review": "sky",
   "test on dev": "magenta",
@@ -66,6 +69,12 @@ const STATE_TONES = {
   "resolved": "blue",
   "closed": "green"
 };
+
+const SPRINT_PROGRESS_COLUMNS = [
+  { key: "done", label: "Done" },
+  { key: "active", label: "Doing" },
+  { key: "todo", label: "To do" }
+];
 
 const state = {
   orgUrl: localStorage.getItem(STORAGE.url) || DEFAULT_URL,
@@ -461,9 +470,7 @@ const els = {
   sprintProgressPercent: document.querySelector("#sprintProgressPercent"),
   sprintWorkingDays: document.querySelector("#sprintWorkingDays"),
   sprintProgressBar: document.querySelector("#sprintProgressBar"),
-  sprintProgressDonePoints: document.querySelector("#sprintProgressDonePoints"),
-  sprintProgressDoingPoints: document.querySelector("#sprintProgressDoingPoints"),
-  sprintProgressTodoPoints: document.querySelector("#sprintProgressTodoPoints"),
+  sprintProgressLegend: document.querySelector("#sprintProgressLegend"),
   connectionDialog: document.querySelector("#connectionDialog"),
   connectionForm: document.querySelector("#connectionForm"),
   orgUrl: document.querySelector("#orgUrlInput"),
@@ -1471,6 +1478,7 @@ function boardGroupValue(item) {
 function createBoardGroup(title, stories) {
   const section = document.createElement("section");
   section.className = "board-item-group";
+  section.dataset.boardGroupValue = title;
   const header = document.createElement("header");
   const heading = document.createElement("h3");
   heading.textContent = title;
@@ -1521,6 +1529,28 @@ function renderBoardColumn(list, stories) {
   list.replaceChildren(...orderedGroups.map(([title, groupStories]) => createBoardGroup(title, groupStories)));
 }
 
+function showBoardState(column, itemState) {
+  state.boardGroupBy = "state";
+  localStorage.setItem(STORAGE.boardGroupBy, state.boardGroupBy);
+  els.boardGroupControl.open = false;
+  render();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const list = document.querySelector(`[data-list="${column}"]`);
+    const target = [...(list?.querySelectorAll(".board-item-group") || [])]
+      .find(group => group.dataset.boardGroupValue === itemState);
+    if (!target) return;
+    target.tabIndex = -1;
+    target.classList.add("is-targeted");
+    target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+    target.focus({ preventScroll: true });
+    window.setTimeout(() => {
+      target.classList.remove("is-targeted");
+      target.blur();
+      target.removeAttribute("tabindex");
+    }, 1400);
+  }));
+}
+
 function storyPointValue(item) {
   const points = Number(item.points);
   return Number.isFinite(points) && points > 0 ? points : 0;
@@ -1549,14 +1579,65 @@ function remainingWorkingDays(iterations) {
   return dates.size;
 }
 
+function createSprintProgressLegendGroup(column, states) {
+  const group = document.createElement("section");
+  group.className = "sprint-progress-legend-group";
+  const heading = document.createElement("h3");
+  const total = states.reduce((sum, item) => sum + item.points, 0);
+  heading.textContent = `${column.label} (${formatStoryPoints(total)}):`;
+  heading.title = "Story points";
+  const list = document.createElement("div");
+  list.className = "sprint-progress-state-list";
+  if (!states.length) {
+    const empty = document.createElement("span");
+    empty.className = "sprint-progress-state-empty";
+    empty.textContent = "No issues";
+    list.append(empty);
+  } else {
+    states.forEach(item => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "sprint-progress-state";
+      row.setAttribute("aria-label", `Group by state and show ${item.state} in ${column.label}`);
+      row.addEventListener("click", () => showBoardState(column.key, item.state));
+      const swatch = document.createElement("i");
+      swatch.dataset.stateTone = item.tone;
+      const label = document.createElement("span");
+      label.className = "card-state";
+      label.dataset.stateTone = item.tone;
+      label.textContent = `${item.state} (${formatStoryPoints(item.points)})`;
+      label.title = `${item.count} ${item.count === 1 ? "issue" : "issues"}`;
+      row.append(swatch, label);
+      list.append(row);
+    });
+  }
+  group.append(heading, list);
+  return group;
+}
+
 function renderSprintProgress() {
-  const totals = { todo: 0, active: 0, done: 0 };
+  const groups = Object.fromEntries(SPRINT_PROGRESS_COLUMNS.map(column => [column.key, new Map()]));
   state.stories.forEach(item => {
     const column = state.mapping[item.state];
-    if (column in totals) totals[column] += storyPointValue(item);
+    if (!(column in groups)) return;
+    const itemState = item.state || "Unknown";
+    const existing = groups[column].get(itemState) || { state: itemState, column, points: 0, count: 0, tone: stateTone(itemState) };
+    existing.points += storyPointValue(item);
+    existing.count++;
+    groups[column].set(itemState, existing);
   });
-  const total = totals.todo + totals.active + totals.done;
-  const donePercent = total ? Math.round((totals.done / total) * 100) : 0;
+  const orderedGroups = Object.fromEntries(SPRINT_PROGRESS_COLUMNS.map(column => [
+    column.key,
+    [...groups[column.key].values()].sort((left, right) => (
+      right.points - left.points
+      || right.count - left.count
+      || left.state.localeCompare(right.state, "en", { sensitivity: "base" })
+    ))
+  ]));
+  const orderedStates = SPRINT_PROGRESS_COLUMNS.flatMap(column => orderedGroups[column.key]);
+  const total = orderedStates.reduce((sum, item) => sum + item.points, 0);
+  const donePoints = orderedGroups.done.reduce((sum, item) => sum + item.points, 0);
+  const donePercent = total ? Math.round((donePoints / total) * 100) : 0;
   const iterations = selectedSprintIterations();
   if (!iterations.length && state.iteration) iterations.push(state.iteration);
   const workingDays = remainingWorkingDays(iterations);
@@ -1566,16 +1647,34 @@ function renderSprintProgress() {
   els.sprintProgressPoints.textContent = `${formatStoryPoints(total)} total ${pointLabel}`;
   els.sprintProgressPercent.textContent = `${donePercent}% done`;
   els.sprintWorkingDays.textContent = iterations.length ? `${workingDays} ${dayLabel}` : "— working days left";
-  els.sprintProgressDonePoints.textContent = formatStoryPoints(totals.done);
-  els.sprintProgressDoingPoints.textContent = formatStoryPoints(totals.active);
-  els.sprintProgressTodoPoints.textContent = formatStoryPoints(totals.todo);
-  const doneWidth = total ? (totals.done / total) * 100 : 0;
-  const doingEnd = total ? doneWidth + (totals.active / total) * 100 : 0;
-  els.sprintProgressBar.style.backgroundImage = total
-    ? `linear-gradient(to right, var(--green) 0%, var(--green) ${doneWidth}%, var(--progress-doing) ${doneWidth}%, var(--progress-doing) ${doingEnd}%, transparent ${doingEnd}%, transparent 100%)`
+  els.sprintProgressLegend.replaceChildren(...SPRINT_PROGRESS_COLUMNS.map(column => (
+    createSprintProgressLegendGroup(column, orderedGroups[column.key])
+  )));
+  let progress = 0;
+  const segmentButtons = [];
+  const colorStops = orderedStates.filter(item => item.points > 0).flatMap(item => {
+    const start = progress;
+    const width = (item.points / total) * 100;
+    progress += width;
+    const color = `var(--progress-state-${item.tone})`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "sprint-progress-segment-target";
+    button.style.left = `${start}%`;
+    button.style.width = `${width}%`;
+    button.dataset.tooltip = `${item.state} (${formatStoryPoints(item.points)})`;
+    button.setAttribute("aria-label", `Group by state and show ${item.state}, ${formatStoryPoints(item.points)} story points`);
+    button.addEventListener("click", () => showBoardState(item.column, item.state));
+    segmentButtons.push(button);
+    return [`${color} ${start}%`, `${color} ${progress}%`];
+  });
+  els.sprintProgressBar.replaceChildren(...segmentButtons);
+  els.sprintProgressBar.style.backgroundImage = colorStops.length
+    ? `linear-gradient(to right, ${colorStops.join(", ")})`
     : "none";
+  const stateSummary = orderedStates.map(item => `${item.state} ${formatStoryPoints(item.points)}`).join(", ");
   els.sprintProgressBar.setAttribute("aria-label", total
-    ? `${donePercent}% done. ${formatStoryPoints(totals.done)} done, ${formatStoryPoints(totals.active)} doing, and ${formatStoryPoints(totals.todo)} to do out of ${formatStoryPoints(total)} story points.`
+    ? `${donePercent}% done out of ${formatStoryPoints(total)} story points. ${stateSummary}.`
     : "No estimated story points in this sprint.");
 }
 
