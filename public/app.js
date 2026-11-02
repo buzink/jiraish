@@ -9103,6 +9103,32 @@ function mentionElements(kind) {
     : { editor: els.commentComposerInput, menu: els.commentMentionMenu, label: els.commentMentionLabel, options: els.commentMentionOptions };
 }
 
+function positionMentionMenu(kind) {
+  const { editor, menu } = mentionElements(kind);
+  if (menu.hidden) return;
+  const gap = 6;
+  const viewportMargin = 8;
+  const editorRect = editor.getBoundingClientRect();
+  const width = Math.min(330, Math.max(160, editorRect.width - 20), window.innerWidth - (viewportMargin * 2));
+  menu.style.width = `${width}px`;
+  const menuHeight = menu.getBoundingClientRect().height;
+  const anchoredTop = editorRect.top + 38;
+  const spaceBelow = window.innerHeight - anchoredTop - viewportMargin;
+  const spaceAbove = editorRect.top - gap - viewportMargin;
+  const openBelow = spaceBelow >= menuHeight || spaceBelow >= spaceAbove;
+  const preferredTop = openBelow ? anchoredTop : editorRect.top - menuHeight - gap;
+  const top = Math.min(
+    Math.max(viewportMargin, preferredTop),
+    Math.max(viewportMargin, window.innerHeight - menuHeight - viewportMargin)
+  );
+  const left = Math.min(
+    Math.max(viewportMargin, editorRect.left + 10),
+    Math.max(viewportMargin, window.innerWidth - width - viewportMargin)
+  );
+  menu.style.top = `${top}px`;
+  menu.style.left = `${left}px`;
+}
+
 function editorTriggerAtCaret(editor) {
   const selection = window.getSelection();
   if (!selection?.rangeCount || !selection.isCollapsed) return null;
@@ -9155,6 +9181,7 @@ function updateMentionSuggestions(kind) {
   label.textContent = trigger.mode === "mention" ? "Mention someone" : "Link a work item";
   menu.setAttribute("aria-label", trigger.mode === "mention" ? "Mention a team member" : "Link a work item");
   menu.hidden = false;
+  if (typeof menu.showPopover === "function" && !menu.matches(":popover-open")) menu.showPopover();
   editor.setAttribute("aria-expanded", "true");
   editor.setAttribute("aria-controls", menu.id);
   renderMentionOptions(kind);
@@ -9237,6 +9264,7 @@ function renderMentionOptions(kind) {
         : state.teamMembers.length ? "No matching team members." : "No team members available.";
     options.replaceChildren(empty);
     editor.removeAttribute("aria-activedescendant");
+    positionMentionMenu(kind);
     return;
   }
   options.replaceChildren(...current.choices.map((choice, index) => {
@@ -9269,6 +9297,7 @@ function renderMentionOptions(kind) {
     return option;
   }));
   editor.setAttribute("aria-activedescendant", `${kind}MentionOption${current.activeIndex}`);
+  positionMentionMenu(kind);
 }
 
 function insertMention(kind, choice) {
@@ -9316,12 +9345,22 @@ function closeMentionMenu(kind) {
   const { editor, menu, options } = mentionElements(kind);
   const current = mentionState[kind];
   if (current.timer) clearTimeout(current.timer);
+  if (typeof menu.hidePopover === "function" && menu.matches(":popover-open")) menu.hidePopover();
   menu.hidden = true;
   options.replaceChildren();
   editor.setAttribute("aria-expanded", "false");
   editor.removeAttribute("aria-controls");
   editor.removeAttribute("aria-activedescendant");
   mentionState[kind] = { mode: "mention", query: "", range: null, activeIndex: 0, choices: [], loading: false, requestToken: current.requestToken + 1, timer: null };
+}
+
+let mentionMenuPositionFrame = 0;
+function scheduleMentionMenuPosition() {
+  if (mentionMenuPositionFrame) return;
+  mentionMenuPositionFrame = requestAnimationFrame(() => {
+    mentionMenuPositionFrame = 0;
+    ["description", "comment"].forEach(kind => positionMentionMenu(kind));
+  });
 }
 
 function handleMentionKeydown(kind, event) {
@@ -11417,6 +11456,8 @@ window.addEventListener("beforeunload", event => {
   event.preventDefault();
   event.returnValue = "";
 });
+window.addEventListener("resize", scheduleMentionMenuPosition);
+document.addEventListener("scroll", scheduleMentionMenuPosition, true);
 els.cancelConnection.addEventListener("click", () => els.connectionDialog.close());
 els.githubAllOwners.addEventListener("change", updateGithubOwnerSettings);
 els.githubOwnerOptions.addEventListener("change", event => {
