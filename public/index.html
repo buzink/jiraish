@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261102-state-progress-v6" />
+    <link rel="stylesheet" href="styles.css?v=20261102-mobile-header-v1" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -24,9 +24,12 @@
         <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
         <span id="brandName">Jiraish</span>
       </div>
-      <nav aria-label="Main navigation">
+      <button id="mainMenuButton" class="main-menu-button" type="button" aria-label="Open main menu" aria-controls="mainNavigation" aria-expanded="false">
+        <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+      </button>
+      <nav id="mainNavigation" aria-label="Main navigation">
         <button id="forYouNav" class="nav-item" type="button">For you</button>
-        <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint board</button>
+        <button id="sprintBoardNav" class="nav-item is-active" type="button" aria-current="page">Sprint</button>
         <button id="backlogNav" class="nav-item" type="button">Backlog</button>
         <button id="roadmapNav" class="nav-item" type="button"><span class="roadmap-nav-full">Roadmap</span><span class="roadmap-nav-short">Map</span></button>
         <button id="wikiNav" class="nav-item" type="button">Wiki</button>
@@ -989,6 +992,6 @@
       <div class="empty-column"><div class="empty-icon">✓</div><p>No stories in this column</p></div>
     </template>
 
-    <script src="app.js?v=20261102-state-progress-v6" defer></script>
+    <script src="app.js?v=20261102-mobile-header-v1" defer></script>
   </body>
 </html>

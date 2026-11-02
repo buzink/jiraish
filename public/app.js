@@ -297,6 +297,8 @@ const RICH_TEXT_STYLES = new Set([
 const els = {
   appBrand: document.querySelector("#appBrand"),
   brandName: document.querySelector("#brandName"),
+  mainMenuButton: document.querySelector("#mainMenuButton"),
+  mainNavigation: document.querySelector("#mainNavigation"),
   headerAvatar: document.querySelector("#headerAvatar"),
   projectTeamLabels: [...document.querySelectorAll("[data-project-team]")],
   forYouNav: document.querySelector("#forYouNav"),
@@ -652,6 +654,20 @@ const mentionState = {
 
 const mobileLayoutQuery = matchMedia("(max-width: 560px)");
 
+function setMainMenuOpen(open) {
+  els.mainMenuButton.setAttribute("aria-expanded", String(open));
+  els.mainMenuButton.setAttribute("aria-label", `${open ? "Close" : "Open"} main menu`);
+  els.mainNavigation.classList.toggle("is-open", open);
+}
+
+function closeMainMenu() {
+  setMainMenuOpen(false);
+}
+
+function toggleMainMenu() {
+  setMainMenuOpen(els.mainMenuButton.getAttribute("aria-expanded") !== "true");
+}
+
 function setMobileDisclosure(button, content, expanded) {
   button.setAttribute("aria-expanded", String(expanded));
   const chevron = button.querySelector(".mobile-disclosure-chevron");
@@ -664,6 +680,7 @@ function toggleMobileDisclosure(button, content) {
 }
 
 function applyMobileDisclosures(mobile) {
+  closeMainMenu();
   const expanded = !mobile;
   for (const [button, content] of [
     [els.filterPanelToggle, els.filterPanelBody],
@@ -11423,6 +11440,19 @@ els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
 });
 els.headerAvatar.addEventListener("click", showSettings);
+els.mainMenuButton.addEventListener("click", event => {
+  event.stopPropagation();
+  toggleMainMenu();
+});
+els.mainNavigation.addEventListener("click", event => {
+  if (mobileLayoutQuery.matches && event.target.closest(".nav-item") && !event.target.closest("#createWorkItemButton")) closeMainMenu();
+});
+els.mainNavigation.addEventListener("keydown", event => {
+  if (event.key !== "Escape" || !mobileLayoutQuery.matches) return;
+  event.preventDefault();
+  closeMainMenu();
+  els.mainMenuButton.focus();
+});
 els.createWorkItemButton.addEventListener("click", event => {
   event.stopPropagation();
   toggleCreateWorkItemMenu();
@@ -11606,6 +11636,7 @@ els.clearFilters.addEventListener("click", async () => {
 });
 
 document.addEventListener("click", event => {
+  if (!els.mainNavigation.contains(event.target) && !els.mainMenuButton.contains(event.target)) closeMainMenu();
   if (!els.workItemActions.contains(event.target)) els.workItemActions.open = false;
   document.querySelectorAll(".backlog-row-menu[open]").forEach(menu => {
     if (!menu.contains(event.target)) menu.open = false;
