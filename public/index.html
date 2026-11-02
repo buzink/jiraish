@@ -14,7 +14,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261102-work-item-refresh-v1" />
+    <link rel="stylesheet" href="styles.css?v=20261102-create-feature-v1" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -187,7 +187,15 @@
             </div>
             <div id="filterControls" class="filter-controls"></div>
             <button id="clearFilters" class="clear-filters" type="button" hidden>Clear all</button>
-            <span id="filterResultCount" class="filter-result-count" aria-live="polite"></span>
+            <div class="filter-toolbar-tail">
+              <span id="filterResultCount" class="filter-result-count" aria-live="polite"></span>
+              <details id="backlogFilterActions" class="backlog-filter-actions" data-backlog-view hidden>
+                <summary aria-label="More backlog actions" title="More backlog actions">⋮</summary>
+                <div class="backlog-filter-actions-menu" role="menu">
+                  <button id="backlogSprintOrderAction" type="button" role="menuitem">Move sprint items to top</button>
+                </div>
+              </details>
+            </div>
           </div>
           <div id="activeFilters" class="active-filters" aria-label="Active filters" hidden></div>
         </div>
@@ -672,6 +680,25 @@
       </form>
     </dialog>
 
+    <dialog id="backlogSprintOrderDialog" class="dialog backlog-sprint-order-dialog" aria-labelledby="backlogSprintOrderHeading">
+      <form id="backlogSprintOrderForm">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span>Backlog</span><span aria-hidden="true">/</span><span>Reorder</span></div>
+            <h2 id="backlogSprintOrderHeading">Move sprint items to top?</h2>
+            <p id="backlogSprintOrderSummary"></p>
+          </div>
+          <button class="close-button" type="button" data-close-backlog-sprint-order aria-label="Close">×</button>
+        </div>
+        <p class="backlog-sprint-order-explanation">Items will follow the sprint order shown on this backlog. Their order within each sprint will remain unchanged, as will the order of all other backlog items.</p>
+        <p id="backlogSprintOrderError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-backlog-sprint-order>Cancel</button>
+          <button id="backlogSprintOrderSubmit" class="primary-button" type="submit">Move to top</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="remainingPointsDialog" class="dialog remaining-points-dialog" aria-labelledby="remainingPointsHeading">
       <form id="remainingPointsForm">
         <div class="dialog-heading compact">
@@ -1017,6 +1044,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261102-board-drag-v1" defer></script>
+    <script src="app.js?v=20261102-create-feature-v1" defer></script>
   </body>
 </html>

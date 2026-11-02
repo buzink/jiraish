@@ -195,7 +195,17 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .filter-empty { margin: 0; padding: 12px 9px; color: var(--muted); font-size: 12px; }
 .clear-filters { min-height: 30px; margin-left: 2px; padding: 0 7px; border: 0; color: var(--blue-600); background: transparent; font-size: 12px; font-weight: 600; }
 .clear-filters:hover { text-decoration: underline; }
-.filter-result-count { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.filter-toolbar-tail { display: flex; align-items: center; gap: 7px; margin-left: auto; }
+.filter-result-count { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.backlog-filter-actions { position: relative; flex: 0 0 auto; }
+.backlog-filter-actions summary { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 3px; color: var(--muted); background: transparent; font-size: 20px; font-weight: 700; line-height: 1; cursor: pointer; list-style: none; }
+.backlog-filter-actions summary::-webkit-details-marker { display: none; }
+.backlog-filter-actions summary:hover, .backlog-filter-actions[open] summary { border-color: #c1c7d0; color: var(--navy); background: var(--surface); }
+.backlog-filter-actions summary:focus-visible { outline: 2px solid #4c9aff; outline-offset: 1px; }
+.backlog-filter-actions-menu { position: absolute; z-index: 30; top: calc(100% + 5px); right: 0; width: 230px; padding: 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); box-shadow: 0 8px 20px rgba(9,30,66,.22); }
+.backlog-filter-actions-menu button { width: 100%; min-height: 36px; padding: 7px 9px; border: 0; border-radius: 3px; color: var(--text); background: transparent; font-size: 12px; font-weight: 600; text-align: left; }
+.backlog-filter-actions-menu button:hover, .backlog-filter-actions-menu button:focus-visible { color: var(--blue-700); background: var(--blue-100); outline: 0; }
+.backlog-filter-actions-menu button:disabled { cursor: not-allowed; color: var(--muted); background: transparent; opacity: .65; }
 .active-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
 .filter-chip { min-height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 0; border-radius: 3px; color: #0747a6; background: #deebff; font-size: 11px; }
 .filter-chip:hover { background: #b3d4ff; }
@@ -427,6 +437,8 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .backlog-feature-progress { height: 7px; overflow: hidden; border-radius: 999px; background: #dfe1e6; }
 .backlog-feature-progress span { display: block; height: 100%; border-radius: inherit; background: #0c66e4; transition: width .2s ease; }
 .backlog-epic-empty { margin: 0; padding: 9px 7px; color: var(--muted); font-size: 10px; }
+.backlog-create-feature { justify-self: start; margin: 4px 7px 5px; padding: 2px 0; border: 0; color: #0052cc; background: transparent; font-size: 10px; font-weight: 600; text-align: left; }
+.backlog-create-feature:hover, .backlog-create-feature:focus-visible { color: #0747a6; text-decoration: underline; text-underline-offset: 2px; outline: 0; }
 .backlog-sidebar-skeleton { height: 92px; border-radius: 4px; background: linear-gradient(90deg, #f4f5f7 25%, #ebecf0 37%, #f4f5f7 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
 .backlog-content { display: grid; gap: 16px; }
 .backlog-group { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 1px 1px rgba(9, 30, 66, .08); }
@@ -723,6 +735,11 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .backlog-position-range { display: flex; justify-content: space-between; gap: 12px; margin-top: 9px; color: var(--muted); font-size: 11px; }
 .backlog-position-range strong { color: var(--text); }
 .backlog-position-dialog .primary-button:disabled { cursor: wait; opacity: .65; }
+.backlog-sprint-order-dialog { width: min(500px, calc(100vw - 32px)); }
+.backlog-sprint-order-dialog .dialog-heading { margin-bottom: 16px; }
+.backlog-sprint-order-dialog .dialog-heading p { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.backlog-sprint-order-explanation { margin: 0; color: var(--text); font-size: 13px; line-height: 1.55; }
+.backlog-sprint-order-dialog .primary-button:disabled { cursor: wait; opacity: .65; }
 .remaining-points-dialog { width: min(470px, calc(100vw - 32px)); }
 .remaining-points-dialog .dialog-heading { margin-bottom: 16px; }
 .remaining-points-dialog .issue-breadcrumb { margin-bottom: 6px; }
@@ -1472,6 +1489,8 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .backlog-feature-stat b, [data-theme="dark"] .backlog-feature-progress { color: #b6c2cf; background: #38414a; }
 [data-theme="dark"] .backlog-create-story { color: #85b8ff; }
 [data-theme="dark"] .backlog-create-story:hover, [data-theme="dark"] .backlog-create-story:focus-visible { color: #cce0ff; }
+[data-theme="dark"] .backlog-create-feature { color: #85b8ff; }
+[data-theme="dark"] .backlog-create-feature:hover, [data-theme="dark"] .backlog-create-feature:focus-visible { color: #cce0ff; }
 [data-theme="dark"] .backlog-feature-progress span { background: #579dff; }
 [data-theme="dark"] .backlog-sidebar-skeleton { background: linear-gradient(90deg, #282e33 25%, #38414a 37%, #282e33 63%); background-size: 400% 100%; }
 [data-theme="dark"] .backlog-table td { border-color: #38414a; }
@@ -1582,7 +1601,8 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
   .heading-actions { flex-wrap: wrap; }
   .heading-actions .search-field { flex: 1 1 200px; }
   .page-heading > .search-field { width: 100%; height: 38px; flex: 0 0 38px; }
-  .filter-result-count { width: 100%; margin-left: 0; }
+  .filter-toolbar-tail { width: 100%; justify-content: space-between; margin-left: 0; }
+  .filter-result-count { width: auto; margin-left: 0; }
   .board { min-width: 0; grid-template-columns: minmax(0, 1fr); }
   .column { min-width: 0; max-width: 100%; min-height: 240px; }
   .story-card { min-width: 0; max-width: 100%; }

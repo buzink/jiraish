@@ -134,6 +134,7 @@ const state = {
   backlogSelectionAnchorId: null,
   backlogDeleting: false,
   backlogUpdating: false,
+  backlogSprintOrdering: false,
   backlogPositionItemIds: [],
   backlogPositionGroupKey: "",
   roadmapYear: null,
@@ -443,6 +444,13 @@ const els = {
   backlogSearch: document.querySelector("#backlogSearchInput"),
   backlogMeta: document.querySelector("#backlogMeta"),
   backlogContent: document.querySelector("#backlogContent"),
+  backlogFilterActions: document.querySelector("#backlogFilterActions"),
+  backlogSprintOrderAction: document.querySelector("#backlogSprintOrderAction"),
+  backlogSprintOrderDialog: document.querySelector("#backlogSprintOrderDialog"),
+  backlogSprintOrderForm: document.querySelector("#backlogSprintOrderForm"),
+  backlogSprintOrderSummary: document.querySelector("#backlogSprintOrderSummary"),
+  backlogSprintOrderError: document.querySelector("#backlogSprintOrderError"),
+  backlogSprintOrderSubmit: document.querySelector("#backlogSprintOrderSubmit"),
   wikiSelect: document.querySelector("#wikiSelect"),
   wikiNavigationToggle: document.querySelector("#wikiNavigationToggle"),
   wikiSidebar: document.querySelector("#wikiSidebar"),
@@ -1121,8 +1129,12 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
     const item = normalizeWorkItem(created);
     if (parent) {
       item.parentId = parent.id;
-      item.featureLabel = backlogFeatureLabel(parent);
-      state.backlogItems = [...state.backlogItems.filter(existing => Number(existing.id) !== Number(item.id)), item];
+      if (String(item.type || type).trim().toLocaleLowerCase("en") === "feature") {
+        state.backlogFeatures = [...state.backlogFeatures.filter(existing => Number(existing.id) !== Number(item.id)), item];
+      } else {
+        item.featureLabel = backlogFeatureLabel(parent);
+        state.backlogItems = [...state.backlogItems.filter(existing => Number(existing.id) !== Number(item.id)), item];
+      }
     }
     state.detailsCache.delete(item.id);
     state.commentsCache.delete(item.id);
@@ -4696,6 +4708,17 @@ function createBacklogEpicGroup(epic, features) {
     empty.textContent = "No features.";
     featureList.append(empty);
   }
+  if (epic) {
+    const createFeature = document.createElement("button");
+    createFeature.type = "button";
+    createFeature.className = "backlog-create-feature";
+    createFeature.textContent = "Create feature in epic";
+    createFeature.addEventListener("click", event => {
+      event.stopPropagation();
+      openCreateWorkItemDialog("Feature", epic);
+    });
+    featureList.append(createFeature);
+  }
   group.append(header, featureList);
   return group;
 }
@@ -4723,6 +4746,23 @@ function renderBacklogSidebar() {
   els.backlogHierarchy.replaceChildren(...groups);
 }
 
+function backlogSprintOrder(items = state.backlogItems) {
+  const assignedIds = new Set();
+  const groups = [];
+  chronologicalIterations().forEach(iteration => {
+    const path = String(iteration.path || "").toLocaleLowerCase("en");
+    const sprintItems = items.filter(item => path && String(item.iterationPath || "").toLocaleLowerCase("en") === path);
+    if (!sprintItems.length) return;
+    sprintItems.forEach(item => assignedIds.add(Number(item.id)));
+    groups.push({ iteration, items: sprintItems });
+  });
+  return {
+    groups,
+    sprintItems: groups.flatMap(group => group.items),
+    remaining: items.filter(item => !assignedIds.has(Number(item.id)))
+  };
+}
+
 function renderBacklog() {
   closeBacklogRowMenus();
   const team = state.teams.find(value => value.id === state.teamId);
@@ -4731,18 +4771,79 @@ function renderBacklog() {
   els.backlogMeta.textContent = `${team?.name || "Team"} · ${visibleItems.length}${visibleItems.length !== state.backlogItems.length ? ` of ${state.backlogItems.length}` : ""} items`;
   renderBacklogSidebar();
   renderFilters();
-  const assignedIds = new Set();
-  const sections = [];
-  chronologicalIterations().forEach(iteration => {
-    const path = String(iteration.path || "").toLocaleLowerCase("en");
-    const items = visibleItems.filter(item => path && item.iterationPath.toLocaleLowerCase("en") === path);
-    if (!items.length) return;
-    items.forEach(item => assignedIds.add(item.id));
-    sections.push(createBacklogSection(iteration.name, items, iterationLabel(iteration)));
-  });
-  const remaining = visibleItems.filter(item => !assignedIds.has(item.id));
-  sections.push(createBacklogSection("Other", remaining, "Backlog"));
+  const ordered = backlogSprintOrder(visibleItems);
+  els.backlogSprintOrderAction.disabled = state.backlogSprintOrdering || !backlogSprintOrder().sprintItems.length;
+  const sections = ordered.groups.map(group => (
+    createBacklogSection(group.iteration.name, group.items, iterationLabel(group.iteration))
+  ));
+  sections.push(createBacklogSection("Other", ordered.remaining, "Backlog"));
   els.backlogContent.replaceChildren(...sections);
+}
+
+function openBacklogSprintOrderDialog() {
+  const ordered = backlogSprintOrder();
+  els.backlogFilterActions.open = false;
+  if (!ordered.sprintItems.length || state.backlogSprintOrdering) return;
+  const itemLabel = ordered.sprintItems.length === 1 ? "work item" : "work items";
+  const sprintLabel = ordered.groups.length === 1 ? "sprint" : "sprints";
+  els.backlogSprintOrderSummary.textContent = `${ordered.sprintItems.length} ${itemLabel} across ${ordered.groups.length} ${sprintLabel}`;
+  els.backlogSprintOrderError.textContent = "";
+  els.backlogSprintOrderSubmit.disabled = false;
+  els.backlogSprintOrderSubmit.textContent = "Move to top";
+  els.backlogSprintOrderDialog.showModal();
+}
+
+function closeBacklogSprintOrderDialog(force = false) {
+  if (state.backlogSprintOrdering && !force) return;
+  if (els.backlogSprintOrderDialog.open) els.backlogSprintOrderDialog.close();
+}
+
+async function moveSprintItemsToBacklogTop(event) {
+  event.preventDefault();
+  if (state.backlogSprintOrdering) return;
+  const team = state.teams.find(candidate => candidate.id === state.teamId);
+  const ordered = backlogSprintOrder();
+  if (!team || !ordered.sprintItems.length) {
+    els.backlogSprintOrderError.textContent = "No sprint items are available to reorder.";
+    return;
+  }
+  const desired = [...ordered.sprintItems, ...ordered.remaining];
+  const unchanged = desired.every((item, index) => Number(item.id) === Number(state.backlogItems[index]?.id));
+  if (unchanged) {
+    closeBacklogSprintOrderDialog(true);
+    showNotice("Sprint items are already at the top of the backlog in sprint order.", "info", "", null, 5000);
+    return;
+  }
+  state.backlogSprintOrdering = true;
+  els.backlogSprintOrderError.textContent = "";
+  els.backlogSprintOrderSubmit.disabled = true;
+  els.backlogSprintOrderSubmit.textContent = "Moving…";
+  try {
+    await azure(`/${encodeURIComponent(team.name)}/_apis/work/workitemsorder?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ids: ordered.sprintItems.map(item => Number(item.id)),
+        previousId: 0,
+        nextId: ordered.remaining.length ? Number(ordered.remaining[0].id) : 0
+      })
+    });
+    state.backlogItems = desired;
+    state.backlogSprintOrdering = false;
+    closeBacklogSprintOrderDialog(true);
+    renderBacklog();
+    showNotice(`${ordered.sprintItems.length} ${ordered.sprintItems.length === 1 ? "work item" : "work items"} moved to the top in sprint order.`, "info", "", null, 5000);
+  } catch (error) {
+    console.error(error);
+    els.backlogSprintOrderError.textContent = error.auth
+      ? "The backlog could not be reordered. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The backlog could not be reordered.";
+  } finally {
+    state.backlogSprintOrdering = false;
+    els.backlogSprintOrderSubmit.disabled = false;
+    els.backlogSprintOrderSubmit.textContent = "Move to top";
+    els.backlogSprintOrderAction.disabled = !backlogSprintOrder().sprintItems.length;
+  }
 }
 
 function createBacklogSection(title, items, label) {
@@ -11626,7 +11727,7 @@ function setLoading(value) {
   }
 }
 
-function showNotice(message, type = "info", actionLabel = "", action = null) {
+function showNotice(message, type = "info", actionLabel = "", action = null, duration = 0) {
   const notice = document.createElement("div");
   notice.className = `notice ${type === "error" ? "error" : ""}`;
   const text = document.createElement("span");
@@ -11640,6 +11741,11 @@ function showNotice(message, type = "info", actionLabel = "", action = null) {
     notice.append(button);
   }
   els.status.replaceChildren(notice);
+  if (duration > 0) {
+    window.setTimeout(() => {
+      if (notice.isConnected && els.status.contains(notice)) notice.remove();
+    }, duration);
+  }
 }
 
 function clearNotice() { els.status.replaceChildren(); }
@@ -12333,6 +12439,21 @@ els.backlogPositionDialog.addEventListener("close", () => {
   state.backlogPositionGroupKey = "";
   els.backlogPositionError.textContent = "";
 });
+els.backlogSprintOrderAction.addEventListener("click", openBacklogSprintOrderDialog);
+els.backlogSprintOrderForm.addEventListener("submit", moveSprintItemsToBacklogTop);
+document.querySelectorAll("[data-close-backlog-sprint-order]").forEach(button => {
+  button.addEventListener("click", () => closeBacklogSprintOrderDialog());
+});
+els.backlogSprintOrderDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeBacklogSprintOrderDialog();
+});
+els.backlogSprintOrderDialog.addEventListener("click", event => {
+  if (event.target === els.backlogSprintOrderDialog) closeBacklogSprintOrderDialog();
+});
+els.backlogSprintOrderDialog.addEventListener("close", () => {
+  els.backlogSprintOrderError.textContent = "";
+});
 for (const [button, content] of [
   [els.filterPanelToggle, els.filterPanelBody],
   [els.forYouCustomFiltersToggle, els.forYouCustomFiltersBody],
@@ -12497,6 +12618,7 @@ document.addEventListener("click", event => {
   if (!els.createWorkItemControl.contains(event.target)) closeCreateWorkItemMenu();
   if (!els.sprintTitleControl.contains(event.target)) closeSprintMenu();
   if (!els.boardGroupControl.contains(event.target)) els.boardGroupControl.open = false;
+  if (!els.backlogFilterActions.contains(event.target)) els.backlogFilterActions.open = false;
   if (!els.workItemStateControl.contains(event.target)) closeWorkItemStateMenu();
   if (!els.workItemAssigneeControl.contains(event.target)) closeWorkItemAssigneeMenu();
   if (!els.workItemTagsControl.contains(event.target)) closeWorkItemTagsMenu();
