@@ -151,6 +151,7 @@ const state = {
   roadmapEpicUpdating: false,
   roadmapForecastContext: null,
   roadmapForecastUpdating: false,
+  roadmapSprintsCreating: false,
   wikis: [],
   wikiId: localStorage.getItem(STORAGE.wiki) || "",
   wikiProjectName: "",
@@ -331,6 +332,14 @@ const els = {
   roadmapStatus: document.querySelector("#roadmapStatus"),
   roadmapContent: document.querySelector("#roadmapContent"),
   roadmapCurrentQuarter: document.querySelector("#roadmapCurrentQuarter"),
+  roadmapCreateSprints: document.querySelector("#roadmapCreateSprints"),
+  roadmapCreateSprintsDialog: document.querySelector("#roadmapCreateSprintsDialog"),
+  roadmapCreateSprintsForm: document.querySelector("#roadmapCreateSprintsForm"),
+  roadmapSprintStartDate: document.querySelector("#roadmapSprintStartDate"),
+  roadmapSprintWorkdays: document.querySelector("#roadmapSprintWorkdays"),
+  roadmapSprintAmount: document.querySelector("#roadmapSprintAmount"),
+  roadmapCreateSprintsError: document.querySelector("#roadmapCreateSprintsError"),
+  roadmapCreateSprintsSubmit: document.querySelector("#roadmapCreateSprintsSubmit"),
   roadmapForecastDialog: document.querySelector("#roadmapForecastDialog"),
   roadmapForecastLane: document.querySelector("#roadmapForecastLane"),
   roadmapForecastContext: document.querySelector("#roadmapForecastContext"),
@@ -1883,6 +1892,149 @@ function roadmapIterationDates(iteration) {
   return iteration.path || "";
 }
 
+function sprintDateInputValue(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function sprintDateFromInput(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addSprintCalendarDays(date, days) {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function sprintFinishDate(start, workdays) {
+  let date = new Date(start);
+  let remaining = workdays;
+  while (remaining > 0) {
+    const day = date.getUTCDay();
+    if (day !== 0 && day !== 6) remaining--;
+    if (remaining > 0) date = addSprintCalendarDays(date, 1);
+  }
+  return date;
+}
+
+function defaultSprintStartDate() {
+  const finishes = state.iterations
+    .map(iteration => new Date(iteration.attributes?.finishDate || ""))
+    .filter(date => !Number.isNaN(date.getTime()));
+  if (!finishes.length) {
+    const today = new Date();
+    return new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
+  }
+  const latest = new Date(Math.max(...finishes.map(date => date.getTime())));
+  return addSprintCalendarDays(latest, 1);
+}
+
+function nextSprintNaming() {
+  const numbered = state.iterations.map(iteration => {
+    const match = String(iteration.name || "").match(/^(.*?)(\d+)\s*$/);
+    return match ? { prefix: match[1], number: Number(match[2]), iteration } : null;
+  }).filter(Boolean);
+  const latest = chronologicalIterations().reverse().find(iteration => numbered.some(item => item.iteration === iteration));
+  const prefix = numbered.find(item => item.iteration === latest)?.prefix || "Sprint ";
+  const highest = numbered
+    .filter(item => item.prefix.toLocaleLowerCase("en") === prefix.toLocaleLowerCase("en"))
+    .reduce((value, item) => Math.max(value, item.number), 0);
+  return { prefix, number: highest + 1 };
+}
+
+function sprintParentApiPath() {
+  const last = chronologicalIterations().at(-1);
+  const segments = String(last?.path || "").split("\\").filter(Boolean);
+  if (segments[0]?.toLocaleLowerCase("en") === state.projectName.toLocaleLowerCase("en")) segments.shift();
+  segments.pop();
+  return segments.map(segment => encodeURIComponent(segment)).join("/");
+}
+
+function openRoadmapCreateSprintsDialog() {
+  if (state.roadmapSprintsCreating || !state.teamId) return;
+  els.roadmapSprintStartDate.value = sprintDateInputValue(defaultSprintStartDate());
+  els.roadmapSprintWorkdays.value = "10";
+  els.roadmapSprintAmount.value = "1";
+  els.roadmapCreateSprintsError.textContent = "";
+  els.roadmapCreateSprintsDialog.showModal();
+  requestAnimationFrame(() => els.roadmapSprintStartDate.focus());
+}
+
+function closeRoadmapCreateSprintsDialog() {
+  if (!state.roadmapSprintsCreating) els.roadmapCreateSprintsDialog.close();
+}
+
+async function createRoadmapSprints(event) {
+  event.preventDefault();
+  if (state.roadmapSprintsCreating) return;
+  const start = sprintDateFromInput(els.roadmapSprintStartDate.value);
+  const workdays = Number(els.roadmapSprintWorkdays.value);
+  const amount = Number(els.roadmapSprintAmount.value);
+  if (!start || !Number.isInteger(workdays) || workdays < 1 || workdays > 260
+    || !Number.isInteger(amount) || amount < 1 || amount > 100) {
+    els.roadmapCreateSprintsError.textContent = "Enter a valid start date, workday count, and amount.";
+    return;
+  }
+  const team = state.teams.find(value => value.id === state.teamId);
+  if (!team) {
+    els.roadmapCreateSprintsError.textContent = "Select a team before creating sprints.";
+    return;
+  }
+  state.roadmapSprintsCreating = true;
+  els.roadmapCreateSprintsSubmit.disabled = true;
+  els.roadmapCreateSprintsSubmit.textContent = "Creating…";
+  els.roadmapCreateSprintsError.textContent = "";
+  const naming = nextSprintNaming();
+  const parentPath = sprintParentApiPath();
+  let sprintStart = start;
+  const created = [];
+  try {
+    for (let index = 0; index < amount; index++) {
+      const name = `${naming.prefix}${naming.number + index}`;
+      const finish = sprintFinishDate(sprintStart, workdays);
+      const node = await azure(`/_apis/wit/classificationnodes/Iterations${parentPath ? `/${parentPath}` : ""}?api-version=7.1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          attributes: {
+            startDate: `${sprintDateInputValue(sprintStart)}T00:00:00Z`,
+            finishDate: `${sprintDateInputValue(finish)}T00:00:00Z`
+          }
+        })
+      });
+      const iteration = await azure(`/${encodeURIComponent(team.name)}/_apis/work/teamsettings/iterations?api-version=7.1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: node.identifier })
+      });
+      created.push(iteration);
+      sprintStart = addSprintCalendarDays(finish, 1);
+    }
+    const iterationsResult = await azure(`/${encodeURIComponent(team.name)}/_apis/work/teamsettings/iterations?api-version=7.1`);
+    state.iterations = iterationsResult.value || [...state.iterations, ...created];
+    state.iterationStoriesCache.clear();
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    const period = roadmapPeriodForDate(start);
+    state.roadmapYear = period.year;
+    state.roadmapQuarter = period.quarter;
+    state.roadmapMessage = `${created.length} ${created.length === 1 ? "sprint" : "sprints"} created.`;
+    state.roadmapSprintsCreating = false;
+    closeRoadmapCreateSprintsDialog();
+    writeAppRoute(currentAppRoute({ view: "roadmap", year: period.year, quarter: period.quarter }), { replace: true });
+    await loadRoadmap(true);
+  } catch (error) {
+    console.error(error);
+    els.roadmapCreateSprintsError.textContent = `${created.length ? `${created.length} created. ` : ""}${error.message || "The sprints could not be created."}`;
+  } finally {
+    state.roadmapSprintsCreating = false;
+    els.roadmapCreateSprintsSubmit.disabled = false;
+    els.roadmapCreateSprintsSubmit.textContent = "Create";
+  }
+}
+
 function createRoadmapWorkItemButton(item, className) {
   const button = document.createElement("button");
   button.type = "button";
@@ -2319,6 +2471,7 @@ function renderRoadmap() {
   const data = state.roadmapData;
   const currentPeriod = roadmapPeriodForIteration(state.iterations.find(iteration => iteration.id === state.currentIterationId) || state.iteration);
   els.roadmapCurrentQuarter.disabled = state.roadmapYear === currentPeriod.year && state.roadmapQuarter === currentPeriod.quarter;
+  els.roadmapCreateSprints.disabled = !team || state.roadmapSprintsCreating;
   els.roadmapMeta.textContent = team
     ? `${team.name} · Q${state.roadmapQuarter} ${state.roadmapYear} · ${iterations.length} ${iterations.length === 1 ? "sprint" : "sprints"}${data ? ` · ${data.featureCount} committed · ${data.forecastCount} forecasted` : ""}`
     : "Connect Azure DevOps to load the roadmap.";
@@ -12063,6 +12216,9 @@ document.querySelectorAll("[data-close-create-work-item]").forEach(button => but
 document.querySelectorAll("[data-close-remaining-points]").forEach(button => button.addEventListener("click", () => closeRemainingPointsDialog(null)));
 document.querySelectorAll("[data-close-roadmap-forecast]").forEach(button => button.addEventListener("click", closeRoadmapForecastDialog));
 document.querySelectorAll("[data-close-roadmap-epic]").forEach(button => button.addEventListener("click", closeRoadmapEpicDialog));
+document.querySelectorAll("[data-close-roadmap-create-sprints]").forEach(button => button.addEventListener("click", closeRoadmapCreateSprintsDialog));
+els.roadmapCreateSprints.addEventListener("click", openRoadmapCreateSprintsDialog);
+els.roadmapCreateSprintsForm.addEventListener("submit", createRoadmapSprints);
 els.roadmapForecastSearch.addEventListener("input", renderRoadmapForecastChoices);
 els.roadmapEpicSearch.addEventListener("input", renderRoadmapEpicChoices);
 els.roadmapForecastDialog.addEventListener("cancel", event => {
@@ -12084,6 +12240,12 @@ els.roadmapEpicDialog.addEventListener("click", event => {
 });
 els.roadmapEpicDialog.addEventListener("close", () => {
   if (!state.roadmapEpicUpdating) state.roadmapEpicContext = null;
+});
+els.roadmapCreateSprintsDialog.addEventListener("cancel", event => {
+  if (state.roadmapSprintsCreating) event.preventDefault();
+});
+els.roadmapCreateSprintsDialog.addEventListener("click", event => {
+  if (event.target === els.roadmapCreateSprintsDialog) closeRoadmapCreateSprintsDialog();
 });
 els.remainingPointsForm.addEventListener("submit", event => {
   event.preventDefault();

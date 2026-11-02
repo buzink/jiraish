@@ -717,6 +717,10 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .form-error { min-height: 18px; margin: 12px 0 0; color: #de350b; font-size: 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .dialog-actions.inline { margin-top: 0; }
+.roadmap-heading-actions { display: flex; align-items: center; gap: 8px; }
+.roadmap-create-sprints-dialog { width: min(440px, calc(100vw - 32px)); }
+.roadmap-create-sprints-dialog .issue-breadcrumb { margin-bottom: 6px; }
+.roadmap-create-sprints-dialog button:disabled { cursor: not-allowed; opacity: .6; }
 .create-work-item-dialog { width: min(500px, calc(100vw - 32px)); }
 .create-work-item-dialog .dialog-heading { margin-bottom: 20px; }
 .create-work-item-dialog .issue-breadcrumb { margin-bottom: 6px; }

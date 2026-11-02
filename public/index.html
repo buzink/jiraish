@@ -271,7 +271,10 @@
             <h1 id="roadmapTitle">Roadmap</h1>
             <p id="roadmapMeta" class="sprint-meta">Committed Features are derived from Stories assigned to sprints.</p>
           </div>
-          <button id="roadmapCurrentQuarter" class="secondary-button" type="button">Current quarter</button>
+          <div class="roadmap-heading-actions">
+            <button id="roadmapCreateSprints" class="primary-button" type="button">Create sprints</button>
+            <button id="roadmapCurrentQuarter" class="secondary-button" type="button">Current quarter</button>
+          </div>
         </header>
         <div id="roadmapStatus" class="roadmap-status" aria-live="polite"></div>
         <div id="roadmapContent" class="roadmap-content"></div>
@@ -768,6 +771,36 @@
           <button class="secondary-button" type="button" data-close-roadmap-epic>Cancel</button>
         </div>
       </div>
+    </dialog>
+
+    <dialog id="roadmapCreateSprintsDialog" class="dialog roadmap-create-sprints-dialog" aria-labelledby="roadmapCreateSprintsHeading">
+      <form id="roadmapCreateSprintsForm">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span>Roadmap</span><span aria-hidden="true">/</span><span>Create sprints</span></div>
+            <h2 id="roadmapCreateSprintsHeading">Create sprints</h2>
+            <p>Create consecutive sprints and add them to the selected team.</p>
+          </div>
+          <button class="close-button" type="button" data-close-roadmap-create-sprints aria-label="Close">×</button>
+        </div>
+        <label for="roadmapSprintStartDate">
+          Start date
+          <input id="roadmapSprintStartDate" type="date" required />
+        </label>
+        <label for="roadmapSprintWorkdays">
+          Workdays
+          <input id="roadmapSprintWorkdays" type="number" min="1" max="260" step="1" value="10" required />
+        </label>
+        <label for="roadmapSprintAmount">
+          Amount
+          <input id="roadmapSprintAmount" type="number" min="1" max="100" step="1" value="1" required />
+        </label>
+        <p id="roadmapCreateSprintsError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-roadmap-create-sprints>Cancel</button>
+          <button id="roadmapCreateSprintsSubmit" class="primary-button" type="submit">Create</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="boardStateDialog" class="dialog board-state-dialog" aria-labelledby="boardStateHeading">
