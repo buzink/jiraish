@@ -957,7 +957,8 @@
                 <button class="is-active" type="button" role="tab" aria-selected="true" data-activity-tab="comments">Comments <span id="workItemCommentCount" class="comment-count">0</span></button>
                 <button type="button" role="tab" aria-selected="false" data-activity-tab="history">History <span id="workItemHistoryCount" class="comment-count">0</span></button>
                 <button type="button" role="tab" aria-selected="false" data-activity-tab="pull-requests">Pull requests <span id="workItemPullRequestCount" class="comment-count">0</span></button>
-                <button type="button" role="tab" aria-selected="false" data-activity-tab="releases">Releases <span id="workItemReleaseCount" class="comment-count">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="releases">Builds <span id="workItemReleaseCount" class="comment-count">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-activity-tab="deployments">Deployments <span id="workItemDeploymentCount" class="comment-count">0</span></button>
               </div>
               <div id="workItemAllPanel" class="activity-panel" role="tabpanel" hidden>
                 <div id="workItemActivityStatus" class="comments-status" aria-live="polite"></div>
@@ -1000,9 +1001,14 @@
                 <div id="workItemPullRequests" class="work-item-pull-request-list"></div>
               </div>
               <div id="workItemReleasesPanel" class="activity-panel" role="tabpanel" hidden>
-                <h4 class="activity-panel-title">Releases</h4>
+                <h4 class="activity-panel-title">Builds</h4>
                 <div id="workItemReleasesStatus" class="comments-status" aria-live="polite"></div>
                 <div id="workItemReleases" class="work-item-release-list"></div>
+              </div>
+              <div id="workItemDeploymentsPanel" class="activity-panel" role="tabpanel" hidden>
+                <h4 class="activity-panel-title">Deployments</h4>
+                <div id="workItemDeploymentsStatus" class="comments-status" aria-live="polite"></div>
+                <div id="workItemDeployments" class="work-item-release-list"></div>
               </div>
             </section>
           </main>

@@ -643,6 +643,7 @@ const els = {
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
   workItemPullRequestCount: document.querySelector("#workItemPullRequestCount"),
   workItemReleaseCount: document.querySelector("#workItemReleaseCount"),
+  workItemDeploymentCount: document.querySelector("#workItemDeploymentCount"),
   workItemAttachmentsSection: document.querySelector("#workItemAttachmentsSection"),
   workItemAttachmentCount: document.querySelector("#workItemAttachmentCount"),
   workItemAttachmentAdd: document.querySelector("#workItemAttachmentAdd"),
@@ -659,6 +660,7 @@ const els = {
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
   workItemPullRequestsPanel: document.querySelector("#workItemPullRequestsPanel"),
   workItemReleasesPanel: document.querySelector("#workItemReleasesPanel"),
+  workItemDeploymentsPanel: document.querySelector("#workItemDeploymentsPanel"),
   workItemActivityStatus: document.querySelector("#workItemActivityStatus"),
   workItemActivity: document.querySelector("#workItemActivity"),
   workItemCommentsStatus: document.querySelector("#workItemCommentsStatus"),
@@ -678,6 +680,8 @@ const els = {
   workItemPullRequests: document.querySelector("#workItemPullRequests"),
   workItemReleasesStatus: document.querySelector("#workItemReleasesStatus"),
   workItemReleases: document.querySelector("#workItemReleases"),
+  workItemDeploymentsStatus: document.querySelector("#workItemDeploymentsStatus"),
+  workItemDeployments: document.querySelector("#workItemDeployments"),
   workItemLoadStatus: document.querySelector("#workItemLoadStatus"),
   openInAzure: document.querySelector("#openInAzure")
 };
@@ -11216,19 +11220,29 @@ function deploymentStatusDisplay(value) {
 }
 
 function renderWorkItemDeployments(deployments, loading = false, error = "") {
+  const deployedRuns = deployments.filter(deployment =>
+    deployment.sourceType === "classic" || (deployment.environments || []).length > 0
+  );
   els.workItemReleaseCount.textContent = String(deployments.length);
+  els.workItemDeploymentCount.textContent = String(deployedRuns.length);
   els.workItemReleasesStatus.classList.toggle("is-error", Boolean(error));
+  els.workItemDeploymentsStatus.classList.toggle("is-error", Boolean(error));
   if (loading) {
-    els.workItemReleasesStatus.textContent = "Loading releases…";
-    els.workItemReleases.replaceChildren(...Array.from({ length: 2 }, () => {
+    els.workItemReleasesStatus.textContent = "Loading builds…";
+    els.workItemDeploymentsStatus.textContent = "Loading deployments…";
+    const skeletons = () => Array.from({ length: 2 }, () => {
       const skeleton = document.createElement("div");
       skeleton.className = "comment-skeleton";
       return skeleton;
-    }));
+    });
+    els.workItemReleases.replaceChildren(...skeletons());
+    els.workItemDeployments.replaceChildren(...skeletons());
     return;
   }
-  els.workItemReleasesStatus.textContent = error || (!deployments.length ? "No related releases." : "");
+  els.workItemReleasesStatus.textContent = error || (!deployments.length ? "No related builds." : "");
+  els.workItemDeploymentsStatus.textContent = error || (!deployedRuns.length ? "No related deployments." : "");
   els.workItemReleases.replaceChildren(...deployments.map(createWorkItemDeploymentEntry));
+  els.workItemDeployments.replaceChildren(...deployedRuns.map(createWorkItemDeploymentEntry));
 }
 
 function createWorkItemDeploymentEntry(deployment) {
@@ -11382,6 +11396,7 @@ function setActivityTab(tab) {
   els.workItemHistoryPanel.hidden = tab !== "history";
   els.workItemPullRequestsPanel.hidden = tab !== "pull-requests";
   els.workItemReleasesPanel.hidden = tab !== "releases";
+  els.workItemDeploymentsPanel.hidden = tab !== "deployments";
 }
 
 function htmlToText(value) {
