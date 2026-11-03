@@ -98,6 +98,7 @@ const state = {
   teams: [],
   teamId: localStorage.getItem(STORAGE.team) || "",
   projectName: localStorage.getItem(STORAGE.project) || "",
+  azureProjectAliases: new Set(),
   teamName: "",
   authenticatedUser: null,
   teamMembers: [],
@@ -229,6 +230,7 @@ const state = {
   githubWorkItemPullRequestsRequestTokens: new Map(),
   githubCommitBuildIdsCache: new Map(),
   azureGithubPullRequestBuildIdsCache: new Map(),
+  githubCommitAncestryCache: new Map(),
   workItemDeploymentsCache: new Map(),
   workItemDeploymentsErrors: new Map(),
   workItemDeploymentsRequestTokens: new Map(),
@@ -1273,15 +1275,20 @@ async function loadBoard({ openSettings = false } = {}) {
   try {
     const configured = parseAzureUrl(state.orgUrl);
     let project = configured.project;
+    let projectIdentity = null;
     if (!project) {
       const projectsResult = await azure("/_apis/projects?$top=1000&api-version=7.1", {}, "organization");
       const projects = projectsResult.value || [];
       if (!projects.length) throw new Error("No Azure DevOps projects were found in this organization.");
-      project = projects.find(value => value.name === state.projectName)?.name || projects[0].name;
+      projectIdentity = projects.find(value => value.name === state.projectName) || projects[0];
+      project = projectIdentity.name;
     }
-    state.projectName = project;
-    localStorage.setItem(STORAGE.project, project);
-    const teamsResult = await azure(`/_apis/projects/${encodeURIComponent(project)}/teams?api-version=7.1`, {}, "organization");
+    projectIdentity ||= await azure(`/_apis/projects/${encodeURIComponent(project)}?api-version=7.1`, {}, "organization");
+    state.projectName = projectIdentity.name || project;
+    state.azureProjectAliases = new Set([project, projectIdentity.id, projectIdentity.name]
+      .filter(Boolean).map(value => String(value).toLocaleLowerCase("en")));
+    localStorage.setItem(STORAGE.project, state.projectName);
+    const teamsResult = await azure(`/_apis/projects/${encodeURIComponent(state.projectName)}/teams?api-version=7.1`, {}, "organization");
     state.teams = teamsResult.value || [];
     if (!state.teams.length) throw new Error("No Azure DevOps teams were found in this project.");
     const configuredTeam = configured.team.toLocaleLowerCase("en");
@@ -1292,7 +1299,7 @@ async function loadBoard({ openSettings = false } = {}) {
     updateBranding(selectedTeam);
     localStorage.setItem(STORAGE.team, state.teamId);
     [state.teamMembers, state.authenticatedUser] = await Promise.all([
-      loadTeamMembers(project, selectedTeam),
+      loadTeamMembers(state.projectName, selectedTeam),
       loadAuthenticatedUser()
     ]);
     updateBranding(selectedTeam);
@@ -3382,7 +3389,7 @@ async function github(path) {
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${state.githubToken}`,
-      "X-GitHub-Api-Version": "2026-03-10"
+      "X-GitHub-Api-Version": "2022-11-28"
     }
   });
   let result = null;
@@ -3474,7 +3481,12 @@ function azureBuildIdFromGithubTarget(value) {
       [project = ""] = segments;
     } else return null;
     if (organization.toLocaleLowerCase("en") !== context.organization.toLocaleLowerCase("en")) return null;
-    if (project && project.toLocaleLowerCase("en") !== context.project.toLocaleLowerCase("en")) return null;
+    const projectAliases = new Set([
+      ...state.azureProjectAliases,
+      context.project.toLocaleLowerCase("en"),
+      state.projectName.toLocaleLowerCase("en")
+    ].filter(Boolean));
+    if (project && !projectAliases.has(project.toLocaleLowerCase("en"))) return null;
     const buildId = Number(url.searchParams.get("buildId"));
     return Number.isInteger(buildId) && buildId > 0 ? buildId : null;
   } catch {
@@ -3491,19 +3503,8 @@ async function githubCommitAzureBuildIds(repository, sha) {
   }
   const [owner, name] = repository.split("/");
   const commitPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(normalizedSha)}`;
-  const request = Promise.allSettled([
-    github(`${commitPath}/status`),
-    github(`${commitPath}/check-runs?per_page=100`)
-  ]).then(results => {
-    const urls = [];
-    if (results[0].status === "fulfilled") {
-      (results[0].value?.statuses || []).forEach(status => urls.push(status.target_url));
-    }
-    if (results[1].status === "fulfilled") {
-      (results[1].value?.check_runs || []).forEach(checkRun => {
-        urls.push(checkRun.details_url, checkRun.html_url);
-      });
-    }
+  const request = github(`${commitPath}/status`).then(result => {
+    const urls = (result?.statuses || []).map(status => status.target_url);
     return [...new Set(urls.map(azureBuildIdFromGithubTarget).filter(Boolean))];
   }).catch(error => {
     state.githubCommitBuildIdsCache.delete(cacheKey);
@@ -3515,10 +3516,18 @@ async function githubCommitAzureBuildIds(repository, sha) {
 
 function githubRepositoryFromRemoteUrl(value) {
   const text = String(value || "").trim();
-  const apiMatch = text.match(/github\.com\/repos\/([^/]+)\/([^/?#]+)(?:[/?#]|$)/i);
-  if (apiMatch) return `${decodeURIComponent(apiMatch[1])}/${decodeURIComponent(apiMatch[2]).replace(/\.git$/i, "")}`;
-  const remoteMatch = text.match(/github\.com[/:]([^/\s:]+)\/([^/\s?#]+)(?:[/?#]|$)/i);
-  return remoteMatch ? `${decodeURIComponent(remoteMatch[1])}/${decodeURIComponent(remoteMatch[2]).replace(/\.git$/i, "")}` : "";
+  try {
+    const url = new URL(text);
+    if (["github.com", "api.github.com"].includes(url.hostname.toLocaleLowerCase("en"))) {
+      const parts = url.pathname.split("/").filter(Boolean).map(part => decodeURIComponent(part));
+      if (url.hostname.toLocaleLowerCase("en") === "api.github.com" && parts[0]?.toLocaleLowerCase("en") === "repos") parts.shift();
+      if (parts.length >= 2) return `${parts[0]}/${parts[1].replace(/\.git$/i, "")}`;
+    }
+  } catch {}
+  const sshMatch = text.match(/^(?:ssh:\/\/)?git@github\.com(?::\d+)?[/:]([^/\s:]+)\/([^/\s?#]+)(?:[/?#]|$)/i);
+  if (sshMatch) return `${decodeURIComponent(sshMatch[1])}/${decodeURIComponent(sshMatch[2]).replace(/\.git$/i, "")}`;
+  const shorthandMatch = text.match(/^github:([^/\s:]+)\/([^/\s?#]+)(?:[/?#]|$)/i);
+  return shorthandMatch ? `${decodeURIComponent(shorthandMatch[1])}/${decodeURIComponent(shorthandMatch[2]).replace(/\.git$/i, "")}` : "";
 }
 
 function azureBuildRepositoryName(build) {
@@ -3543,8 +3552,44 @@ function azureBuildMatchesGithubPullRequest(build, pullRequest) {
   const sourceBranch = String(build.sourceBranch || "").toLocaleLowerCase("en");
   const pullNumber = Number(pullRequest.number);
   if (sourceBranch === `refs/pull/${pullNumber}/merge` || sourceBranch === `refs/pull/${pullNumber}/head`) return true;
-  return Object.entries(build.triggerInfo || {}).some(([key, value]) =>
-    /(?:pr|pull.?request).*number/i.test(key) && Number(value) === pullNumber);
+  const triggerEntries = Object.entries(build.triggerInfo || {});
+  if (triggerEntries.some(([key, value]) =>
+    /(?:pr|pull.?request).*number/i.test(key) && Number(value) === pullNumber)) return true;
+  const mergeMessagePattern = new RegExp(`\\(#${pullNumber}\\)|pull request\\s+#?${pullNumber}\\b`, "i");
+  return triggerEntries.some(([key, value]) =>
+    /message/i.test(key) && mergeMessagePattern.test(String(value || "")));
+}
+
+async function githubCommitDescendsFrom(repository, ancestorSha, descendantSha) {
+  const ancestor = String(ancestorSha || "").trim().toLocaleLowerCase("en");
+  const descendant = String(descendantSha || "").trim().toLocaleLowerCase("en");
+  if (!repository || !ancestor || !descendant) return false;
+  if (ancestor === descendant) return true;
+  const cacheKey = `${repository}:${ancestor}:${descendant}`.toLocaleLowerCase("en");
+  if (state.githubCommitAncestryCache.has(cacheKey)) return state.githubCommitAncestryCache.get(cacheKey);
+  const [owner, name] = repository.split("/");
+  const request = github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}?per_page=1`)
+    .then(comparison => comparison.status === "ahead"
+      && String(comparison.merge_base_commit?.sha || "").toLocaleLowerCase("en") === ancestor)
+    .catch(error => {
+      state.githubCommitAncestryCache.delete(cacheKey);
+      throw error;
+    });
+  state.githubCommitAncestryCache.set(cacheKey, request);
+  return request;
+}
+
+function firstDescendantDeploymentBuildIds(ancestryMatches, deploymentsByBuildId) {
+  const firstBuildByEnvironment = new Map();
+  ancestryMatches.filter(match => match.descends).forEach(({ build }) => {
+    (deploymentsByBuildId.get(Number(build.id)) || []).forEach(environment => {
+      const environmentKey = String(environment.id || environment.name || "").toLocaleLowerCase("en");
+      if (environmentKey && !firstBuildByEnvironment.has(environmentKey)) {
+        firstBuildByEnvironment.set(environmentKey, Number(build.id));
+      }
+    });
+  });
+  return [...firstBuildByEnvironment.values()];
 }
 
 async function azureBuildIdsForGithubPullRequest(pullRequest) {
@@ -3559,15 +3604,59 @@ async function azureBuildIdsForGithubPullRequest(pullRequest) {
   const created = new Date(pullRequest.createdAt || pullRequest.updatedAt || 0).getTime();
   const completed = new Date(pullRequest.mergedAt || pullRequest.updatedAt || pullRequest.createdAt || 0).getTime();
   const startTime = new Date(Math.max(0, Math.min(created || completed, completed || created) - 6 * 60 * 60 * 1000));
-  const endTime = new Date(Math.max(created, completed) + 24 * 60 * 60 * 1000);
-  const timeQuery = Number.isFinite(startTime.getTime()) && Number.isFinite(endTime.getTime())
-    ? `&minTime=${encodeURIComponent(startTime.toISOString())}&maxTime=${encodeURIComponent(endTime.toISOString())}`
+  const timeQuery = Number.isFinite(startTime.getTime())
+    ? `&minTime=${encodeURIComponent(startTime.toISOString())}`
     : "";
-  const request = azure(`/_apis/build/builds?$top=1000&queryOrder=queueTimeDescending${timeQuery}&api-version=7.1`)
-    .then(result => (result?.value || [])
-      .filter(build => azureBuildMatchesGithubPullRequest(build, pullRequest))
-      .map(build => Number(build.id))
-      .filter(buildId => Number.isInteger(buildId) && buildId > 0))
+  const request = azure(`/_apis/build/builds?$top=1000&queryOrder=queueTimeAscending${timeQuery}&api-version=7.1`)
+    .then(async result => {
+      const builds = result?.value || [];
+      const directBuildIds = builds
+        .filter(build => azureBuildMatchesGithubPullRequest(build, pullRequest))
+        .map(build => Number(build.id))
+        .filter(buildId => Number.isInteger(buildId) && buildId > 0);
+      const expectedRepository = pullRequest.repository.toLocaleLowerCase("en");
+      const expectedBranch = pullRequest.baseRef ? `refs/heads/${pullRequest.baseRef}`.toLocaleLowerCase("en") : "";
+      const directMergeBuild = builds.find(build =>
+        directBuildIds.includes(Number(build.id))
+        && (!expectedBranch || String(build.sourceBranch || "").toLocaleLowerCase("en") === expectedBranch)
+        && build.sourceVersion);
+      const mergeSha = pullRequest.mergeSha || directMergeBuild?.sourceVersion || "";
+      if (!mergeSha || !pullRequest.mergedAt) return directBuildIds;
+      const mergedAt = new Date(pullRequest.mergedAt).getTime();
+      const candidates = builds.filter(build =>
+        azureBuildRepositoryName(build) === expectedRepository
+        && (!expectedBranch || String(build.sourceBranch || "").toLocaleLowerCase("en") === expectedBranch)
+        && (new Date(build.queueTime || build.startTime || 0).getTime() || 0) >= mergedAt
+        && build.sourceVersion
+      );
+      if (!candidates.length) return directBuildIds;
+      try {
+        const deploymentsByBuildId = await loadYamlEnvironmentDeployments(candidates);
+        const deployedCandidates = candidates
+          .filter(build => (deploymentsByBuildId.get(Number(build.id)) || []).length)
+          .sort((left, right) => new Date(left.queueTime || 0) - new Date(right.queueTime || 0));
+        const environmentKeys = new Set(deployedCandidates.flatMap(build =>
+          (deploymentsByBuildId.get(Number(build.id)) || [])
+            .map(environment => String(environment.id || environment.name || "").toLocaleLowerCase("en"))
+            .filter(Boolean)));
+        const matchedEnvironmentKeys = new Set();
+        const ancestryMatches = [];
+        for (const build of deployedCandidates) {
+          const descends = await githubCommitDescendsFrom(pullRequest.repository, mergeSha, build.sourceVersion);
+          ancestryMatches.push({ build, descends });
+          if (!descends) continue;
+          (deploymentsByBuildId.get(Number(build.id)) || []).forEach(environment => {
+            const environmentKey = String(environment.id || environment.name || "").toLocaleLowerCase("en");
+            if (environmentKey) matchedEnvironmentKeys.add(environmentKey);
+          });
+          if (matchedEnvironmentKeys.size === environmentKeys.size) break;
+        }
+        return [...directBuildIds, ...firstDescendantDeploymentBuildIds(ancestryMatches, deploymentsByBuildId)];
+      } catch (error) {
+        console.warn(`Deployment ancestry for GitHub pull request ${pullRequest.repository}#${pullRequest.number} could not be discovered.`, error);
+        return directBuildIds;
+      }
+    })
     .then(buildIds => [...new Set(buildIds)])
     .catch(error => {
       state.azureGithubPullRequestBuildIdsCache.delete(cacheKey);
@@ -3615,6 +3704,8 @@ async function loadGithubPullRequestsForWorkItem(item) {
         draft: Boolean(detail.draft),
         mergedAt: detail.merged_at || pullRequest.pull_request?.merged_at || "",
         headSha: detail.head?.sha || "",
+        mergeSha: detail.merge_commit_sha || "",
+        baseRef: detail.base?.ref || "",
         commitShas,
         azureBuildIds: [...new Set(buildIdGroups.flat())]
       };
@@ -12057,6 +12148,7 @@ els.connectionForm.addEventListener("submit", event => {
     state.workItemTypes = [];
     state.workItemTypesProject = "";
     state.authenticatedUser = null;
+    state.azureProjectAliases = new Set();
     state.forYouProjectName = "";
     state.forYouSelectedUser = null;
     state.forYouUserKey = "";
@@ -12074,6 +12166,7 @@ els.connectionForm.addEventListener("submit", event => {
       state.yamlBuildWorkItemsCache.clear();
       state.githubCommitBuildIdsCache.clear();
       state.azureGithubPullRequestBuildIdsCache.clear();
+      state.githubCommitAncestryCache.clear();
       state.recentYamlBuildsProject = "";
       state.recentYamlBuilds = [];
       state.recentYamlBuildsLoaded = false;
@@ -12113,6 +12206,7 @@ els.connectionForm.addEventListener("submit", event => {
       state.releaseReadiness.githubRepositoryMatches.clear();
       state.githubCommitBuildIdsCache.clear();
       state.azureGithubPullRequestBuildIdsCache.clear();
+      state.githubCommitAncestryCache.clear();
       state.workItemDeploymentsCache.clear();
       state.workItemDeploymentsErrors.clear();
       state.workItemDeploymentsRequestTokens.clear();
@@ -12189,6 +12283,7 @@ els.settingsForm.addEventListener("submit", async event => {
     state.githubWorkItemPullRequestsRequestTokens.clear();
     state.githubCommitBuildIdsCache.clear();
     state.azureGithubPullRequestBuildIdsCache.clear();
+    state.githubCommitAncestryCache.clear();
     state.workItemDeploymentsCache.clear();
     state.workItemDeploymentsErrors.clear();
     state.workItemDeploymentsRequestTokens.clear();
