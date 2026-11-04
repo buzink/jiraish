@@ -1123,6 +1123,22 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 .latest-commits-table tr.is-safe td { background: #dcfff1; }
 .latest-commits-table tr.is-safe td:first-child { box-shadow: inset 3px 0 0 #22a06b; }
 .latest-commits-safe-badge { margin-left: 8px; padding: 1px 6px; border-radius: 3px; color: #216e4e; background: #baf3db; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.latest-commits-actions { width: 34px; padding: 2px 4px !important; text-align: right; }
+.latest-commits-menu-button { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 3px; color: var(--muted); background: transparent; font-size: 16px; font-weight: 800; line-height: 1; cursor: pointer; }
+.latest-commits-menu-button:hover, .latest-commits-menu-button[aria-expanded="true"] { color: var(--navy); background: var(--board-bg); }
+.latest-commits-menu-button:focus-visible { outline: 2px solid #4c9aff; outline-offset: 1px; }
+.latest-commit-menu { position: fixed; z-index: 60; width: 170px; padding: 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); box-shadow: 0 8px 20px rgba(9, 30, 66, .25); }
+.latest-commit-menu button { width: 100%; min-height: 32px; padding: 6px 9px; border: 0; border-radius: 3px; color: var(--text); background: transparent; font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
+.latest-commit-menu button:hover, .latest-commit-menu button:focus-visible { background: var(--board-bg); outline: 0; }
+.build-commit-dialog select { width: 100%; }
+.build-commit-note a { color: #0c66e4; }
+.build-commit-note a[aria-disabled] { color: inherit; pointer-events: none; text-decoration: none; }
+[data-theme="dark"] .build-commit-note a { color: #579dff; }
+.build-commit-note { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.release-readiness-status a { color: #0c66e4; }
+[data-theme="dark"] .latest-commit-menu { border-color: #454f59; background: #282e33; box-shadow: 0 8px 24px rgba(0, 0, 0, .55); }
+[data-theme="dark"] .latest-commits-menu-button:hover, [data-theme="dark"] .latest-commits-menu-button[aria-expanded="true"], [data-theme="dark"] .latest-commit-menu button:hover, [data-theme="dark"] .latest-commit-menu button:focus-visible { color: #b6c2cf; background: #38414a; }
+[data-theme="dark"] .release-readiness-status a { color: #579dff; }
 .latest-commits-more { justify-self: start; }
 [data-theme="dark"] .latest-commits-table tr.is-safe td { background: #1c3329; }
 [data-theme="dark"] .latest-commits-safe-badge { color: #7ee2b8; background: #164b35; }

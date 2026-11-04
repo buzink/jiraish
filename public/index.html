@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261104-latest-commits-filter" />
+    <link rel="stylesheet" href="styles.css?v=20261104-latest-commit-actions-v2" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -678,6 +678,34 @@
       </form>
     </dialog>
 
+    <div id="latestCommitMenu" class="latest-commit-menu" role="menu" hidden>
+      <button type="button" role="menuitem" data-latest-commit-action="copy">Copy commit id</button>
+      <button type="button" role="menuitem" data-latest-commit-action="build">Build commit</button>
+    </div>
+
+    <dialog id="buildCommitDialog" class="dialog backlog-position-dialog build-commit-dialog" aria-labelledby="buildCommitHeading">
+      <form id="buildCommitForm">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span id="buildCommitRepository">Repository</span><span aria-hidden="true">/</span><span id="buildCommitSha">Commit</span></div>
+            <h2 id="buildCommitHeading">Build commit</h2>
+            <p id="buildCommitMessage"></p>
+          </div>
+          <button class="close-button" type="button" data-close-build-commit aria-label="Close">×</button>
+        </div>
+        <label for="buildCommitPipeline">
+          Pipeline
+          <select id="buildCommitPipeline" required></select>
+        </label>
+        <p class="build-commit-note">Runs the <a id="buildCommitPipelineLink" href="#" target="_blank" rel="noopener noreferrer">selected Azure DevOps pipeline</a> on branch <strong id="buildCommitBranch">main</strong> at exactly this commit, with the pipeline's default parameters.</p>
+        <p id="buildCommitError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-build-commit>Cancel</button>
+          <button id="buildCommitSubmit" class="primary-button" type="submit">Run pipeline</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="backlogPositionDialog" class="dialog backlog-position-dialog" aria-labelledby="backlogPositionHeading">
       <form id="backlogPositionForm">
         <div class="dialog-heading compact">
@@ -1111,6 +1139,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261104-latest-commits-filter" defer></script>
+    <script src="app.js?v=20261104-latest-commit-actions-v2" defer></script>
   </body>
 </html>

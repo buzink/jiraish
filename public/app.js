@@ -371,6 +371,17 @@ const els = {
   developmentReadinessSummary: document.querySelector("#developmentReadinessSummary"),
   developmentReadinessList: document.querySelector("#developmentReadinessList"),
   latestCommitsStatus: document.querySelector("#latestCommitsStatus"),
+  latestCommitMenu: document.querySelector("#latestCommitMenu"),
+  buildCommitDialog: document.querySelector("#buildCommitDialog"),
+  buildCommitForm: document.querySelector("#buildCommitForm"),
+  buildCommitRepository: document.querySelector("#buildCommitRepository"),
+  buildCommitSha: document.querySelector("#buildCommitSha"),
+  buildCommitMessage: document.querySelector("#buildCommitMessage"),
+  buildCommitPipeline: document.querySelector("#buildCommitPipeline"),
+  buildCommitBranch: document.querySelector("#buildCommitBranch"),
+  buildCommitPipelineLink: document.querySelector("#buildCommitPipelineLink"),
+  buildCommitError: document.querySelector("#buildCommitError"),
+  buildCommitSubmit: document.querySelector("#buildCommitSubmit"),
   latestCommitsFilter: document.querySelector("#latestCommitsFilter"),
   latestCommitsFilterSummary: document.querySelector("#latestCommitsFilterSummary"),
   latestCommitsFilterOptions: document.querySelector("#latestCommitsFilterOptions"),
@@ -8617,7 +8628,7 @@ async function showMoreLatestCommits(repository) {
   renderLatestCommits();
 }
 
-function createLatestCommitRow(commit, safeSha) {
+function createLatestCommitRow(commit, safeSha, repository) {
   const row = document.createElement("tr");
   const safe = commit.sha === safeSha;
   row.classList.toggle("is-safe", safe);
@@ -8675,8 +8686,196 @@ function createLatestCommitRow(commit, safeSha) {
   messageCell.className = "latest-commits-message";
   messageCell.textContent = commit.message;
   messageCell.title = commit.message;
-  row.append(dateCell, commitCell, storyCell, statusCell, sprintCell, userCell, messageCell);
+  const actionsCell = document.createElement("td");
+  actionsCell.className = "latest-commits-actions";
+  const menuButton = document.createElement("button");
+  menuButton.type = "button";
+  menuButton.className = "latest-commits-menu-button";
+  menuButton.textContent = "⋮";
+  menuButton.title = "Commit actions";
+  menuButton.setAttribute("aria-label", `Actions for commit ${commit.sha.slice(0, 7)}`);
+  menuButton.setAttribute("aria-haspopup", "menu");
+  menuButton.setAttribute("aria-expanded", "false");
+  menuButton.addEventListener("click", event => {
+    event.stopPropagation();
+    openLatestCommitMenu(menuButton, repository, commit);
+  });
+  actionsCell.append(menuButton);
+  row.append(dateCell, commitCell, storyCell, statusCell, sprintCell, userCell, messageCell, actionsCell);
   return row;
+}
+
+// The menu is a single fixed-position element so it is not clipped by the scrolling table.
+function openLatestCommitMenu(button, repository, commit) {
+  const menu = els.latestCommitMenu;
+  if (!menu.hidden && state.latestCommitMenu?.button === button) {
+    closeLatestCommitMenu();
+    return;
+  }
+  closeLatestCommitMenu();
+  state.latestCommitMenu = { button, repository, commit };
+  button.setAttribute("aria-expanded", "true");
+  menu.hidden = false;
+  const rect = button.getBoundingClientRect();
+  const menuWidth = menu.offsetWidth;
+  const menuHeight = menu.offsetHeight;
+  const top = rect.bottom + 4 + menuHeight > window.innerHeight ? rect.top - 4 - menuHeight : rect.bottom + 4;
+  menu.style.top = `${Math.max(8, top)}px`;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth))}px`;
+  menu.querySelector("button")?.focus();
+}
+
+function closeLatestCommitMenu({ restoreFocus = false } = {}) {
+  const current = state.latestCommitMenu;
+  els.latestCommitMenu.hidden = true;
+  if (!current) return;
+  current.button.setAttribute("aria-expanded", "false");
+  if (restoreFocus) current.button.focus();
+  state.latestCommitMenu = null;
+}
+
+async function copyLatestCommitId(commit) {
+  try {
+    await navigator.clipboard.writeText(commit.sha);
+    els.latestCommitsStatus.classList.remove("is-error");
+    els.latestCommitsStatus.textContent = `Copied ${commit.sha.slice(0, 7)} to the clipboard.`;
+  } catch {
+    els.latestCommitsStatus.classList.add("is-error");
+    els.latestCommitsStatus.textContent = "The commit id could not be copied.";
+  }
+  clearTimeout(state.latestCommitStatusTimer);
+  state.latestCommitStatusTimer = setTimeout(() => {
+    if (!state.latestCommits.loading) els.latestCommitsStatus.textContent = state.latestCommits.error;
+  }, 2500);
+}
+
+const buildDefinitionsByRepository = new Map();
+
+function azureBuildDefinitionsForRepository(repository) {
+  const key = repository.toLocaleLowerCase("en");
+  if (!buildDefinitionsByRepository.has(key)) {
+    buildDefinitionsByRepository.set(key, azure(`/_apis/build/definitions?repositoryId=${encodeURIComponent(repository)}&repositoryType=GitHub&includeAllProperties=true&api-version=7.1`)
+      .then(result => (result?.value || []).filter(definition => String(definition.queueStatus || "enabled").toLocaleLowerCase("en") === "enabled"))
+      .catch(error => {
+        buildDefinitionsByRepository.delete(key);
+        throw error;
+      }));
+  }
+  return buildDefinitionsByRepository.get(key);
+}
+
+// Prefer the pipeline named after the repository (e.g. "uva.WISH-core" for uva/WISH-core)
+// over side pipelines such as Cypress or Storybook.
+function preferredBuildDefinition(definitions, repository) {
+  const name = repository.split("/").pop().toLocaleLowerCase("en");
+  const normalized = value => String(value || "").toLocaleLowerCase("en");
+  return definitions.find(definition => normalized(definition.name) === `${repository.split("/")[0].toLocaleLowerCase("en")}.${name}`)
+    || definitions.find(definition => normalized(definition.name).endsWith(name))
+    || definitions[0];
+}
+
+function buildCommitBranch(definition) {
+  return definition?.repository?.defaultBranch || "refs/heads/main";
+}
+
+async function openBuildCommitDialog(repository, commit) {
+  state.buildCommit = { repository, commit, definitions: [] };
+  els.buildCommitRepository.textContent = repository;
+  els.buildCommitSha.textContent = commit.sha.slice(0, 7);
+  els.buildCommitMessage.textContent = commit.message;
+  els.buildCommitError.textContent = "";
+  els.buildCommitPipeline.replaceChildren(new Option("Loading pipelines…", ""));
+  updateBuildCommitBranch();
+  els.buildCommitPipeline.disabled = true;
+  els.buildCommitSubmit.disabled = true;
+  els.buildCommitSubmit.textContent = "Run pipeline";
+  if (!els.buildCommitDialog.open) els.buildCommitDialog.showModal();
+  try {
+    const definitions = await azureBuildDefinitionsForRepository(repository);
+    if (state.buildCommit?.commit !== commit) return;
+    if (!definitions.length) throw new Error(`No Azure DevOps pipeline builds ${repository}.`);
+    state.buildCommit.definitions = definitions;
+    const preferred = preferredBuildDefinition(definitions, repository);
+    els.buildCommitPipeline.replaceChildren(...definitions.map(definition => {
+      const option = new Option(definition.name, String(definition.id));
+      option.selected = definition === preferred;
+      return option;
+    }));
+    els.buildCommitPipeline.disabled = false;
+    els.buildCommitSubmit.disabled = false;
+    updateBuildCommitBranch();
+    els.buildCommitPipeline.focus();
+  } catch (error) {
+    if (state.buildCommit?.commit !== commit) return;
+    els.buildCommitPipeline.replaceChildren(new Option("No pipeline available", ""));
+    els.buildCommitError.textContent = error.auth
+      ? "Pipelines could not be loaded. The PAT requires ‘Build: Read’."
+      : error.message || "Pipelines could not be loaded.";
+  }
+}
+
+function selectedBuildCommitDefinition() {
+  const id = Number(els.buildCommitPipeline.value);
+  return state.buildCommit?.definitions.find(definition => Number(definition.id) === id) || null;
+}
+
+function updateBuildCommitBranch() {
+  const definition = selectedBuildCommitDefinition();
+  els.buildCommitBranch.textContent = buildCommitBranch(definition).replace(/^refs\/heads\//, "");
+  const url = definition
+    ? definition._links?.web?.href || `${activeAzureContext().webBase}/_build?definitionId=${Number(definition.id)}`
+    : "";
+  els.buildCommitPipelineLink.href = url || "#";
+  els.buildCommitPipelineLink.title = definition ? `Open ${definition.name} in Azure DevOps` : "";
+  els.buildCommitPipelineLink.toggleAttribute("aria-disabled", !url);
+}
+
+function closeBuildCommitDialog() {
+  if (els.buildCommitDialog.open) els.buildCommitDialog.close();
+  state.buildCommit = null;
+}
+
+async function submitBuildCommit(event) {
+  event.preventDefault();
+  const current = state.buildCommit;
+  const definition = selectedBuildCommitDefinition();
+  if (!current || !definition) return;
+  els.buildCommitSubmit.disabled = true;
+  els.buildCommitPipeline.disabled = true;
+  els.buildCommitSubmit.textContent = "Starting…";
+  els.buildCommitError.textContent = "";
+  try {
+    const build = await azure("/_apis/build/builds?api-version=7.1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        definition: { id: Number(definition.id) },
+        sourceBranch: buildCommitBranch(definition),
+        sourceVersion: current.commit.sha
+      })
+    });
+    closeBuildCommitDialog();
+    els.latestCommitsStatus.classList.remove("is-error");
+    els.latestCommitsStatus.replaceChildren(
+      `Started ${definition.name} ${build?.buildNumber || ""} for ${current.commit.sha.slice(0, 7)}. `
+    );
+    const url = build?._links?.web?.href;
+    if (url) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open in Azure DevOps ↗";
+      els.latestCommitsStatus.append(link);
+    }
+  } catch (error) {
+    els.buildCommitError.textContent = error.auth
+      ? "The pipeline could not be started. The PAT requires ‘Build: Read & execute’."
+      : error.message || "The pipeline could not be started.";
+    els.buildCommitSubmit.disabled = false;
+    els.buildCommitPipeline.disabled = false;
+    els.buildCommitSubmit.textContent = "Run pipeline";
+  }
 }
 
 function createLatestCommitsRepository(entry) {
@@ -8715,9 +8914,9 @@ function createLatestCommitsRepository(entry) {
     wrapper.className = "latest-commits-table-wrap";
     const table = document.createElement("table");
     table.className = "latest-commits-table";
-    table.innerHTML = "<thead><tr><th>Date</th><th>Commit</th><th>Story</th><th>Status</th><th>Sprint</th><th>User</th><th>Message</th></tr></thead>";
+    table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Story</th><th>Status</th><th>Sprint</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
     const body = document.createElement("tbody");
-    body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeSha)));
+    body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeSha, entry.repository)));
     table.append(body);
     wrapper.append(table);
     section.append(wrapper);
@@ -13335,6 +13534,39 @@ els.roadmapCurrentQuarter.addEventListener("click", selectCurrentRoadmapQuarter)
 els.wikiNav.addEventListener("click", () => showMainView("wiki"));
 els.releasesNav.addEventListener("click", () => showMainView("releases"));
 els.releasesRefresh.addEventListener("click", () => loadReleaseDebugPage(true));
+els.latestCommitMenu.addEventListener("click", event => {
+  const action = event.target.closest("[data-latest-commit-action]")?.dataset.latestCommitAction;
+  const current = state.latestCommitMenu;
+  if (!action || !current) return;
+  closeLatestCommitMenu();
+  if (action === "copy") copyLatestCommitId(current.commit);
+  if (action === "build") openBuildCommitDialog(current.repository, current.commit);
+});
+els.latestCommitMenu.addEventListener("keydown", event => {
+  const items = [...els.latestCommitMenu.querySelectorAll("button")];
+  const index = items.indexOf(document.activeElement);
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeLatestCommitMenu({ restoreFocus: true });
+  } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    items[(index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+  } else if (event.key === "Tab") {
+    closeLatestCommitMenu();
+  }
+});
+document.addEventListener("click", event => {
+  if (state.latestCommitMenu && !els.latestCommitMenu.contains(event.target)) closeLatestCommitMenu();
+});
+window.addEventListener("scroll", () => closeLatestCommitMenu(), true);
+window.addEventListener("resize", () => closeLatestCommitMenu());
+els.buildCommitForm.addEventListener("submit", submitBuildCommit);
+els.buildCommitPipeline.addEventListener("change", updateBuildCommitBranch);
+els.buildCommitDialog.querySelectorAll("[data-close-build-commit]").forEach(button => button.addEventListener("click", closeBuildCommitDialog));
+els.buildCommitDialog.addEventListener("click", event => {
+  if (event.target === els.buildCommitDialog) closeBuildCommitDialog();
+});
+els.buildCommitDialog.addEventListener("close", () => { state.buildCommit = null; });
 els.latestCommitsFilterOptions.addEventListener("change", () => {
   setLatestCommitRepositories([...els.latestCommitsFilterOptions.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value));
 });
