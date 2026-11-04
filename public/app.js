@@ -8430,11 +8430,10 @@ async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, config
 }
 
 function readinessState(item, lane) {
-  const value = String(item.state || "").toLocaleLowerCase("en");
-  if (isFinishedWorkItem(item)) return { ready: true, label: "Ready" };
-  const ready = lane === "development"
-    ? /ready.*accept|accept.*ready|test(?:ed)?(?:\s+on)?\s+(?:dev|development)|development.*test(?:ed)?/.test(value)
-    : /ready.*prod|prod.*ready|test(?:ed)?(?:\s+on)?\s+(?:acc|acceptance)|acceptance.*test(?:ed)?/.test(value);
+  // Only explicit states count: "Test on dev" means the item still has to be tested there.
+  const value = String(item.state || "").trim().toLocaleLowerCase("en");
+  const ready = /^(closed|resolved|done|completed)$/.test(value)
+    || (lane === "development" && /^ready for release to accept(ance)?$/.test(value));
   return { ready, label: ready ? "Ready" : "Needs attention" };
 }
 
