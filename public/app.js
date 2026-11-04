@@ -659,6 +659,7 @@ const els = {
   workItemSubtasksProgressLabel: document.querySelector("#workItemSubtasksProgressLabel"),
   workItemSubtasksStatus: document.querySelector("#workItemSubtasksStatus"),
   workItemSubtasks: document.querySelector("#workItemSubtasks"),
+  workItemSubtasksHeading: document.querySelector("#workItemSubtasksHeading"),
   workItemSubtasksContent: document.querySelector("#workItemSubtasksContent"),
   workItemAddChild: document.querySelector("#workItemAddChild"),
   workItemAddChildLabel: document.querySelector("#workItemAddChildLabel"),
@@ -9164,6 +9165,9 @@ function workItemChildCreateLabel(childType) {
 
 function renderWorkItemSubtasks(subtasks = [], error = "", parent = null, loading = false) {
   const childType = workItemChildCreateType(parent);
+  const parentType = String(parent?.type || "").trim().toLocaleLowerCase("en");
+  els.workItemSubtasksHeading.textContent = parentType === "epic" ? "Features"
+    : parentType === "feature" ? "Issues" : "Subtasks";
   const hasContent = Boolean(subtasks.length || error);
   const canAdd = Boolean(childType) && !loading;
   els.workItemSubtasksSection.hidden = !hasContent && !canAdd;
