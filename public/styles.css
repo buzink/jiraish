@@ -1118,6 +1118,7 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 .latest-commits-date { color: var(--muted) !important; font-variant-numeric: tabular-nums; }
 .latest-commits-sha a { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .latest-commits-story { margin-right: 6px; font-weight: 700; }
+.latest-commits-sprint + .latest-commits-sprint { margin-left: 6px; }
 .latest-commits-muted { color: var(--muted) !important; }
 .latest-commits-message { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
 .latest-commits-table tr.is-safe td { background: #dcfff1; }

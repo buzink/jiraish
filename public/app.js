@@ -3058,8 +3058,11 @@ async function applyAppRoute(route) {
   state.routeApplying = true;
   try {
     if (els.workItemDialog.open && itemChanges) els.workItemDialog.close();
+    const previousView = state.currentView;
+    const previousIterationId = state.iteration?.id;
     primeAppRouteState(route);
     await applyRouteSprint(route);
+    if (route.view !== previousView || state.iteration?.id !== previousIterationId) scrollAppToTop();
     if (route.view === "search" && route.query) await runGlobalSearch(route.query);
     else await showMainView(route.view);
     if (routeToken !== state.routeRequestToken) return;
@@ -3119,6 +3122,10 @@ function applyMainViewVisibility(view) {
   els.releasesNav.toggleAttribute("aria-current", showReleases);
 }
 
+function scrollAppToTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+}
+
 async function showMainView(view) {
   if (view === "roadmap") ensureRoadmapPeriod();
   if (!state.routeApplying) writeAppRoute(currentAppRoute({ view, itemId: null }));
@@ -3129,8 +3136,11 @@ async function showMainView(view) {
   const showWiki = view === "wiki";
   const showReleases = view === "releases";
   const showSearch = view === "search";
+  const viewChanged = state.currentView !== view;
   state.currentView = view;
   applyMainViewVisibility(view);
+  // Any navigation to another page starts at the top, like a normal page load.
+  if (viewChanged) scrollAppToTop();
   if (!showForYou) closeForYouPersonMenu();
   if (showForYou) {
     if (enteringForYou) {
@@ -8628,6 +8638,28 @@ async function showMoreLatestCommits(repository) {
   renderLatestCommits();
 }
 
+// Links to the sprint board in this app (not to Azure DevOps), using the same route value
+// as the sprint picker so the board opens on that sprint.
+function createLatestCommitSprintLink(item) {
+  const normalizedPath = value => String(value || "").replace(/^\\+|\\+$/g, "").toLocaleLowerCase("en");
+  const iteration = state.iterations.find(candidate => normalizedPath(candidate.path) === normalizedPath(item.iterationPath)
+    || normalizedPath(candidate.path).endsWith(`\\${normalizedPath(item.iterationName)}`)
+    || String(candidate.name || "").toLocaleLowerCase("en") === String(item.iterationName || "").toLocaleLowerCase("en"));
+  const sprint = sprintRouteValue(iteration || { name: item.iterationName, path: item.iterationPath });
+  if (!sprint) {
+    const text = document.createElement("span");
+    text.className = "latest-commits-sprint";
+    text.textContent = item.iterationName;
+    return text;
+  }
+  const link = document.createElement("a");
+  link.className = "latest-commits-sprint";
+  link.href = appRouteHash({ view: "board", sprint });
+  link.textContent = item.iterationName;
+  link.title = `Open ${item.iterationName} on the sprint board`;
+  return link;
+}
+
 function createLatestCommitRow(commit, safeSha, repository) {
   const row = document.createElement("tr");
   const safe = commit.sha === safeSha;
@@ -8672,7 +8704,12 @@ function createLatestCommitRow(commit, safeSha, repository) {
       status.textContent = item.state;
       statusCell.append(status);
     });
-    sprintCell.textContent = [...new Set(commit.workItems.map(item => item.iterationPath ? item.iterationName : ""))].filter(Boolean).join(", ") || "—";
+    const sprints = new Map();
+    commit.workItems.forEach(item => {
+      if (item.iterationPath && !sprints.has(item.iterationPath)) sprints.set(item.iterationPath, item);
+    });
+    if (sprints.size) sprints.forEach(item => sprintCell.append(createLatestCommitSprintLink(item)));
+    else sprintCell.textContent = "—";
   } else {
     storyCell.textContent = "—";
     storyCell.className = "latest-commits-muted";
