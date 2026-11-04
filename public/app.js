@@ -8328,11 +8328,11 @@ async function loadYamlReadinessSnapshots() {
     latestByPipeline.forEach(record => candidates.push({ environment, record }));
   });
   const builds = await loadBuildsById(candidates.map(candidate => candidate.record.owner?.id));
-  const snapshots = new Map();
+  const snapshots = [];
   candidates.forEach(({ environment, record }) => {
     const build = builds.get(Number(record.owner?.id));
     if (!build) return;
-    latestSnapshot(snapshots, {
+    snapshots.push({
       tier: releaseEnvironmentTier(environment.name),
       pipelineKey: yamlReadinessPipelineKey(build, record),
       pipelineName: build.definition?.name || record.definition?.name || record.owner?.name || "YAML pipeline",
@@ -8365,14 +8365,14 @@ async function loadClassicReadinessSnapshots() {
     });
   });
   const builds = await loadBuildsById(candidates.map(candidate => classicArtifactBuildId(candidate.artifact)));
-  const snapshots = new Map();
+  const snapshots = [];
   candidates.forEach(({ release, environment, artifact, tier }) => {
     const build = builds.get(classicArtifactBuildId(artifact));
     if (!build) return;
     const definition = artifact.definitionReference?.definition || {};
     const artifactKey = definition.id || definition.name || artifact.alias || build.definition?.id || build.definition?.name;
     const pipelineKey = `classic:${release.releaseDefinition?.id || release.definition?.id || "release"}:${artifactKey}:${String(buildRepositoryLabel(build)).toLocaleLowerCase("en")}`;
-    latestSnapshot(snapshots, {
+    snapshots.push({
       tier,
       pipelineKey,
       pipelineName: `${release.releaseDefinition?.name || release.definition?.name || "Classic release"} · ${artifact.alias || build.definition?.name || "Build"}`,
@@ -8389,10 +8389,34 @@ async function loadClassicReadinessSnapshots() {
   return snapshots;
 }
 
-function mergeReadinessSnapshots(...snapshotMaps) {
-  const merged = new Map();
-  snapshotMaps.forEach(snapshots => snapshots.forEach(snapshot => latestSnapshot(merged, snapshot)));
-  return merged;
+// Latest deployment per tier and pipeline (for comparing tiers) and per environment and
+// pipeline (for showing which environments a commit is on: Preview and Development share a tier).
+function mergeReadinessSnapshots(...snapshotLists) {
+  const tiers = new Map();
+  const environments = new Map();
+  snapshotLists.flat().forEach(snapshot => {
+    latestSnapshot(tiers, snapshot);
+    latestSnapshot(environments, { ...snapshot, tier: `environment:${String(snapshot.environmentName || "").toLocaleLowerCase("en")}` });
+  });
+  return { tiers, environments: [...environments.values()] };
+}
+
+// Loaded once per Releases page load and shared by Release readiness and Latest commits.
+function loadReadinessSnapshots() {
+  if (!state.releaseReadiness.snapshotsPromise) {
+    state.releaseReadiness.snapshotsPromise = (async () => {
+      const sourceResults = await Promise.allSettled([loadYamlReadinessSnapshots(), loadClassicReadinessSnapshots()]);
+      const warnings = [];
+      const snapshotLists = [];
+      sourceResults.forEach((result, index) => {
+        if (result.status === "fulfilled") snapshotLists.push(result.value);
+        else warnings.push(`${index ? "Classic" : "YAML"} deployments could not be loaded: ${result.reason?.message || "Unknown error"}`);
+      });
+      if (!snapshotLists.length) throw new Error(warnings.join(" ") || "Deployment snapshots could not be loaded.");
+      return { ...mergeReadinessSnapshots(...snapshotLists), warnings };
+    })();
+  }
+  return state.releaseReadiness.snapshotsPromise;
 }
 
 async function configuredRepositoryForBuild(build, configuredRepositories) {
@@ -8618,9 +8642,56 @@ function saveLatestCommitRepositories(repositories) {
   try { localStorage.setItem(STORAGE.latestCommitRepos, JSON.stringify(repositories)); } catch {}
 }
 
+const LATEST_COMMIT_ENVIRONMENT_ORDER = ["Production", "Acceptance", "Preview", "Development"];
+
+function latestCommitEnvironmentLabel(name) {
+  const words = String(name || "").toLocaleLowerCase("en").split(/[^a-z0-9]+/);
+  if (words.includes("preview")) return "Preview";
+  const tier = releaseEnvironmentTier(name);
+  return tier ? tier[0].toLocaleUpperCase("en") + tier.slice(1) : String(name || "");
+}
+
+// For every environment the repository is deployed to, compares the deployed commit with the
+// newest commit in the table: commits GitHub lists as missing from the deployment are not on that
+// environment, every other (older) commit is. Older pages share the same newest commit, so this
+// stays valid when more commits are loaded.
+async function loadLatestCommitEnvironments(entry) {
+  const head = entry.commits[0]?.sha;
+  if (!head) return [];
+  const { environments } = await loadReadinessSnapshots();
+  const configuredRepositories = state.latestCommits.available;
+  const matches = await mapWithConcurrency(environments, 4, async snapshot =>
+    snapshot.commit && await configuredRepositoryForBuild(snapshot.build, configuredRepositories) === entry.repository ? snapshot : null);
+  const [owner, name] = entry.repository.split("/");
+  return mapWithConcurrency(matches.filter(Boolean), 4, async snapshot => {
+    const result = { label: latestCommitEnvironmentLabel(snapshot.environmentName), environmentName: snapshot.environmentName, commit: snapshot.commit, missing: new Set(), complete: true };
+    if (snapshot.commit.toLocaleLowerCase("en") === head.toLocaleLowerCase("en")) return result;
+    try {
+      const comparison = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(snapshot.commit)}...${encodeURIComponent(head)}`);
+      const commits = comparison.commits || [];
+      commits.forEach(commit => result.missing.add(commit.sha));
+      result.complete = Number(comparison.ahead_by ?? commits.length) <= commits.length;
+    } catch {
+      result.complete = false;
+    }
+    return result;
+  });
+}
+
+function latestCommitEnvironments(entry, commit) {
+  if (!Array.isArray(entry.environments)) return null;
+  const labels = new Set(entry.environments
+    .filter(environment => !environment.missing.has(commit.sha) && (environment.complete || commit.sha === environment.commit))
+    .map(environment => environment.label));
+  return [...labels].sort((a, b) => {
+    const rank = label => { const index = LATEST_COMMIT_ENVIRONMENT_ORDER.indexOf(label); return index < 0 ? 99 : index; };
+    return rank(a) - rank(b) || a.localeCompare(b, "en");
+  });
+}
+
 async function loadLatestCommitsRepository(repository) {
   const requestToken = state.latestCommits.requestToken;
-  const entry = { repository, commits: [], hasMore: false, page: 1, visible: LATEST_COMMITS_VISIBLE_STEP, loading: true, loadingMore: false, error: "" };
+  const entry = { repository, commits: [], hasMore: false, page: 1, visible: LATEST_COMMITS_VISIBLE_STEP, loading: true, loadingMore: false, error: "", environments: null, environmentsError: "" };
   state.latestCommits.entries.set(repository, entry);
   renderLatestCommits();
   try {
@@ -8633,6 +8704,18 @@ async function loadLatestCommitsRepository(repository) {
     entry.error = error.message || "Commits could not be loaded.";
   }
   entry.loading = false;
+  renderLatestCommits();
+  if (!entry.commits.length) return;
+  try {
+    const environments = await loadLatestCommitEnvironments(entry);
+    if (requestToken !== state.latestCommits.requestToken) return;
+    entry.environments = environments;
+  } catch (error) {
+    if (requestToken !== state.latestCommits.requestToken) return;
+    console.error(error);
+    entry.environments = [];
+    entry.environmentsError = error.message || "Deployments could not be loaded.";
+  }
   renderLatestCommits();
 }
 
@@ -8714,7 +8797,7 @@ function createLatestCommitSprintLink(item) {
   return link;
 }
 
-function createLatestCommitRow(commit, safeSha, repository) {
+function createLatestCommitRow(commit, safeSha, repository, entry) {
   const row = document.createElement("tr");
   const safe = commit.sha === safeSha;
   row.classList.toggle("is-safe", safe);
@@ -8771,6 +8854,20 @@ function createLatestCommitRow(commit, safeSha, repository) {
     statusCell.className = "latest-commits-muted";
     sprintCell.textContent = "—";
   }
+  const environmentsCell = document.createElement("td");
+  environmentsCell.className = "latest-commits-environments";
+  const environments = latestCommitEnvironments(entry, commit);
+  if (!environments) {
+    environmentsCell.textContent = "…";
+    environmentsCell.classList.add("latest-commits-muted");
+    environmentsCell.title = "Loading deployments…";
+  } else if (environments.length) {
+    environmentsCell.textContent = environments.join(", ");
+  } else {
+    environmentsCell.textContent = "—";
+    environmentsCell.classList.add("latest-commits-muted");
+    if (entry.environmentsError) environmentsCell.title = entry.environmentsError;
+  }
   const userCell = document.createElement("td");
   userCell.textContent = commit.author || "—";
   const messageCell = document.createElement("td");
@@ -8792,7 +8889,7 @@ function createLatestCommitRow(commit, safeSha, repository) {
     openLatestCommitMenu(menuButton, repository, commit);
   });
   actionsCell.append(menuButton);
-  row.append(dateCell, commitCell, storyCell, statusCell, sprintCell, userCell, messageCell, actionsCell);
+  row.append(dateCell, commitCell, storyCell, statusCell, sprintCell, environmentsCell, userCell, messageCell, actionsCell);
   return row;
 }
 
@@ -9005,9 +9102,9 @@ function createLatestCommitsRepository(entry) {
     wrapper.className = "latest-commits-table-wrap";
     const table = document.createElement("table");
     table.className = "latest-commits-table";
-    table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Story</th><th>Status</th><th>Sprint</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Story</th><th>Status</th><th>Sprint</th><th>Environments</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
     const body = document.createElement("tbody");
-    body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeSha, entry.repository)));
+    body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeSha, entry.repository, entry)));
     table.append(body);
     wrapper.append(table);
     section.append(wrapper);
@@ -9079,17 +9176,10 @@ function renderLatestCommits() {
 }
 
 async function loadReleaseReadiness() {
-  const sourceResults = await Promise.allSettled([loadYamlReadinessSnapshots(), loadClassicReadinessSnapshots()]);
-  const warnings = [];
-  const snapshotMaps = [];
-  sourceResults.forEach((result, index) => {
-    if (result.status === "fulfilled") snapshotMaps.push(result.value);
-    else warnings.push(`${index ? "Classic" : "YAML"} deployments could not be loaded: ${result.reason?.message || "Unknown error"}`);
-  });
-  if (!snapshotMaps.length) throw new Error(warnings.join(" ") || "Deployment snapshots could not be loaded.");
+  const { tiers: snapshots, warnings: snapshotWarnings } = await loadReadinessSnapshots();
+  const warnings = [...snapshotWarnings];
   if (!state.githubToken) warnings.push("Add a GitHub API key to also resolve AB# references from GitHub commits and pull requests.");
   const configuredRepositories = state.githubToken ? await configuredGithubRepositories().catch(() => []) : [];
-  const snapshots = mergeReadinessSnapshots(...snapshotMaps);
   const [development, acceptance] = await Promise.all([
     compareReadinessLane(snapshots, "development", "acceptance", configuredRepositories),
     compareReadinessLane(snapshots, "acceptance", "production", configuredRepositories)
@@ -9255,6 +9345,7 @@ async function loadReleaseDebugPage(force = false) {
   const requestToken = ++state.releaseDebug.requestToken;
   state.releaseDebug.environmentsPromise = null;
   state.releaseDebug.classicReleaseDetailsPromise = null;
+  state.releaseReadiness.snapshotsPromise = null;
   if (force) {
     state.releaseReadiness.githubComparisons.clear();
     state.releaseReadiness.githubRepositoryMatches.clear();

@@ -1129,6 +1129,7 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 .latest-commits-sprint + .latest-commits-sprint { margin-left: 6px; }
 .latest-commits-muted { color: var(--muted) !important; }
 .latest-commits-message { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+.latest-commits-environments { white-space: nowrap; }
 .latest-commits-table tr.is-safe td { background: #dcfff1; }
 .latest-commits-table tr.is-safe td:first-child { box-shadow: inset 3px 0 0 #22a06b; }
 .latest-commits-safe-badge { margin-left: 8px; padding: 1px 6px; border-radius: 3px; color: #216e4e; background: #baf3db; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
