@@ -785,11 +785,23 @@
           </div>
           <button class="close-button" type="button" data-close-roadmap-forecast aria-label="Close">×</button>
         </div>
-        <label for="roadmapForecastSearch">
-          Find a Feature in this Epic
+        <section class="roadmap-dialog-section" aria-labelledby="roadmapForecastExistingHeading">
+          <h3 id="roadmapForecastExistingHeading" class="roadmap-dialog-section-title">Add an existing Feature</h3>
+          <label class="sr-only" for="roadmapForecastSearch">Find a Feature in this Epic</label>
           <input id="roadmapForecastSearch" type="search" placeholder="Filter by title or ID" autocomplete="off" />
-        </label>
-        <div id="roadmapForecastChoices" class="roadmap-forecast-choices"></div>
+          <div id="roadmapForecastChoices" class="roadmap-forecast-choices"></div>
+        </section>
+        <div class="roadmap-dialog-divider" aria-hidden="true"><span>or</span></div>
+        <section class="roadmap-dialog-section roadmap-dialog-new" aria-labelledby="roadmapForecastNewHeading">
+          <div>
+            <h3 id="roadmapForecastNewHeading" class="roadmap-dialog-section-title">Create a new Feature</h3>
+            <p>Created in this Epic and forecasted in this sprint and lane.</p>
+          </div>
+          <button id="roadmapForecastAddFeature" class="secondary-button roadmap-dialog-create" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            <span>New feature</span>
+          </button>
+        </section>
         <p id="roadmapForecastError" class="form-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="secondary-button" type="button" data-close-roadmap-forecast>Cancel</button>
@@ -807,11 +819,23 @@
           </div>
           <button class="close-button" type="button" data-close-roadmap-epic aria-label="Close">×</button>
         </div>
-        <label for="roadmapEpicSearch">
-          Find an Epic
+        <section class="roadmap-dialog-section" aria-labelledby="roadmapEpicExistingHeading">
+          <h3 id="roadmapEpicExistingHeading" class="roadmap-dialog-section-title">Add an existing Epic</h3>
+          <label class="sr-only" for="roadmapEpicSearch">Find an Epic</label>
           <input id="roadmapEpicSearch" type="search" placeholder="Filter by title or ID" autocomplete="off" />
-        </label>
-        <div id="roadmapEpicChoices" class="roadmap-forecast-choices"></div>
+          <div id="roadmapEpicChoices" class="roadmap-forecast-choices"></div>
+        </section>
+        <div class="roadmap-dialog-divider" aria-hidden="true"><span>or</span></div>
+        <section class="roadmap-dialog-section roadmap-dialog-new" aria-labelledby="roadmapEpicNewHeading">
+          <div>
+            <h3 id="roadmapEpicNewHeading" class="roadmap-dialog-section-title">Create a new Epic</h3>
+            <p>Created and added to this quarter right away.</p>
+          </div>
+          <button id="roadmapEpicAddEpic" class="secondary-button roadmap-dialog-create" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            <span>New epic</span>
+          </button>
+        </section>
         <p id="roadmapEpicError" class="form-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="secondary-button" type="button" data-close-roadmap-epic>Cancel</button>

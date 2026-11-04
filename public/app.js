@@ -261,6 +261,8 @@ const state = {
   createWorkItemType: "",
   createWorkItemParent: null,
   createWorkItemReturnToParent: false,
+  createWorkItemTags: [],
+  createWorkItemRoadmap: null,
   childWorkItemReturn: null,
   createWorkItemBusy: false,
   areaPathsCache: null,
@@ -362,6 +364,8 @@ const els = {
   roadmapForecastError: document.querySelector("#roadmapForecastError"),
   roadmapEpicDialog: document.querySelector("#roadmapEpicDialog"),
   roadmapEpicSearch: document.querySelector("#roadmapEpicSearch"),
+  roadmapForecastAddFeature: document.querySelector("#roadmapForecastAddFeature"),
+  roadmapEpicAddEpic: document.querySelector("#roadmapEpicAddEpic"),
   roadmapEpicChoices: document.querySelector("#roadmapEpicChoices"),
   roadmapEpicError: document.querySelector("#roadmapEpicError"),
   releasesRefresh: document.querySelector("#releasesRefresh"),
@@ -1066,10 +1070,12 @@ async function toggleCreateWorkItemMenu() {
   await loadCreateWorkItemTypes();
 }
 
-function openCreateWorkItemDialog(type, parent = null, { returnToParent = false } = {}) {
+function openCreateWorkItemDialog(type, parent = null, { returnToParent = false, tags = [], roadmap = null } = {}) {
   state.createWorkItemType = type;
   state.createWorkItemParent = parent;
   state.createWorkItemReturnToParent = Boolean(parent && returnToParent);
+  state.createWorkItemTags = tags;
+  state.createWorkItemRoadmap = roadmap;
   closeCreateWorkItemMenu();
   els.createWorkItemTypeLabel.textContent = type;
   els.createWorkItemHeadingType.textContent = type.toLocaleLowerCase("en");
@@ -1131,6 +1137,8 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
   const type = state.createWorkItemType;
   const parent = state.createWorkItemParent;
   const returnToParent = state.createWorkItemReturnToParent;
+  const extraTags = state.createWorkItemTags || [];
+  const roadmap = state.createWorkItemRoadmap;
   title = String(title || "").trim();
   description = String(description || "").trim();
   acceptanceCriteria = String(acceptanceCriteria || "").trim();
@@ -1144,8 +1152,9 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
   setCreateWorkItemBusy(true, ai);
   try {
     const operations = [{ op: "add", path: "/fields/System.Title", value: title }];
-    if (createWorkItemNeedsRefinementTag(type)) {
-      operations.push({ op: "add", path: "/fields/System.Tags", value: "To be refined" });
+    const tags = [...(createWorkItemNeedsRefinementTag(type) ? ["To be refined"] : []), ...extraTags];
+    if (tags.length) {
+      operations.push({ op: "add", path: "/fields/System.Tags", value: tags.join("; ") });
     }
     if (description) {
       operations.push({
@@ -1194,8 +1203,11 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
     if (parent) state.detailsCache.delete(Number(parent.id));
     els.createWorkItemDialog.close();
     await showWorkItem(item);
+    if (roadmap) addRoadmapPortfolioItem(item);
     if (returnToParent && isSelectedWorkItem(item.id)) {
       state.childWorkItemReturn = { childId: Number(item.id), parent };
+    } else if (roadmap && isSelectedWorkItem(item.id)) {
+      state.childWorkItemReturn = { childId: Number(item.id), parent: null, roadmap };
     }
   } catch (error) {
     console.error(error);
@@ -2435,6 +2447,48 @@ function openRoadmapEpicDialog() {
   renderRoadmapEpicChoices();
   els.roadmapEpicDialog.showModal();
   requestAnimationFrame(() => els.roadmapEpicSearch.focus());
+}
+
+function addRoadmapPortfolioItem(item) {
+  const type = String(item?.type || "").trim().toLocaleLowerCase("en");
+  const collection = type === "feature" ? "roadmapPortfolioFeatures" : type === "epic" ? "roadmapPortfolioEpics" : "";
+  if (!collection) return;
+  state[collection] = [...state[collection].filter(existing => Number(existing.id) !== Number(item.id)), item];
+}
+
+async function refreshRoadmapAfterCreate(itemId, roadmap) {
+  try {
+    const [item] = await fetchWorkItems([itemId]);
+    if (item) addRoadmapPortfolioItem(item);
+    state.roadmapMessage = `${item?.title || workItemKey(itemId)} added to ${roadmap.label}.`;
+  } catch (error) {
+    console.error(error);
+  }
+  state.roadmapData = null;
+  state.roadmapCacheKey = "";
+  if (state.currentView === "roadmap") await loadRoadmap();
+}
+
+function createRoadmapForecastFeature() {
+  const context = state.roadmapForecastContext;
+  if (!context || state.roadmapForecastUpdating) return;
+  const { epic, iteration, lane } = context;
+  closeRoadmapForecastDialog();
+  openCreateWorkItemDialog("Feature", epic, {
+    tags: [roadmapForecastTag(iteration, lane)],
+    roadmap: { label: `${iteration.name} · ${roadmapCanonicalLaneTag(lane)}` }
+  });
+}
+
+function createRoadmapEpic() {
+  const context = state.roadmapEpicContext;
+  if (!context || state.roadmapEpicUpdating) return;
+  const { year, quarter } = context;
+  closeRoadmapEpicDialog();
+  openCreateWorkItemDialog("Epic", null, {
+    tags: [roadmapEpicPeriodTag(year, quarter)],
+    roadmap: { label: `Q${quarter} ${year}` }
+  });
 }
 
 function closeRoadmapEpicDialog() {
@@ -13091,6 +13145,8 @@ els.roadmapCreateSprints.addEventListener("click", openRoadmapCreateSprintsDialo
 els.roadmapCreateSprintsForm.addEventListener("submit", createRoadmapSprints);
 els.roadmapForecastSearch.addEventListener("input", renderRoadmapForecastChoices);
 els.roadmapEpicSearch.addEventListener("input", renderRoadmapEpicChoices);
+els.roadmapForecastAddFeature.addEventListener("click", createRoadmapForecastFeature);
+els.roadmapEpicAddEpic.addEventListener("click", createRoadmapEpic);
 els.roadmapForecastDialog.addEventListener("cancel", event => {
   if (!state.roadmapForecastUpdating) return;
   event.preventDefault();
@@ -13378,8 +13434,12 @@ els.workItemDialog.addEventListener("close", () => {
   const childReturn = state.childWorkItemReturn;
   state.childWorkItemReturn = null;
   if (childReturn && Number(closedItem?.id) === childReturn.childId) {
-    state.detailsCache.delete(Number(childReturn.parent.id));
-    showWorkItem(childReturn.parent);
+    if (childReturn.roadmap) {
+      refreshRoadmapAfterCreate(childReturn.childId, childReturn.roadmap);
+    } else {
+      state.detailsCache.delete(Number(childReturn.parent.id));
+      showWorkItem(childReturn.parent);
+    }
   }
 });
 els.workItemAddChild.addEventListener("click", () => {
@@ -13462,6 +13522,8 @@ els.createWorkItemDialog.addEventListener("close", () => {
   els.createWorkItemParentLabel.textContent = "";
   state.createWorkItemParent = null;
   state.createWorkItemReturnToParent = false;
+  state.createWorkItemTags = [];
+  state.createWorkItemRoadmap = null;
   state.createWorkItemBusy = false;
   updateCreateWorkItemActions();
 });
