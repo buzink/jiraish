@@ -19,7 +19,8 @@ const STORAGE = {
   litellmModel: "wish-board.litellm-model",
   wiki: "wish-board.wiki-id",
   wikiExpandedItems: "wish-board.wiki-expanded-items",
-  forYouCustom: "wish-board.for-you-custom-table"
+  forYouCustom: "wish-board.for-you-custom-table",
+  latestCommitRepos: "wish-board.latest-commit-repos"
 };
 
 const DEFAULT_URL = "";
@@ -214,7 +215,16 @@ const state = {
     loaded: false,
     requestToken: 0,
     githubComparisons: new Map(),
-    githubRepositoryMatches: new Map()
+    githubRepositoryMatches: new Map(),
+    githubCommitPulls: new Map()
+  },
+  latestCommits: {
+    available: [],
+    selected: [],
+    entries: new Map(),
+    error: "",
+    loading: false,
+    requestToken: 0
   },
   detailsRequestTokens: new Map(),
   commentsCache: new Map(),
@@ -360,6 +370,11 @@ const els = {
   developmentReadinessCount: document.querySelector("#developmentReadinessCount"),
   developmentReadinessSummary: document.querySelector("#developmentReadinessSummary"),
   developmentReadinessList: document.querySelector("#developmentReadinessList"),
+  latestCommitsStatus: document.querySelector("#latestCommitsStatus"),
+  latestCommitsFilter: document.querySelector("#latestCommitsFilter"),
+  latestCommitsFilterSummary: document.querySelector("#latestCommitsFilterSummary"),
+  latestCommitsFilterOptions: document.querySelector("#latestCommitsFilterOptions"),
+  latestCommitsList: document.querySelector("#latestCommitsList"),
   acceptanceReadinessCount: document.querySelector("#acceptanceReadinessCount"),
   acceptanceReadinessSummary: document.querySelector("#acceptanceReadinessSummary"),
   acceptanceReadinessList: document.querySelector("#acceptanceReadinessList"),
@@ -8356,6 +8371,31 @@ function azureBoardIdsFromText(value) {
   return [...String(value || "").matchAll(/\bAB#(\d+)\b/gi)].map(match => Number(match[1])).filter(Boolean);
 }
 
+// The pull request owns the work item: a commit inside a PR can merely mention other IDs
+// (e.g. a commit editing a list of "AB#8329 …" entries), which must not count as work on
+// those items. Only commits outside any PR fall back to the IDs in their own message.
+async function githubCommitWorkItemIds(repository, commit) {
+  const cacheKey = `${repository}@${commit.sha}`.toLocaleLowerCase("en");
+  const cache = state.releaseReadiness.githubCommitPulls;
+  if (!cache.has(cacheKey)) {
+    const [owner, name] = repository.split("/");
+    cache.set(cacheKey, github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(commit.sha)}/pulls?per_page=20`)
+      .then(pulls => pulls || [])
+      .catch(() => {
+        cache.delete(cacheKey);
+        return [];
+      }));
+  }
+  const pulls = await cache.get(cacheKey);
+  const pullIds = pulls.flatMap(pull => [
+    ...azureBoardIdsFromText(pull.title),
+    ...azureBoardIdsFromText(pull.head?.ref)
+  ]);
+  const hasPulls = pulls.length > 0;
+  const ids = [...new Set(hasPulls && pullIds.length ? pullIds : azureBoardIdsFromText(commit.commit?.message))];
+  return { ids, pulls, hasPulls };
+}
+
 async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, configuredRepositories) {
   if (!state.githubToken || !targetSnapshot?.commit || !fromSnapshot.commit || targetSnapshot.commit === fromSnapshot.commit) {
     return { ids: new Set(), unlinked: [], warning: "" };
@@ -8371,25 +8411,8 @@ async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, config
       const commits = comparison.commits || [];
       const ids = new Set();
       const unlinked = new Map();
-      // The pull request owns the work item: a commit inside a PR can merely mention other
-      // IDs (e.g. a commit editing a list of "AB#8329 …" entries), which must not make those
-      // items look undeployed. Only commits outside any PR fall back to their own message.
       await mapWithConcurrency(commits, 4, async commit => {
-        const messageIds = azureBoardIdsFromText(commit.commit?.message);
-        let pullIds = [];
-        let pulls = [];
-        let hasPulls = false;
-        try {
-          pulls = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(commit.sha)}/pulls?per_page=20`) || [];
-          hasPulls = Boolean(pulls.length);
-          pullIds = (pulls || []).flatMap(pull => [
-            ...azureBoardIdsFromText(pull.title),
-            ...azureBoardIdsFromText(pull.head?.ref)
-          ]);
-        } catch (error) {
-          hasPulls = false;
-        }
-        const commitIds = hasPulls && pullIds.length ? pullIds : messageIds;
+        const { ids: commitIds, pulls, hasPulls } = await githubCommitWorkItemIds(repository, commit);
         commitIds.forEach(id => ids.add(id));
         if (commitIds.length) return;
         if (hasPulls) {
@@ -8462,6 +8485,307 @@ async function compareReadinessLane(snapshots, fromTier, targetTier, configuredR
   });
   return groups.filter(group => group.items.length || group.unlinked.length || group.warning)
     .sort((a, b) => a.pipelineName.localeCompare(b.pipelineName, "en", { sensitivity: "base" }));
+}
+
+const LATEST_COMMITS_PAGE_SIZE = 30;
+const LATEST_COMMITS_VISIBLE_STEP = 10;
+
+function latestCommitWorkItemTested(item) {
+  return /^(closed|resolved|done|completed)$/i.test(String(item.state || "").trim());
+}
+
+// Newest commit with a work item for which it and every older commit with a work item are
+// tested. Commits without a (found) work item neither block nor qualify.
+function latestSafeCommitSha(commits) {
+  let safeSha = "";
+  for (let index = commits.length - 1; index >= 0; index--) {
+    const commit = commits[index];
+    if (!commit.workItems.length) continue;
+    if (!commit.workItems.every(latestCommitWorkItemTested)) break;
+    safeSha = commit.sha;
+  }
+  return safeSha;
+}
+
+async function loadLatestCommitsPage(repository, page) {
+  const [owner, name] = repository.split("/");
+  const commits = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits?per_page=${LATEST_COMMITS_PAGE_SIZE}&page=${page}`) || [];
+  const linked = await mapWithConcurrency(commits, 4, async commit => ({
+    commit,
+    ids: (await githubCommitWorkItemIds(repository, commit)).ids
+  }));
+  const items = await fetchWorkItems(linked.flatMap(entry => entry.ids));
+  const itemsById = new Map(items.map(item => [Number(item.id), item]));
+  return {
+    hasMore: commits.length === LATEST_COMMITS_PAGE_SIZE,
+    commits: linked.map(({ commit, ids }) => ({
+      sha: commit.sha,
+      url: commit.html_url || `https://github.com/${repository}/commit/${commit.sha}`,
+      date: commit.commit?.author?.date || commit.commit?.committer?.date || "",
+      author: commit.commit?.author?.name || commit.author?.login || "",
+      message: String(commit.commit?.message || "").split("\n")[0],
+      ids,
+      workItems: ids.map(id => itemsById.get(Number(id))).filter(Boolean)
+    }))
+  };
+}
+
+function savedLatestCommitRepositories() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE.latestCommitRepos) || "null");
+    return Array.isArray(saved) ? saved.map(repository => String(repository).toLocaleLowerCase("en")) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLatestCommitRepositories(repositories) {
+  try { localStorage.setItem(STORAGE.latestCommitRepos, JSON.stringify(repositories)); } catch {}
+}
+
+async function loadLatestCommitsRepository(repository) {
+  const requestToken = state.latestCommits.requestToken;
+  const entry = { repository, commits: [], hasMore: false, page: 1, visible: LATEST_COMMITS_VISIBLE_STEP, loading: true, loadingMore: false, error: "" };
+  state.latestCommits.entries.set(repository, entry);
+  renderLatestCommits();
+  try {
+    const page = await loadLatestCommitsPage(repository, 1);
+    if (requestToken !== state.latestCommits.requestToken) return;
+    entry.commits = page.commits;
+    entry.hasMore = page.hasMore;
+  } catch (error) {
+    if (requestToken !== state.latestCommits.requestToken) return;
+    entry.error = error.message || "Commits could not be loaded.";
+  }
+  entry.loading = false;
+  renderLatestCommits();
+}
+
+// Only the selected repositories are loaded, because every commit needs a GitHub
+// pull-request lookup and loading all repositories at once is slow.
+async function loadLatestCommits() {
+  const requestToken = ++state.latestCommits.requestToken;
+  state.latestCommits.loading = true;
+  state.latestCommits.error = "";
+  state.latestCommits.entries = new Map();
+  renderLatestCommits();
+  try {
+    if (!state.githubToken) throw new Error("Add a GitHub API key to show the latest commits per repository.");
+    const available = (await configuredGithubRepositories()).sort();
+    if (requestToken !== state.latestCommits.requestToken) return;
+    const saved = savedLatestCommitRepositories();
+    state.latestCommits.available = available;
+    state.latestCommits.selected = saved ? available.filter(repository => saved.includes(repository)) : available.slice(0, 1);
+  } catch (error) {
+    if (requestToken !== state.latestCommits.requestToken) return;
+    state.latestCommits.available = [];
+    state.latestCommits.selected = [];
+    state.latestCommits.error = error.message || "Latest commits could not be loaded.";
+  }
+  state.latestCommits.loading = false;
+  renderLatestCommits();
+  await Promise.all(state.latestCommits.selected.map(loadLatestCommitsRepository));
+}
+
+function setLatestCommitRepositories(repositories) {
+  const selected = state.latestCommits.available.filter(repository => repositories.includes(repository));
+  state.latestCommits.selected = selected;
+  saveLatestCommitRepositories(selected);
+  renderLatestCommits();
+  selected.filter(repository => !state.latestCommits.entries.has(repository)).forEach(loadLatestCommitsRepository);
+}
+
+async function showMoreLatestCommits(repository) {
+  const entry = state.latestCommits.entries.get(repository);
+  if (!entry || entry.loadingMore) return;
+  const requestToken = state.latestCommits.requestToken;
+  entry.visible += LATEST_COMMITS_VISIBLE_STEP;
+  if (entry.visible > entry.commits.length && entry.hasMore) {
+    entry.loadingMore = true;
+    renderLatestCommits();
+    try {
+      const page = await loadLatestCommitsPage(repository, entry.page + 1);
+      if (requestToken !== state.latestCommits.requestToken) return;
+      entry.page += 1;
+      entry.hasMore = page.hasMore;
+      entry.commits.push(...page.commits);
+    } catch (error) {
+      entry.error = error.message || "More commits could not be loaded.";
+    }
+    entry.loadingMore = false;
+  }
+  renderLatestCommits();
+}
+
+function createLatestCommitRow(commit, safeSha) {
+  const row = document.createElement("tr");
+  const safe = commit.sha === safeSha;
+  row.classList.toggle("is-safe", safe);
+  const dateCell = document.createElement("td");
+  dateCell.className = "latest-commits-date";
+  dateCell.textContent = commit.date ? formatDateTime(commit.date) : "—";
+  const commitCell = document.createElement("td");
+  commitCell.className = "latest-commits-sha";
+  const shaLink = document.createElement("a");
+  shaLink.href = commit.url;
+  shaLink.target = "_blank";
+  shaLink.rel = "noopener noreferrer";
+  shaLink.textContent = commit.sha.slice(0, 7);
+  shaLink.title = commit.sha;
+  commitCell.append(shaLink);
+  if (safe) {
+    const badge = document.createElement("span");
+    badge.className = "latest-commits-safe-badge";
+    badge.textContent = "Latest safe";
+    badge.title = "Newest commit for which it and all older commits with a work item are tested.";
+    commitCell.append(badge);
+  }
+  const storyCell = document.createElement("td");
+  const statusCell = document.createElement("td");
+  const sprintCell = document.createElement("td");
+  if (commit.workItems.length) {
+    commit.workItems.forEach(item => {
+      const link = document.createElement("a");
+      link.className = "latest-commits-story";
+      link.href = workItemWebUrl(item.id);
+      link.textContent = String(item.id);
+      link.title = `${item.type}: ${item.title}`;
+      link.addEventListener("click", event => {
+        event.preventDefault();
+        showWorkItem(item);
+      });
+      storyCell.append(link);
+      const status = document.createElement("span");
+      status.className = "card-state";
+      status.dataset.stateTone = stateTone(item.state);
+      status.textContent = item.state;
+      statusCell.append(status);
+    });
+    sprintCell.textContent = [...new Set(commit.workItems.map(item => item.iterationPath ? item.iterationName : ""))].filter(Boolean).join(", ") || "—";
+  } else {
+    storyCell.textContent = "—";
+    storyCell.className = "latest-commits-muted";
+    statusCell.textContent = "No work item";
+    statusCell.className = "latest-commits-muted";
+    sprintCell.textContent = "—";
+  }
+  const userCell = document.createElement("td");
+  userCell.textContent = commit.author || "—";
+  const messageCell = document.createElement("td");
+  messageCell.className = "latest-commits-message";
+  messageCell.textContent = commit.message;
+  messageCell.title = commit.message;
+  row.append(dateCell, commitCell, storyCell, statusCell, sprintCell, userCell, messageCell);
+  return row;
+}
+
+function createLatestCommitsRepository(entry) {
+  const section = document.createElement("section");
+  section.className = "latest-commits-repository";
+  const safeSha = latestSafeCommitSha(entry.commits);
+  const safeCommit = entry.commits.find(commit => commit.sha === safeSha);
+  const heading = document.createElement("div");
+  heading.className = "latest-commits-repository-heading";
+  const title = document.createElement("a");
+  title.href = `https://github.com/${entry.repository}`;
+  title.target = "_blank";
+  title.rel = "noopener noreferrer";
+  title.textContent = entry.repository;
+  const summary = document.createElement("small");
+  summary.textContent = safeCommit
+    ? `Latest safe commit: ${safeCommit.sha.slice(0, 7)} · ${safeCommit.date ? formatDateTime(safeCommit.date) : ""}`
+    : entry.commits.length ? `No safe commit in the latest ${entry.commits.length} commits.` : "";
+  heading.append(title, summary);
+  section.append(heading);
+  if (entry.loading) {
+    summary.textContent = "Loading commits…";
+    const skeleton = document.createElement("div");
+    skeleton.className = "comment-skeleton release-debug-skeleton";
+    section.append(skeleton);
+    return section;
+  }
+  if (entry.error) {
+    const error = document.createElement("div");
+    error.className = "release-readiness-unresolved";
+    error.textContent = entry.error;
+    section.append(error);
+  }
+  if (entry.commits.length) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "latest-commits-table-wrap";
+    const table = document.createElement("table");
+    table.className = "latest-commits-table";
+    table.innerHTML = "<thead><tr><th>Date</th><th>Commit</th><th>Story</th><th>Status</th><th>Sprint</th><th>User</th><th>Message</th></tr></thead>";
+    const body = document.createElement("tbody");
+    body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeSha)));
+    table.append(body);
+    wrapper.append(table);
+    section.append(wrapper);
+  }
+  if (entry.visible < entry.commits.length || entry.hasMore) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "secondary-button latest-commits-more";
+    more.disabled = entry.loadingMore;
+    more.textContent = entry.loadingMore ? "Loading…" : "Show more";
+    more.addEventListener("click", () => showMoreLatestCommits(entry.repository));
+    section.append(more);
+  }
+  return section;
+}
+
+function renderLatestCommitsFilter() {
+  const { available, selected, loading } = state.latestCommits;
+  els.latestCommitsFilter.hidden = loading || !available.length;
+  els.latestCommitsFilterSummary.textContent = !selected.length
+    ? "No repositories"
+    : selected.length === 1 ? selected[0] : `${selected.length} repositories`;
+  const focusedValue = document.activeElement?.closest?.("#latestCommitsFilterOptions") ? document.activeElement.value : "";
+  els.latestCommitsFilterOptions.replaceChildren(...available.map(repository => {
+    const label = document.createElement("label");
+    label.className = "for-you-custom-tag-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = repository;
+    checkbox.checked = selected.includes(repository);
+    const name = document.createElement("span");
+    name.textContent = repository;
+    label.append(checkbox, name);
+    return label;
+  }));
+  if (focusedValue) els.latestCommitsFilterOptions.querySelector(`input[value="${CSS.escape(focusedValue)}"]`)?.focus();
+}
+
+function renderLatestCommits() {
+  const { loading, error, selected, entries } = state.latestCommits;
+  renderLatestCommitsFilter();
+  els.latestCommitsStatus.classList.toggle("is-error", Boolean(error));
+  els.latestCommitsStatus.textContent = loading ? "Loading…" : error;
+  if (loading) {
+    els.latestCommitsList.replaceChildren(...Array.from({ length: 2 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "comment-skeleton release-debug-skeleton";
+      return skeleton;
+    }));
+    return;
+  }
+  if (error) {
+    els.latestCommitsList.replaceChildren();
+    return;
+  }
+  if (!selected.length) {
+    const empty = document.createElement("div");
+    empty.className = "release-readiness-empty";
+    empty.textContent = state.latestCommits.available.length
+      ? "Select one or more repositories to show their latest commits."
+      : "No GitHub repositories are selected in the connection settings.";
+    els.latestCommitsList.replaceChildren(empty);
+    return;
+  }
+  els.latestCommitsList.replaceChildren(...selected
+    .map(repository => entries.get(repository))
+    .filter(Boolean)
+    .map(createLatestCommitsRepository));
 }
 
 async function loadReleaseReadiness() {
@@ -8635,6 +8959,7 @@ async function loadReleaseDebugPage(force = false) {
   }
   if (state.releaseDebug.loaded && state.releaseReadiness.loaded && !force) {
     renderReleaseDebugPage();
+    renderLatestCommits();
     return;
   }
   const requestToken = ++state.releaseDebug.requestToken;
@@ -8643,7 +8968,9 @@ async function loadReleaseDebugPage(force = false) {
   if (force) {
     state.releaseReadiness.githubComparisons.clear();
     state.releaseReadiness.githubRepositoryMatches.clear();
+    state.releaseReadiness.githubCommitPulls.clear();
   }
+  const latestCommitsPromise = loadLatestCommits();
   const sources = [
     { key: "classic", load: loadLatestClassicReleases },
     { key: "yamlRuns", load: loadLatestYamlRuns },
@@ -8694,7 +9021,7 @@ async function loadReleaseDebugPage(force = false) {
       state.releaseDebug.errors[source.key] = error.message || "This release source could not be loaded.";
     }
     if (requestToken === state.releaseDebug.requestToken) renderReleaseDebugSection(source.key);
-  }), readinessPromise]);
+  }), readinessPromise, latestCommitsPromise]);
   if (requestToken !== state.releaseDebug.requestToken) return;
   state.releaseDebug.loaded = true;
   els.releasesRefresh.disabled = false;
@@ -13008,6 +13335,9 @@ els.roadmapCurrentQuarter.addEventListener("click", selectCurrentRoadmapQuarter)
 els.wikiNav.addEventListener("click", () => showMainView("wiki"));
 els.releasesNav.addEventListener("click", () => showMainView("releases"));
 els.releasesRefresh.addEventListener("click", () => loadReleaseDebugPage(true));
+els.latestCommitsFilterOptions.addEventListener("change", () => {
+  setLatestCommitRepositories([...els.latestCommitsFilterOptions.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value));
+});
 els.wikiSelect.addEventListener("change", async () => {
   state.wikiId = els.wikiSelect.value;
   state.routeWikiPath = "";

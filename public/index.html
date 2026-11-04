@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261104-readiness-unlinked-prs" />
+    <link rel="stylesheet" href="styles.css?v=20261104-latest-commits-filter" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -345,6 +345,24 @@
               <div id="acceptanceReadinessList" class="release-readiness-list"></div>
             </article>
           </div>
+        </section>
+        <section class="release-readiness latest-commits" aria-labelledby="latestCommitsTitle">
+          <header class="release-readiness-heading">
+            <div>
+              <span class="release-readiness-kicker">Latest commits</span>
+              <h2 id="latestCommitsTitle">Which commit is safe to release?</h2>
+              <p>The latest commits per repository. The highlighted commit is the newest one for which it and all older commits with a work item are Closed, Resolved, Done or Completed. Commits without a work item are ignored for this.</p>
+            </div>
+            <span id="latestCommitsStatus" class="release-readiness-status" aria-live="polite"></span>
+          </header>
+          <div id="latestCommitsFilter" class="for-you-custom-tags-field latest-commits-filter" hidden>
+            <span>Repositories</span>
+            <details>
+              <summary id="latestCommitsFilterSummary">No repositories</summary>
+              <div id="latestCommitsFilterOptions" class="for-you-custom-tag-options" role="group" aria-label="Show commits for repositories"></div>
+            </details>
+          </div>
+          <div id="latestCommitsList" class="latest-commits-list"></div>
         </section>
         <div class="release-debug-grid">
           <section class="release-debug-panel" aria-labelledby="classicReleasesTitle">
@@ -1093,6 +1111,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261104-readiness-ready-states-v2" defer></script>
+    <script src="app.js?v=20261104-latest-commits-filter" defer></script>
   </body>
 </html>
