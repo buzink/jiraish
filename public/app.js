@@ -1528,7 +1528,7 @@ function addSmartMappings() {
     if (state.mapping[itemState]) continue;
     const normalized = itemState.toLowerCase();
     if (/closed|done|complete|resolved/.test(normalized)) state.mapping[itemState] = "done";
-    else if (/active|progress|committed|doing/.test(normalized)) state.mapping[itemState] = "active";
+    else if (/active|progress|committed|doing|rework|test|review/.test(normalized)) state.mapping[itemState] = "active";
     else state.mapping[itemState] = "todo";
   }
   localStorage.setItem(STORAGE.mapping, JSON.stringify(state.mapping));
@@ -11881,24 +11881,7 @@ function showSettings() {
     option.selected = team.id === state.teamId;
     return option;
   }));
-  els.stateMappings.replaceChildren(...[...state.knownStates].sort((a, b) => a.localeCompare(b, "en")).map(itemState => {
-    const row = document.createElement("div");
-    row.className = "mapping-row";
-    const label = document.createElement("strong");
-    label.textContent = itemState;
-    const select = document.createElement("select");
-    select.name = `state-${itemState}`;
-    select.dataset.state = itemState;
-    [["todo", "To do"], ["active", "Doing"], ["done", "Done"], ["hidden", "Hide"]].forEach(([value, text]) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      option.selected = state.mapping[itemState] === value;
-      select.append(option);
-    });
-    row.append(label, select);
-    return row;
-  }));
+  renderStateMappings({ keepDraft: false });
   els.githubRepoSettings.hidden = !state.githubToken;
   els.githubAllOwners.checked = state.githubAllOwners;
   els.githubOwnerOptions.replaceChildren();
@@ -11919,6 +11902,62 @@ function showSettings() {
   updateGithubRepositorySettings();
   els.settingsDialog.showModal();
   if (state.githubToken) loadGithubOwnerChoices();
+  loadSettingsWorkItemStates();
+}
+
+const SETTINGS_STATE_TYPES = ["Epic", "Feature", "User Story", "Product Backlog Item", "Requirement", "Bug", "Issue", "Task"];
+
+function renderStateMappings({ keepDraft = true } = {}) {
+  const draft = new Map(keepDraft
+    ? [...els.stateMappings.querySelectorAll("select[data-state]")].map(select => [select.dataset.state, select.value])
+    : []);
+  els.stateMappings.replaceChildren(...[...state.knownStates].sort((a, b) => a.localeCompare(b, "en")).map(itemState => {
+    const row = document.createElement("div");
+    row.className = "mapping-row";
+    const label = document.createElement("strong");
+    label.textContent = itemState;
+    const select = document.createElement("select");
+    select.name = `state-${itemState}`;
+    select.dataset.state = itemState;
+    const selected = draft.get(itemState) || state.mapping[itemState];
+    [["todo", "To do"], ["active", "Doing"], ["done", "Done"], ["hidden", "Hide"]].forEach(([value, text]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      option.selected = selected === value;
+      select.append(option);
+    });
+    row.append(label, select);
+    return row;
+  }));
+}
+
+// The mapping list must include every state the project's work item types can reach,
+// not only states of items that happen to be loaded in the current sprint.
+async function loadSettingsWorkItemStates() {
+  let projectTypes;
+  try {
+    const result = await azure("/_apis/wit/workitemtypes?api-version=7.1");
+    projectTypes = new Set((result.value || []).filter(type => type?.name && type.isDisabled !== true).map(type => type.name));
+  } catch (error) {
+    console.error(error);
+    return;
+  }
+  // Only request types that exist in this project's process, so absent types cause no 404s.
+  const types = [...new Set([...SETTINGS_STATE_TYPES, ...state.stories.map(item => item.type).filter(Boolean)])]
+    .filter(type => projectTypes.has(type));
+  const before = state.knownStates.size;
+  for (const type of types) {
+    try {
+      (await workItemTypeStates(type)).forEach(option => { if (option?.name) state.knownStates.add(option.name); });
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  if (!els.settingsDialog.open) return;
+  if (state.knownStates.size === before) return;
+  addSmartMappings();
+  renderStateMappings();
 }
 
 const LITELLM_CUSTOM_MODEL = "__custom__";
