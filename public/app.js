@@ -8358,10 +8358,10 @@ function azureBoardIdsFromText(value) {
 
 async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, configuredRepositories) {
   if (!state.githubToken || !targetSnapshot?.commit || !fromSnapshot.commit || targetSnapshot.commit === fromSnapshot.commit) {
-    return { ids: new Set(), unresolved: 0, warning: "" };
+    return { ids: new Set(), unlinked: [], warning: "" };
   }
   const repository = await configuredRepositoryForBuild(fromSnapshot.build, configuredRepositories);
-  if (!repository) return { ids: new Set(), unresolved: 0, warning: "The deployed commit could not be matched to one of the selected GitHub repositories." };
+  if (!repository) return { ids: new Set(), unlinked: [], warning: "The deployed commit could not be matched to one of the selected GitHub repositories." };
   const cacheKey = `${repository}:${targetSnapshot.commit}:${fromSnapshot.commit}`.toLocaleLowerCase("en");
   if (state.releaseReadiness.githubComparisons.has(cacheKey)) return state.releaseReadiness.githubComparisons.get(cacheKey);
   const request = (async () => {
@@ -8370,17 +8370,18 @@ async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, config
       const comparison = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(targetSnapshot.commit)}...${encodeURIComponent(fromSnapshot.commit)}?per_page=100`);
       const commits = comparison.commits || [];
       const ids = new Set();
-      let unresolved = 0;
+      const unlinked = new Map();
       // The pull request owns the work item: a commit inside a PR can merely mention other
       // IDs (e.g. a commit editing a list of "AB#8329 …" entries), which must not make those
       // items look undeployed. Only commits outside any PR fall back to their own message.
       await mapWithConcurrency(commits, 4, async commit => {
         const messageIds = azureBoardIdsFromText(commit.commit?.message);
         let pullIds = [];
+        let pulls = [];
         let hasPulls = false;
         try {
-          const pulls = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(commit.sha)}/pulls?per_page=20`);
-          hasPulls = Boolean(pulls?.length);
+          pulls = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(commit.sha)}/pulls?per_page=20`) || [];
+          hasPulls = Boolean(pulls.length);
           pullIds = (pulls || []).flatMap(pull => [
             ...azureBoardIdsFromText(pull.title),
             ...azureBoardIdsFromText(pull.head?.ref)
@@ -8390,11 +8391,38 @@ async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, config
         }
         const commitIds = hasPulls && pullIds.length ? pullIds : messageIds;
         commitIds.forEach(id => ids.add(id));
-        if (!commitIds.length) unresolved++;
+        if (commitIds.length) return;
+        if (hasPulls) {
+          pulls.forEach(pull => {
+            const key = `pr:${repository}#${pull.number}`.toLocaleLowerCase("en");
+            if (!unlinked.has(key)) unlinked.set(key, {
+              key,
+              kind: "pull",
+              repository,
+              number: Number(pull.number),
+              title: pull.title || `Pull request #${pull.number}`,
+              author: pull.user?.login || "",
+              state: pull.merged_at ? "merged" : pull.state || "",
+              url: pull.html_url || `https://github.com/${repository}/pull/${pull.number}`
+            });
+          });
+          return;
+        }
+        const key = `commit:${repository}@${commit.sha}`.toLocaleLowerCase("en");
+        unlinked.set(key, {
+          key,
+          kind: "commit",
+          repository,
+          sha: commit.sha,
+          title: String(commit.commit?.message || "").split("\n")[0] || commit.sha.slice(0, 7),
+          author: commit.author?.login || commit.commit?.author?.name || "",
+          state: "",
+          url: commit.html_url || `https://github.com/${repository}/commit/${commit.sha}`
+        });
       });
-      return { ids, unresolved, warning: comparison.status === "diverged" ? "The Git branches have diverged; verify this comparison." : "" };
+      return { ids, unlinked: [...unlinked.values()].sort((a, b) => (b.number || 0) - (a.number || 0)), warning: comparison.status === "diverged" ? "The Git branches have diverged; verify this comparison." : "" };
     } catch (error) {
-      return { ids: new Set(), unresolved: 0, warning: `GitHub comparison failed: ${error.message}` };
+      return { ids: new Set(), unlinked: [], warning: `GitHub comparison failed: ${error.message}` };
     }
   })();
   state.releaseReadiness.githubComparisons.set(cacheKey, request);
@@ -8429,11 +8457,11 @@ async function compareReadinessLane(snapshots, fromTier, targetTier, configuredR
       fromSnapshot,
       targetSnapshot,
       items,
-      unresolved: githubResult.unresolved,
+      unlinked: githubResult.unlinked,
       warning: githubResult.warning || (!targetSnapshot ? `No successful ${targetTier} deployment was found for this pipeline.` : "")
     };
   });
-  return groups.filter(group => group.items.length || group.unresolved || group.warning)
+  return groups.filter(group => group.items.length || group.unlinked.length || group.warning)
     .sort((a, b) => a.pipelineName.localeCompare(b.pipelineName, "en", { sensitivity: "base" }));
 }
 
@@ -8473,6 +8501,29 @@ function createReadinessWorkItem(item, lane) {
   return link;
 }
 
+function createReadinessUnlinkedChange(change) {
+  const link = document.createElement("a");
+  link.className = "release-readiness-item release-readiness-change";
+  link.href = change.url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.dataset.itemType = change.kind === "pull" ? "pull-request" : "commit";
+  const label = change.kind === "pull" ? `#${change.number}` : change.sha.slice(0, 7);
+  const kind = change.kind === "pull" ? "Pull request" : "Commit";
+  const metadata = [
+    kind,
+    change.state ? change.state[0].toLocaleUpperCase("en") + change.state.slice(1) : "",
+    change.author,
+    "No linked work item"
+  ].filter(Boolean).join(" · ");
+  link.innerHTML = `
+    <span class="release-readiness-type" aria-hidden="true">${change.kind === "pull" ? "PR" : "C"}</span>
+    <span class="release-readiness-item-body"><strong>${escapeHtml(label)} ${escapeHtml(change.title)}</strong><small>${escapeHtml(metadata)} · Opens on GitHub ↗</small></span>
+    <span class="release-readiness-badge" data-tone="attention">Needs attention</span>`;
+  link.title = `${kind} without an Azure DevOps work item. It cannot be tracked as tested, so it always needs attention.`;
+  return link;
+}
+
 function createReadinessPipeline(group, lane) {
   const section = document.createElement("section");
   section.className = "release-readiness-pipeline";
@@ -8483,14 +8534,17 @@ function createReadinessPipeline(group, lane) {
     : `up to ${group.fromSnapshot.build?.buildNumber || `#${group.fromSnapshot.buildId}`}`;
   heading.innerHTML = `<strong>${escapeHtml(group.pipelineName)}</strong><small>${escapeHtml(group.sourceType)} · ${escapeHtml(group.repository)} · ${escapeHtml(buildRange)}</small>`;
   section.append(heading, ...group.items.map(item => createReadinessWorkItem(item, lane)));
-  if (group.unresolved || group.warning) {
-    const unresolved = document.createElement("div");
-    unresolved.className = "release-readiness-unresolved";
-    unresolved.textContent = [
-      group.unresolved ? `${group.unresolved} commit${group.unresolved === 1 ? "" : "s"} could not be linked to an AB# work item.` : "",
-      group.warning
-    ].filter(Boolean).join(" ");
-    section.append(unresolved);
+  if (group.unlinked.length) {
+    const subheading = document.createElement("div");
+    subheading.className = "release-readiness-subheading";
+    subheading.textContent = "Changes without a work item";
+    section.append(subheading, ...group.unlinked.map(createReadinessUnlinkedChange));
+  }
+  if (group.warning) {
+    const warning = document.createElement("div");
+    warning.className = "release-readiness-unresolved";
+    warning.textContent = group.warning;
+    section.append(warning);
   }
   return section;
 }
@@ -8500,7 +8554,8 @@ function renderReadinessLane(lane, groups, loading = false) {
   const summary = lane === "development" ? els.developmentReadinessSummary : els.acceptanceReadinessSummary;
   const list = lane === "development" ? els.developmentReadinessList : els.acceptanceReadinessList;
   const uniqueItems = new Map(groups.flatMap(group => group.items).map(item => [Number(item.id), item]));
-  count.textContent = String(uniqueItems.size);
+  const uniqueChanges = new Set(groups.flatMap(group => group.unlinked || []).map(change => change.key));
+  count.textContent = String(uniqueItems.size + uniqueChanges.size);
   if (loading) {
     summary.textContent = "Comparing successful deployments…";
     list.replaceChildren(...Array.from({ length: 2 }, () => {
@@ -8512,9 +8567,12 @@ function renderReadinessLane(lane, groups, loading = false) {
   }
   const statuses = [...uniqueItems.values()].map(item => readinessState(item, lane));
   const ready = statuses.filter(status => status.ready).length;
-  const attention = statuses.length - ready;
-  summary.innerHTML = uniqueItems.size
-    ? `<strong>${ready} ready</strong><span>·</span><strong>${attention} need attention</strong><span>Based on the current Azure DevOps state</span>`
+  const attention = statuses.length - ready + uniqueChanges.size;
+  const changeNote = uniqueChanges.size
+    ? `<span>·</span><span>${uniqueChanges.size} change${uniqueChanges.size === 1 ? "" : "s"} without a work item</span>`
+    : "";
+  summary.innerHTML = uniqueItems.size || uniqueChanges.size
+    ? `<strong>${ready} ready</strong><span>·</span><strong>${attention} need attention</strong>${changeNote}<span>Based on the current Azure DevOps state</span>`
     : "No linked stories or bugs found between these environments.";
   if (!groups.length) {
     const empty = document.createElement("div");
