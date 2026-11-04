@@ -8369,17 +8369,28 @@ async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, config
     try {
       const comparison = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(targetSnapshot.commit)}...${encodeURIComponent(fromSnapshot.commit)}?per_page=100`);
       const commits = comparison.commits || [];
-      const ids = new Set(commits.flatMap(commit => azureBoardIdsFromText(commit.commit?.message)));
+      const ids = new Set();
       let unresolved = 0;
-      await mapWithConcurrency(commits.filter(commit => !azureBoardIdsFromText(commit.commit?.message).length), 4, async commit => {
+      // The pull request owns the work item: a commit inside a PR can merely mention other
+      // IDs (e.g. a commit editing a list of "AB#8329 …" entries), which must not make those
+      // items look undeployed. Only commits outside any PR fall back to their own message.
+      await mapWithConcurrency(commits, 4, async commit => {
+        const messageIds = azureBoardIdsFromText(commit.commit?.message);
+        let pullIds = [];
+        let hasPulls = false;
         try {
           const pulls = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(commit.sha)}/pulls?per_page=20`);
-          const pullIds = (pulls || []).flatMap(pull => azureBoardIdsFromText(pull.title));
-          pullIds.forEach(id => ids.add(id));
-          if (!pullIds.length) unresolved++;
+          hasPulls = Boolean(pulls?.length);
+          pullIds = (pulls || []).flatMap(pull => [
+            ...azureBoardIdsFromText(pull.title),
+            ...azureBoardIdsFromText(pull.head?.ref)
+          ]);
         } catch (error) {
-          unresolved++;
+          hasPulls = false;
         }
+        const commitIds = hasPulls && pullIds.length ? pullIds : messageIds;
+        commitIds.forEach(id => ids.add(id));
+        if (!commitIds.length) unresolved++;
       });
       return { ids, unresolved, warning: comparison.status === "diverged" ? "The Git branches have diverged; verify this comparison." : "" };
     } catch (error) {
