@@ -639,6 +639,7 @@ const els = {
   workItemTagsHint: document.querySelector("#workItemTagsHint"),
   workItemTagsOptions: document.querySelector("#workItemTagsOptions"),
   workItemChanged: document.querySelector("#workItemChanged"),
+  workItemEnvironments: document.querySelector("#workItemEnvironments"),
   workItemRelationsSection: document.querySelector("#workItemRelationsSection"),
   workItemRelationCount: document.querySelector("#workItemRelationCount"),
   workItemRelationsStatus: document.querySelector("#workItemRelationsStatus"),
@@ -11352,6 +11353,51 @@ function deploymentStatusDisplay(value) {
   return values[status] || { label: String(value || "Unknown"), tone: "neutral" };
 }
 
+const DEPLOYED_ENVIRONMENT_STATUSES = new Set(["succeeded", "succeededwithissues", "partiallysucceeded"]);
+const ENVIRONMENT_ORDER = ["development", "dev", "test", "acceptance", "acc", "staging", "preview", "production", "prod"];
+
+function environmentOrderIndex(name) {
+  const normalized = String(name || "").toLocaleLowerCase("en");
+  const index = ENVIRONMENT_ORDER.findIndex(key => normalized === key || normalized.startsWith(key));
+  return index === -1 ? ENVIRONMENT_ORDER.length : index;
+}
+
+function deployedEnvironmentNames(deployments) {
+  const names = new Map();
+  deployments.forEach(deployment => {
+    (deployment.environments || []).forEach(environment => {
+      const status = String(environment.status || "").replace(/[^a-z]/gi, "").toLocaleLowerCase("en");
+      if (!DEPLOYED_ENVIRONMENT_STATUSES.has(status) || !environment.name) return;
+      const key = environment.name.trim().toLocaleLowerCase("en");
+      if (!names.has(key)) names.set(key, environment.name.trim());
+    });
+  });
+  return [...names.values()].sort((a, b) =>
+    environmentOrderIndex(a) - environmentOrderIndex(b) || a.localeCompare(b, "en", { sensitivity: "base" })
+  );
+}
+
+function renderWorkItemEnvironments(deployments, loading = false, error = "") {
+  const container = els.workItemEnvironments;
+  if (loading) {
+    container.textContent = "Loading…";
+    return;
+  }
+  const names = deployedEnvironmentNames(deployments);
+  if (!names.length) {
+    container.textContent = error ? "Unavailable" : "—";
+    container.title = error || "";
+    return;
+  }
+  container.title = "";
+  container.replaceChildren(...names.map(name => {
+    const chip = document.createElement("span");
+    chip.className = "work-item-environment";
+    chip.textContent = name;
+    return chip;
+  }));
+}
+
 function renderWorkItemDeployments(deployments, loading = false, error = "") {
   const deployedRuns = deployments.filter(deployment =>
     deployment.sourceType === "classic" || (deployment.environments || []).length > 0
@@ -11370,8 +11416,10 @@ function renderWorkItemDeployments(deployments, loading = false, error = "") {
     });
     els.workItemReleases.replaceChildren(...skeletons());
     els.workItemDeployments.replaceChildren(...skeletons());
+    renderWorkItemEnvironments([], true);
     return;
   }
+  renderWorkItemEnvironments(deployments, false, error);
   els.workItemReleasesStatus.textContent = error || (!deployments.length ? "No related builds." : "");
   els.workItemDeploymentsStatus.textContent = error || (!deployedRuns.length ? "No related deployments." : "");
   els.workItemReleases.replaceChildren(...deployments.map(createWorkItemDeploymentEntry));
