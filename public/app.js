@@ -250,6 +250,8 @@ const state = {
   workItemTypesProject: "",
   createWorkItemType: "",
   createWorkItemParent: null,
+  createWorkItemReturnToParent: false,
+  childWorkItemReturn: null,
   createWorkItemBusy: false,
   areaPathsCache: null,
   teamIterationsCache: null,
@@ -657,6 +659,9 @@ const els = {
   workItemSubtasksProgressLabel: document.querySelector("#workItemSubtasksProgressLabel"),
   workItemSubtasksStatus: document.querySelector("#workItemSubtasksStatus"),
   workItemSubtasks: document.querySelector("#workItemSubtasks"),
+  workItemSubtasksContent: document.querySelector("#workItemSubtasksContent"),
+  workItemAddChild: document.querySelector("#workItemAddChild"),
+  workItemAddChildLabel: document.querySelector("#workItemAddChildLabel"),
   workItemAllPanel: document.querySelector("#workItemAllPanel"),
   workItemCommentsPanel: document.querySelector("#workItemCommentsPanel"),
   workItemHistoryPanel: document.querySelector("#workItemHistoryPanel"),
@@ -1033,9 +1038,10 @@ async function toggleCreateWorkItemMenu() {
   await loadCreateWorkItemTypes();
 }
 
-function openCreateWorkItemDialog(type, parent = null) {
+function openCreateWorkItemDialog(type, parent = null, { returnToParent = false } = {}) {
   state.createWorkItemType = type;
   state.createWorkItemParent = parent;
+  state.createWorkItemReturnToParent = Boolean(parent && returnToParent);
   closeCreateWorkItemMenu();
   els.createWorkItemTypeLabel.textContent = type;
   els.createWorkItemHeadingType.textContent = type.toLocaleLowerCase("en");
@@ -1096,6 +1102,7 @@ function setCreateWorkItemBusy(busy, ai = false) {
 async function createWorkItemFromDraft({ title, description = "", acceptanceCriteria = "", ai = false }) {
   const type = state.createWorkItemType;
   const parent = state.createWorkItemParent;
+  const returnToParent = state.createWorkItemReturnToParent;
   title = String(title || "").trim();
   description = String(description || "").trim();
   acceptanceCriteria = String(acceptanceCriteria || "").trim();
@@ -1156,8 +1163,12 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
     state.historyCache.delete(item.id);
     state.forYouProjectName = "";
     if (!parent) state.backlogTeamId = "";
+    if (parent) state.detailsCache.delete(Number(parent.id));
     els.createWorkItemDialog.close();
     await showWorkItem(item);
+    if (returnToParent && isSelectedWorkItem(item.id)) {
+      state.childWorkItemReturn = { childId: Number(item.id), parent };
+    }
   } catch (error) {
     console.error(error);
     els.createWorkItemError.textContent = error.message || "The work item could not be created.";
@@ -7231,6 +7242,9 @@ async function showWorkItem(item) {
   if (els.workItemDialog.open && workItemHasUnsavedChanges() && !confirmDiscardChanges(
     `Discard your unsaved changes and open ${workItemKey(item.id)}?`
   )) return;
+  if (state.childWorkItemReturn && Number(item.id) !== state.childWorkItemReturn.childId) {
+    state.childWorkItemReturn = null;
+  }
   if (!state.routeApplying) writeAppRoute(currentAppRoute({ itemId: item.id }));
   state.selectedItemId = item.id;
   state.selectedItem = item;
@@ -9133,10 +9147,34 @@ function subtaskPriority(priority) {
   return { symbol: "—", label: "No priority", tone: "none" };
 }
 
-function renderWorkItemSubtasks(subtasks = [], error = "") {
-  const visible = Boolean(subtasks.length || error);
-  els.workItemSubtasksSection.hidden = !visible;
-  if (!visible) {
+function workItemChildCreateType(item) {
+  const type = String(item?.type || "").trim().toLocaleLowerCase("en");
+  if (type === "epic") return "Feature";
+  if (type === "feature") return backlogStoryType();
+  if (type === "task") return "";
+  return "Task";
+}
+
+function workItemChildCreateLabel(childType) {
+  const type = String(childType || "").trim().toLocaleLowerCase("en");
+  if (type === "feature") return "Add feature";
+  if (type === "task") return "Add subtask";
+  return "Add story";
+}
+
+function renderWorkItemSubtasks(subtasks = [], error = "", parent = null, loading = false) {
+  const childType = workItemChildCreateType(parent);
+  const hasContent = Boolean(subtasks.length || error);
+  const canAdd = Boolean(childType) && !loading;
+  els.workItemSubtasksSection.hidden = !hasContent && !canAdd;
+  els.workItemSubtasksContent.hidden = !hasContent;
+  els.workItemAddChild.hidden = !canAdd;
+  if (canAdd) {
+    const label = workItemChildCreateLabel(childType);
+    els.workItemAddChildLabel.textContent = label;
+    els.workItemAddChild.setAttribute("aria-label", `${label} to ${workItemKey(parent.id)}`);
+  }
+  if (!hasContent) {
     els.workItemSubtasks.replaceChildren();
     els.workItemSubtasksStatus.textContent = "";
     return;
@@ -9291,7 +9329,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemSystemInfoSection.hidden = !bug;
   if (bug) setRichContent(els.workItemSystemInfo, detail?.systemInfoHtml, loading ? "Loading system information…" : "No system information added.");
   renderWorkItemAttachments(detail?.attachments || [], loading);
-  renderWorkItemSubtasks(detail?.subtasks || [], detail?.subtasksError || "");
+  renderWorkItemSubtasks(detail?.subtasks || [], detail?.subtasksError || "", item, loading);
   els.descriptionEditButton.disabled = loading;
   els.acceptanceCriteriaEditButton.disabled = loading;
   els.systemInfoEditButton.disabled = loading;
@@ -12615,6 +12653,18 @@ els.workItemDialog.addEventListener("close", () => {
   state.selectedItem = null;
   renderCurrentView();
   if (!state.routeApplying) writeAppRoute(currentAppRoute({ itemId: null }));
+  const childReturn = state.childWorkItemReturn;
+  state.childWorkItemReturn = null;
+  if (childReturn && Number(closedItem?.id) === childReturn.childId) {
+    state.detailsCache.delete(Number(childReturn.parent.id));
+    showWorkItem(childReturn.parent);
+  }
+});
+els.workItemAddChild.addEventListener("click", () => {
+  const parent = state.selectedItem;
+  const childType = parent && workItemChildCreateType(parent);
+  if (!childType) return;
+  openCreateWorkItemDialog(childType, parent, { returnToParent: true });
 });
 els.workItemDialog.addEventListener("click", event => { if (event.target === els.workItemDialog) requestCloseWorkItemDialog(); });
 window.addEventListener("beforeunload", event => {
@@ -12689,6 +12739,7 @@ els.createWorkItemDialog.addEventListener("close", () => {
   els.createWorkItemParent.hidden = true;
   els.createWorkItemParentLabel.textContent = "";
   state.createWorkItemParent = null;
+  state.createWorkItemReturnToParent = false;
   state.createWorkItemBusy = false;
   updateCreateWorkItemActions();
 });

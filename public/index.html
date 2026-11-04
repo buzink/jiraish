@@ -937,15 +937,21 @@
             </section>
 
             <section id="workItemSubtasksSection" class="issue-section work-item-subtasks" aria-labelledby="workItemSubtasksHeading" hidden>
-              <div class="section-heading-row work-item-subtasks-heading">
-                <h3 id="workItemSubtasksHeading">Subtasks</h3>
+              <div id="workItemSubtasksContent">
+                <div class="section-heading-row work-item-subtasks-heading">
+                  <h3 id="workItemSubtasksHeading">Subtasks</h3>
+                </div>
+                <div class="work-item-subtasks-progress">
+                  <div class="work-item-subtasks-track" aria-hidden="true"><span id="workItemSubtasksProgress"></span></div>
+                  <span id="workItemSubtasksProgressLabel">0% Done</span>
+                </div>
+                <div id="workItemSubtasksStatus" class="comments-status" aria-live="polite"></div>
+                <div id="workItemSubtasks" class="work-item-subtask-list"></div>
               </div>
-              <div class="work-item-subtasks-progress">
-                <div class="work-item-subtasks-track" aria-hidden="true"><span id="workItemSubtasksProgress"></span></div>
-                <span id="workItemSubtasksProgressLabel">0% Done</span>
-              </div>
-              <div id="workItemSubtasksStatus" class="comments-status" aria-live="polite"></div>
-              <div id="workItemSubtasks" class="work-item-subtask-list"></div>
+              <button id="workItemAddChild" class="work-item-add-child" type="button" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                <span id="workItemAddChildLabel">Add subtask</span>
+              </button>
             </section>
 
             <section class="issue-section activity-section" aria-labelledby="activityHeading">

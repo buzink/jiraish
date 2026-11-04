@@ -925,6 +925,10 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .work-item-subtasks-track span { display: block; width: 0; height: 100%; border-radius: inherit; background: #0c66e4; transition: width .2s ease; }
 .work-item-subtasks-progress > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .work-item-subtasks-status:not(:empty) { margin-bottom: 10px; }
+.work-item-add-child { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 0 -4px; padding: 4px 6px; border: 0; border-radius: 3px; color: #0052cc; background: transparent; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+#workItemSubtasksContent[hidden] + .work-item-add-child { margin-top: 0; }
+.work-item-add-child svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.work-item-add-child:hover, .work-item-add-child:focus-visible { color: #0747a6; background: #deebff; outline: 0; text-decoration: underline; }
 .work-item-subtask-list { overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); box-shadow: 0 1px 1px rgba(9, 30, 66, .08); }
 .work-item-subtask { width: 100%; min-width: 0; min-height: 50px; display: grid; grid-template-columns: 24px 92px minmax(0, 1fr) 32px auto; align-items: center; gap: 9px; padding: 8px 10px; border: 0; color: var(--text); background: transparent; text-align: left; }
 .work-item-subtask + .work-item-subtask { border-top: 1px solid var(--line); }
@@ -1419,6 +1423,8 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .work-item-parent-link:hover, [data-theme="dark"] .work-item-parent-link:focus-visible { color: #cce0ff; background: #09326c; }
 [data-theme="dark"] .work-item-subtasks-track { background: #596773; }
 [data-theme="dark"] .work-item-subtasks-track span { background: #579dff; }
+[data-theme="dark"] .work-item-add-child { color: #85b8ff; }
+[data-theme="dark"] .work-item-add-child:hover, [data-theme="dark"] .work-item-add-child:focus-visible { color: #cce0ff; background: #09326c; }
 [data-theme="dark"] .work-item-subtask-list { border-color: #38414a; background: #22272b; box-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
 [data-theme="dark"] .work-item-subtask + .work-item-subtask { border-color: #38414a; }
 [data-theme="dark"] .work-item-subtask:hover, [data-theme="dark"] .work-item-subtask:focus-visible { background: #1c3b5c; }
