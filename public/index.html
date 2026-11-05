@@ -407,10 +407,15 @@
                 <span>Tags</span>
                 <details id="forYouCustomTags">
                   <summary id="forYouCustomTagsSummary">Anything</summary>
-                  <div id="forYouCustomTagOptions" class="for-you-custom-tag-options" role="group" aria-label="Filter by tags"></div>
+                  <div class="for-you-custom-tag-options tag-filter-panel">
+                    <div id="forYouCustomTagMode" class="tag-match-toggle" role="radiogroup" aria-label="Match tags">
+                      <label><input type="radio" name="forYouCustomTagMode" value="or" checked><span>OR</span><small>any tag</small></label>
+                      <label><input type="radio" name="forYouCustomTagMode" value="and"><span>AND</span><small>all tags</small></label>
+                    </div>
+                    <div id="forYouCustomTagOptions" role="group" aria-label="Filter by tags"></div>
+                  </div>
                 </details>
               </div>
-              <label>Match<select id="forYouCustomTagMode"><option value="or">OR — any selected tag</option><option value="and">AND — all selected tags</option></select></label>
             </div>
           </div>
           <div id="forYouCustomStatus" class="for-you-status" aria-live="polite"></div>

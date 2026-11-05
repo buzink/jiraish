@@ -20,6 +20,7 @@ const STORAGE = {
   wiki: "wish-board.wiki-id",
   wikiExpandedItems: "wish-board.wiki-expanded-items",
   forYouCustom: "wish-board.for-you-custom-table",
+  filterTagMode: "wish-board.filter-tag-mode",
   latestCommitRepos: "wish-board.latest-commit-repos"
 };
 
@@ -124,6 +125,7 @@ const state = {
     tag: new Set(),
     feature: new Set()
   },
+  filterTagMode: localStorage.getItem(STORAGE.filterTagMode) === "and" ? "and" : "or",
   detailsCache: new Map(),
   iterationStoriesCache: new Map(),
   backlogItems: [],
@@ -4347,7 +4349,7 @@ function renderForYouCustomControls() {
   replaceSelectOptions(els.forYouCustomAssignee, forYouCustomAssigneeChoices(), config.assignee);
   replaceSelectOptions(els.forYouCustomState, forYouCustomStateChoices(), config.state);
   replaceSelectOptions(els.forYouCustomType, forYouCustomTypeChoices(), config.type);
-  els.forYouCustomTagMode.value = config.tagMode;
+  setTagMatchToggle(els.forYouCustomTagMode, config.tagMode);
   els.forYouCustomTagsSummary.textContent = !config.tags.length
     ? "Anything"
     : config.tags.length === 1 ? config.tags[0] : `${config.tags.length} tags selected`;
@@ -4435,7 +4437,7 @@ async function refreshForYouCustomTable() {
     state: els.forYouCustomState.value,
     type: els.forYouCustomType.value,
     tags: [...els.forYouCustomTagOptions.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value),
-    tagMode: els.forYouCustomTagMode.value
+    tagMode: tagMatchToggleValue(els.forYouCustomTagMode)
   };
   state.forYouExpanded.custom = false;
   localStorage.setItem(STORAGE.forYouCustom, JSON.stringify(state.forYouCustomConfig));
@@ -6598,6 +6600,10 @@ function matchesFilters(item, query = "") {
     const values = definition.values
       ? definition.values(item)
       : [definition.value(item)];
+    if (definition.key === "tag" && state.filterTagMode === "and") {
+      const itemValues = new Set(values);
+      return [...selected].every(value => itemValues.has(value));
+    }
     return values.some(value => selected.has(value));
   });
 }
@@ -6646,6 +6652,17 @@ function createFilterMenu(definition) {
   dropdown.className = "filter-dropdown";
   dropdown.addEventListener("click", event => event.stopPropagation());
   const options = getFilterOptions(definition);
+  if (definition.key === "tag" && options.length) {
+    const toggle = createTagMatchToggle(`filterTagMode-${state.currentView}`, state.filterTagMode);
+    toggle.addEventListener("change", () => {
+      state.filterTagMode = tagMatchToggleValue(toggle);
+      localStorage.setItem(STORAGE.filterTagMode, state.filterTagMode);
+      renderCurrentView();
+      const reopened = [...els.filterControls.querySelectorAll(".filter-menu")][FILTER_DEFINITIONS.indexOf(definition)];
+      if (reopened) reopened.open = true;
+    });
+    dropdown.append(toggle);
+  }
   if (!options.length) {
     const empty = document.createElement("p");
     empty.className = "filter-empty";
@@ -6688,12 +6705,44 @@ function createFilterMenu(definition) {
   return details;
 }
 
+function createTagMatchToggle(name, mode) {
+  const toggle = document.createElement("div");
+  toggle.className = "tag-match-toggle";
+  toggle.setAttribute("role", "radiogroup");
+  toggle.setAttribute("aria-label", "Match tags");
+  [["or", "OR", "any tag"], ["and", "AND", "all tags"]].forEach(([value, title, hint]) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = name;
+    input.value = value;
+    const text = document.createElement("span");
+    text.textContent = title;
+    const small = document.createElement("small");
+    small.textContent = hint;
+    label.append(input, text, small);
+    toggle.append(label);
+  });
+  setTagMatchToggle(toggle, mode);
+  return toggle;
+}
+
+function setTagMatchToggle(toggle, mode) {
+  toggle.querySelectorAll('input[type="radio"]').forEach(input => { input.checked = input.value === mode; });
+}
+
+function tagMatchToggleValue(toggle) {
+  return toggle.querySelector('input[type="radio"]:checked')?.value === "and" ? "and" : "or";
+}
+
 function createFilterChip(definition, value) {
   const chip = document.createElement("button");
   chip.type = "button";
   chip.className = "filter-chip";
   chip.setAttribute("aria-label", `Remove filter ${definition.label}: ${value}`);
-  chip.innerHTML = `<span>${escapeHtml(definition.label)}:</span> ${escapeHtml(value)} <b aria-hidden="true">×</b>`;
+  const chipLabel = definition.key === "tag" && state.filterTagMode === "and" && state.filters.tag.size > 1
+    ? `${definition.label} (AND)` : definition.label;
+  chip.innerHTML = `<span>${escapeHtml(chipLabel)}:</span> ${escapeHtml(value)} <b aria-hidden="true">×</b>`;
   chip.addEventListener("click", async () => {
     state.filters[definition.key].delete(value);
     if (definition.key === "sprint" && state.currentView !== "backlog") {
@@ -13683,7 +13732,7 @@ els.forYouPersonSearch.addEventListener("keydown", event => {
   els.forYouPerson.focus();
 });
 [els.forYouCustomAssignee, els.forYouCustomState, els.forYouCustomType, els.forYouCustomTagMode]
-  .forEach(select => select.addEventListener("change", refreshForYouCustomTable));
+  .forEach(control => control.addEventListener("change", refreshForYouCustomTable));
 els.forYouCustomTagOptions.addEventListener("change", event => {
   if (event.target.matches('input[type="checkbox"]')) refreshForYouCustomTable();
 });
