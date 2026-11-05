@@ -676,6 +676,15 @@ const els = {
   workItemRelationCount: document.querySelector("#workItemRelationCount"),
   workItemRelationsStatus: document.querySelector("#workItemRelationsStatus"),
   workItemRelations: document.querySelector("#workItemRelations"),
+  workItemAddRelated: document.querySelector("#workItemAddRelated"),
+  workItemLinkDialog: document.querySelector("#workItemLinkDialog"),
+  workItemLinkKey: document.querySelector("#workItemLinkKey"),
+  workItemLinkKind: document.querySelector("#workItemLinkKind"),
+  workItemLinkHeading: document.querySelector("#workItemLinkHeading"),
+  workItemLinkContext: document.querySelector("#workItemLinkContext"),
+  workItemLinkSearch: document.querySelector("#workItemLinkSearch"),
+  workItemLinkChoices: document.querySelector("#workItemLinkChoices"),
+  workItemLinkError: document.querySelector("#workItemLinkError"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
   workItemPullRequestCount: document.querySelector("#workItemPullRequestCount"),
@@ -9593,6 +9602,277 @@ function normalizeWorkItemChildIds(item) {
   }).filter(Boolean);
 }
 
+function relationTargetId(relation) {
+  const match = String(relation?.url || "").match(/\/workitems\/(\d+)(?:[/?]|$)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function workItemParentTypeFilter(item) {
+  const type = String(item?.type || "").trim().toLocaleLowerCase("en");
+  if (type === "epic") return null;
+  if (type === "feature") return { include: ["Epic"] };
+  if (type === "task") return { exclude: ["Task", "Feature", "Epic"] };
+  return { include: ["Feature"] };
+}
+
+function workItemMatchesTypeFilter(candidate, filter) {
+  if (!filter) return true;
+  const type = String(candidate?.type || "").trim().toLocaleLowerCase("en");
+  if (filter.include) return filter.include.some(value => value.toLocaleLowerCase("en") === type);
+  return !filter.exclude.some(value => value.toLocaleLowerCase("en") === type);
+}
+
+function workItemTypeFilterWiql(filter) {
+  if (!filter) return "";
+  const list = (filter.include || filter.exclude).map(type => `'${wiqlText(type)}'`).join(", ");
+  return `AND [System.WorkItemType] ${filter.include ? "IN" : "NOT IN"} (${list})`;
+}
+
+async function addWorkItemRelation(item, rel, targetId) {
+  await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json-patch+json" },
+    body: JSON.stringify([{
+      op: "add",
+      path: "/relations/-",
+      value: { rel, url: `${activeAzureContext().base}/_apis/wit/workItems/${Number(targetId)}` }
+    }])
+  });
+}
+
+async function removeWorkItemRelation(item, rel, targetId) {
+  const current = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
+  const index = (current.relations || []).findIndex(relation => (
+    relation.rel === rel && relationTargetId(relation) === Number(targetId)
+  ));
+  if (index < 0) return;
+  await azure(`/_apis/wit/workitems/${item.id}?api-version=7.1`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json-patch+json" },
+    body: JSON.stringify([
+      { op: "test", path: "/rev", value: current.rev },
+      { op: "remove", path: `/relations/${index}` }
+    ])
+  });
+}
+
+function forgetWorkItemParent(childId, parentId = null, parentLabel = "") {
+  knownWorkItems().filter(known => Number(known.id) === Number(childId)).forEach(known => {
+    known.parentId = parentId;
+    known.featureLabel = parentLabel;
+  });
+}
+
+async function changeWorkItemRelations(item, savingMessage, change, { otherIds = [], parentChanged = [] } = {}) {
+  if (state.workItemRelationUpdating) return false;
+  state.workItemRelationUpdating = true;
+  renderWorkItemDetail(item, state.detailsCache.get(item.id) || null, false);
+  els.workItemLoadStatus.textContent = savingMessage;
+  els.workItemLoadStatus.classList.remove("is-error");
+  let success = false;
+  try {
+    await change();
+    success = true;
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = "";
+    showNotice(error.message || "The link could not be changed.", "error");
+  }
+  state.workItemRelationUpdating = false;
+  if (success) {
+    parentChanged.forEach(({ childId, parent }) => forgetWorkItemParent(
+      childId, parent ? Number(parent.id) : null, parent ? `${parent.title} (#${parent.id})` : ""
+    ));
+    [item.id, ...otherIds].forEach(id => {
+      state.detailsCache.delete(Number(id));
+      state.historyCache.delete(Number(id));
+    });
+    state.iterationStoriesCache.clear();
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    if (["feature", "epic"].includes(item.type.trim().toLocaleLowerCase("en"))) state.roadmapPortfolioTeamId = "";
+    els.workItemLoadStatus.textContent = "";
+    if (isSelectedWorkItem(item.id)) await loadWorkItemDetail(item);
+  } else if (isSelectedWorkItem(item.id)) {
+    renderWorkItemDetail(item, state.detailsCache.get(item.id) || null, false);
+  }
+  return success;
+}
+
+async function removeWorkItemParent(item, parentId, parent) {
+  const name = parent ? `${workItemKey(parentId)} “${parent.title}”` : workItemKey(parentId);
+  if (!window.confirm(`Remove parent ${name} from ${workItemKey(item.id)}?\n\nNeither work item is deleted.`)) return;
+  await changeWorkItemRelations(item, "Removing parent…", async () => {
+    await removeWorkItemRelation(item, "System.LinkTypes.Hierarchy-Reverse", parentId);
+  }, { otherIds: [parentId], parentChanged: [{ childId: item.id, parent: null }] });
+}
+
+async function removeWorkItemChild(item, child) {
+  if (!window.confirm(`Remove ${workItemKey(child.id)} “${child.title}” as a child of ${workItemKey(item.id)}?\n\nThe child work item is not deleted.`)) return;
+  await changeWorkItemRelations(item, "Removing child…", async () => {
+    await removeWorkItemRelation(item, "System.LinkTypes.Hierarchy-Forward", child.id);
+  }, { otherIds: [child.id], parentChanged: [{ childId: child.id, parent: null }] });
+}
+
+async function removeWorkItemLink(item, link) {
+  const name = link.item ? `${workItemKey(link.id)} “${link.item.title}”` : workItemKey(link.id);
+  if (!window.confirm(`Remove the ${link.label.toLocaleLowerCase("en")} link to ${name}?\n\nNeither work item is deleted.`)) return;
+  await changeWorkItemRelations(item, "Removing link…", async () => {
+    await removeWorkItemRelation(item, link.relation, link.id);
+  }, { otherIds: [link.id] });
+}
+
+function openWorkItemLinkDialog(item, mode) {
+  const detail = state.detailsCache.get(item.id) || null;
+  const excluded = new Set([Number(item.id)]);
+  if (mode === "parent") (detail?.childIds || []).forEach(id => excluded.add(Number(id)));
+  else (detail?.linkedWorkItemReferences || []).filter(link => link.relation === "System.LinkTypes.Related")
+    .forEach(link => excluded.add(Number(link.id)));
+  if (detail?.parentId) excluded.add(Number(detail.parentId));
+  state.workItemLinkContext = {
+    item,
+    mode,
+    excluded,
+    filter: mode === "parent" ? workItemParentTypeFilter(item) : null,
+    choices: [],
+    loading: false,
+    query: "",
+    requestToken: 0,
+    timer: null
+  };
+  const parentFilter = state.workItemLinkContext.filter;
+  els.workItemLinkKey.textContent = workItemKey(item.id);
+  els.workItemLinkKind.textContent = mode === "parent" ? "Parent" : "Related issue";
+  els.workItemLinkHeading.textContent = mode === "parent" ? "Add parent" : "Add related issue";
+  els.workItemLinkContext.textContent = mode === "parent"
+    ? `Choose ${parentFilter?.include ? `the ${parentFilter.include.join(" or ")}` : "the work item"} that ${item.title} belongs to.`
+    : `Link ${item.title} to another work item as related.`;
+  els.workItemLinkSearch.value = "";
+  els.workItemLinkError.textContent = "";
+  els.workItemLinkDialog.showModal();
+  els.workItemLinkSearch.focus();
+  searchWorkItemLinkChoices();
+}
+
+function closeWorkItemLinkDialog() {
+  if (state.workItemRelationUpdating) return;
+  els.workItemLinkDialog.close();
+}
+
+function workItemLinkCandidates(items) {
+  const context = state.workItemLinkContext;
+  return items.filter(candidate => candidate
+    && !context.excluded.has(Number(candidate.id))
+    && workItemMatchesTypeFilter(candidate, context.filter));
+}
+
+function searchWorkItemLinkChoices() {
+  const context = state.workItemLinkContext;
+  if (!context) return;
+  const rawQuery = els.workItemLinkSearch.value.trim();
+  const idMatch = rawQuery.match(/^(?:#|[a-z][a-z0-9_.]*-)?(\d+)$/i);
+  const localQuery = idMatch ? idMatch[1] : rawQuery.toLocaleLowerCase("en");
+  context.query = rawQuery;
+  context.choices = workItemLinkCandidates(knownWorkItems().filter(candidate => !localQuery
+    || (idMatch ? String(candidate.id).startsWith(localQuery) : candidate.title.toLocaleLowerCase("en").includes(localQuery))))
+    .sort((a, b) => new Date(b.changedDate || 0) - new Date(a.changedDate || 0))
+    .slice(0, 12);
+  context.loading = Boolean(state.pat);
+  const requestToken = ++context.requestToken;
+  clearTimeout(context.timer);
+  renderWorkItemLinkChoices();
+  if (!state.pat) return;
+  context.timer = setTimeout(async () => {
+    try {
+      const condition = idMatch ? `AND [System.Id] = ${Number(idMatch[1])}`
+        : rawQuery ? `AND [System.Title] CONTAINS '${wiqlText(rawQuery)}'` : "";
+      const ids = await queryWorkItemIds(`
+        SELECT [System.Id]
+        FROM WorkItems
+        WHERE [System.TeamProject] = @project
+          ${condition}
+          ${workItemTypeFilterWiql(context.filter)}
+        ORDER BY [System.ChangedDate] DESC
+      `, 25);
+      const remote = await fetchWorkItems(ids);
+      if (state.workItemLinkContext !== context || context.requestToken !== requestToken) return;
+      const merged = new Map(context.choices.map(choice => [Number(choice.id), choice]));
+      const remoteById = new Map(remote.map(choice => [Number(choice.id), choice]));
+      ids.forEach(id => remoteById.has(Number(id)) && merged.set(Number(id), remoteById.get(Number(id))));
+      context.choices = workItemLinkCandidates([...merged.values()]).slice(0, 25);
+    } catch (error) {
+      console.warn("Work items could not be searched.", error);
+      if (state.workItemLinkContext !== context || context.requestToken !== requestToken) return;
+      els.workItemLinkError.textContent = error.message || "Work items could not be searched.";
+    }
+    if (state.workItemLinkContext !== context || context.requestToken !== requestToken) return;
+    context.loading = false;
+    renderWorkItemLinkChoices();
+  }, rawQuery ? 250 : 0);
+}
+
+function renderWorkItemLinkChoices() {
+  const context = state.workItemLinkContext;
+  if (!context) return;
+  if (!context.choices.length) {
+    const empty = document.createElement("p");
+    empty.className = "roadmap-forecast-empty";
+    empty.textContent = context.loading ? "Searching…" : context.query ? "No matching work items." : "No work items found.";
+    els.workItemLinkChoices.replaceChildren(empty);
+    return;
+  }
+  els.workItemLinkChoices.replaceChildren(...context.choices.map(candidate => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "roadmap-forecast-choice";
+    button.disabled = Boolean(state.workItemRelationUpdating);
+    const icon = document.createElement("span");
+    icon.className = "work-item-relation-icon";
+    icon.dataset.workItemType = String(candidate.type || "work item").toLocaleLowerCase("en");
+    icon.textContent = String(candidate.type || "W").trim().charAt(0).toLocaleUpperCase("en") || "W";
+    const copy = document.createElement("span");
+    copy.className = "roadmap-forecast-choice-copy";
+    const title = document.createElement("strong");
+    title.textContent = candidate.title;
+    const key = document.createElement("small");
+    key.textContent = `${candidate.type} · ${workItemKey(candidate.id)}`;
+    copy.append(title, key);
+    const status = document.createElement("span");
+    status.className = "card-state work-item-relation-state";
+    status.dataset.stateTone = stateTone(candidate.state);
+    status.textContent = candidate.state;
+    button.append(icon, copy, status);
+    button.addEventListener("click", () => chooseWorkItemLink(candidate));
+    return button;
+  }));
+}
+
+async function chooseWorkItemLink(candidate) {
+  const context = state.workItemLinkContext;
+  if (!context || state.workItemRelationUpdating) return;
+  const { item, mode } = context;
+  els.workItemLinkError.textContent = "";
+  let failure = "";
+  const success = await changeWorkItemRelations(item, mode === "parent" ? "Adding parent…" : "Adding related issue…", async () => {
+    renderWorkItemLinkChoices();
+    try {
+      await addWorkItemRelation(item, mode === "parent" ? "System.LinkTypes.Hierarchy-Reverse" : "System.LinkTypes.Related", candidate.id);
+    } catch (error) {
+      failure = error.message || "The link could not be added.";
+      throw error;
+    }
+  }, {
+    otherIds: [candidate.id],
+    parentChanged: mode === "parent" ? [{ childId: item.id, parent: candidate }] : []
+  });
+  if (success) {
+    if (state.workItemLinkContext === context) els.workItemLinkDialog.close();
+  } else if (state.workItemLinkContext === context) {
+    els.workItemLinkError.textContent = failure;
+    renderWorkItemLinkChoices();
+  }
+}
+
 function workItemRelationLabel(relation) {
   const labels = {
     "system.linktypes.related": "Related",
@@ -10041,15 +10321,51 @@ function renderWorkItemSubtasks(subtasks = [], error = "", parent = null, loadin
     taskState.textContent = task.state;
     row.append(icon, key, title, priority, taskState);
     row.addEventListener("click", () => showWorkItem(task));
-    return row;
+    return workItemUnlinkRow(row, "work-item-subtask-row", createWorkItemUnlinkButton(
+      `Remove ${workItemKey(task.id)} as child`,
+      () => removeWorkItemChild(parent, task)
+    ));
   }));
+}
+
+function createWorkItemUnlinkButton(label, onRemove) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "work-item-unlink";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"></path></svg>';
+  button.disabled = Boolean(state.workItemRelationUpdating);
+  button.addEventListener("click", event => {
+    event.stopPropagation();
+    onRemove();
+  });
+  return button;
+}
+
+function workItemUnlinkRow(content, className, unlinkButton) {
+  const wrapper = document.createElement("div");
+  wrapper.className = `work-item-unlink-row ${className}`;
+  wrapper.append(content, unlinkButton);
+  return wrapper;
 }
 
 function renderWorkItemParent(item, detail) {
   const parent = detail?.parent || null;
   const parentId = detail?.parentId || item.parentId;
   if (!parentId) {
-    els.workItemParent.textContent = "No parent";
+    if (!detail || !workItemParentTypeFilter(item)) {
+      els.workItemParent.textContent = "No parent";
+      return;
+    }
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "work-item-parent-link work-item-add-parent";
+    add.textContent = "Add parent";
+    add.setAttribute("aria-label", `Add parent to ${workItemKey(item.id)}`);
+    add.disabled = Boolean(state.workItemRelationUpdating);
+    add.addEventListener("click", () => openWorkItemLinkDialog(item, "parent"));
+    els.workItemParent.replaceChildren(add);
     return;
   }
   const button = document.createElement("button");
@@ -10061,12 +10377,21 @@ function renderWorkItemParent(item, detail) {
   button.setAttribute("aria-label", `Open parent work item ${workItemKey(parentId)}${parent ? `: ${parent.title}` : ""}`);
   button.title = detail?.parentError || "Open parent work item";
   button.addEventListener("click", () => parent ? showWorkItem(parent) : showLinkedWorkItem(parentId));
-  els.workItemParent.replaceChildren(button);
+  if (!detail) {
+    els.workItemParent.replaceChildren(button);
+    return;
+  }
+  els.workItemParent.replaceChildren(workItemUnlinkRow(button, "work-item-parent-row", createWorkItemUnlinkButton(
+    `Remove parent ${workItemKey(parentId)}`,
+    () => removeWorkItemParent(item, parentId, parent)
+  )));
 }
 
-function renderLinkedWorkItems(links = [], error = "") {
-  const visible = Boolean(links.length || error);
+function renderLinkedWorkItems(links = [], error = "", item = null, loading = false) {
+  const visible = Boolean(links.length || error || (item && !loading));
   els.workItemRelationsSection.hidden = !visible;
+  els.workItemAddRelated.hidden = !item || loading;
+  els.workItemAddRelated.disabled = Boolean(state.workItemRelationUpdating);
   els.workItemRelationCount.textContent = String(links.length);
   els.workItemRelationsStatus.textContent = error;
   els.workItemRelationsStatus.classList.toggle("is-error", Boolean(error));
@@ -10121,7 +10446,11 @@ function renderLinkedWorkItems(links = [], error = "") {
       arrow.textContent = "›";
       row.append(icon, body, arrow);
       row.addEventListener("click", () => linkedItem ? showWorkItem(linkedItem) : showLinkedWorkItem(link.id));
-      return row;
+      if (!item) return row;
+      return workItemUnlinkRow(row, "work-item-relation-row", createWorkItemUnlinkButton(
+        `Remove ${label.toLocaleLowerCase("en")} link to ${workItemKey(link.id)}`,
+        () => removeWorkItemLink(item, link)
+      ));
     }));
     group.append(heading, items);
     return group;
@@ -10175,7 +10504,7 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemArea.setAttribute("aria-label", `Area ${detail?.area || item.area || "not set"}. Click to change.`);
   els.workItemIteration.setAttribute("aria-label", `Sprint ${detail?.iteration || state.iteration?.name || "not set"}. Click to change.`);
   renderWorkItemParent(item, detail);
-  renderLinkedWorkItems(detail?.linkedWorkItems || [], detail?.linkedWorkItemsError || "");
+  renderLinkedWorkItems(detail?.linkedWorkItems || [], detail?.linkedWorkItemsError || "", detail ? item : null, loading);
   renderDetailTags(detail?.tags || item.tags);
   els.workItemTags.setAttribute("aria-label", `Tags: ${(detail?.tags || item.tags || []).join(", ") || "none"}. Click to change.`);
   els.workItemChanged.textContent = detail?.changedDate ? formatDateTime(detail.changedDate) : "—";
@@ -13581,6 +13910,24 @@ els.workItemDialog.addEventListener("close", () => {
       showWorkItem(childReturn.parent);
     }
   }
+});
+els.workItemAddRelated.addEventListener("click", () => {
+  if (state.selectedItem) openWorkItemLinkDialog(state.selectedItem, "related");
+});
+els.workItemLinkSearch.addEventListener("input", searchWorkItemLinkChoices);
+els.workItemLinkDialog.querySelectorAll("[data-close-work-item-link]").forEach(button => {
+  button.addEventListener("click", closeWorkItemLinkDialog);
+});
+els.workItemLinkDialog.addEventListener("cancel", event => {
+  if (state.workItemRelationUpdating) event.preventDefault();
+});
+els.workItemLinkDialog.addEventListener("click", event => {
+  if (event.target === els.workItemLinkDialog) closeWorkItemLinkDialog();
+});
+els.workItemLinkDialog.addEventListener("close", () => {
+  if (els.workItemLinkDialog.open) return;
+  if (state.workItemLinkContext) clearTimeout(state.workItemLinkContext.timer);
+  state.workItemLinkContext = null;
 });
 els.workItemAddChild.addEventListener("click", () => {
   const parent = state.selectedItem;

@@ -814,6 +814,26 @@
       </div>
     </dialog>
 
+    <dialog id="workItemLinkDialog" class="dialog roadmap-forecast-dialog work-item-link-dialog" aria-labelledby="workItemLinkHeading">
+      <div class="roadmap-forecast-body">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span id="workItemLinkKey">Work item</span><span aria-hidden="true">/</span><span id="workItemLinkKind">Link</span></div>
+            <h2 id="workItemLinkHeading">Add parent</h2>
+            <p id="workItemLinkContext"></p>
+          </div>
+          <button class="close-button" type="button" data-close-work-item-link aria-label="Close">×</button>
+        </div>
+        <label class="sr-only" for="workItemLinkSearch">Find a work item</label>
+        <input id="workItemLinkSearch" type="search" placeholder="Search by title or ID" autocomplete="off" />
+        <div id="workItemLinkChoices" class="roadmap-forecast-choices" aria-live="polite"></div>
+        <p id="workItemLinkError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-work-item-link>Cancel</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="roadmapEpicDialog" class="dialog roadmap-forecast-dialog" aria-labelledby="roadmapEpicHeading">
       <div class="roadmap-forecast-body">
         <div class="dialog-heading compact">
@@ -1143,11 +1163,15 @@
             </dl>
             <section id="workItemRelationsSection" class="work-item-relations" aria-labelledby="workItemRelationsHeading" hidden>
               <div class="work-item-relations-heading">
-                <h3 id="workItemRelationsHeading">Linked work items</h3>
+                <h3 id="workItemRelationsHeading">Linked issues</h3>
                 <span id="workItemRelationCount" class="comment-count">0</span>
               </div>
               <div id="workItemRelationsStatus" class="work-item-relations-status" aria-live="polite"></div>
               <div id="workItemRelations" class="work-item-relation-list"></div>
+              <button id="workItemAddRelated" class="work-item-add-child work-item-add-related" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                <span>Add related issue</span>
+              </button>
             </section>
           </aside>
         </div>
