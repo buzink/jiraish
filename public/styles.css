@@ -754,6 +754,13 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .backlog-position-range { display: flex; justify-content: space-between; gap: 12px; margin-top: 9px; color: var(--muted); font-size: 11px; }
 .backlog-position-range strong { color: var(--text); }
 .backlog-position-dialog .primary-button:disabled { cursor: wait; opacity: .65; }
+.backlog-copy-dialog .primary-button:disabled { cursor: not-allowed; }
+.backlog-copy-fieldset { min-width: 0; margin: 0 0 16px; padding: 0; border: 0; }
+.backlog-copy-fieldset legend { margin-bottom: 8px; color: #42526e; font-size: 12px; font-weight: 700; }
+.backlog-copy-format.tag-match-toggle { position: static; margin: 0; padding: 0; border-bottom: 0; }
+.backlog-copy-format.tag-match-toggle label { margin: 0; padding: 8px; font-size: 12px; }
+.backlog-copy-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 8px 16px; }
+.backlog-copy-columns .checkbox-label { margin: 0; font-size: 13px; cursor: pointer; }
 .backlog-sprint-order-dialog { width: min(500px, calc(100vw - 32px)); }
 .backlog-sprint-order-dialog .dialog-heading { margin-bottom: 16px; }
 .backlog-sprint-order-dialog .dialog-heading p { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1452,6 +1459,7 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .create-work-item-menu-status.is-error { color: #ff7452; }
 [data-theme="dark"] .create-work-item-parent { color: #b6c2cf; background: #22272b; }
 [data-theme="dark"] .remaining-points-fieldset legend { color: #b6c2cf; }
+[data-theme="dark"] .backlog-copy-fieldset legend { color: #b6c2cf; }
 [data-theme="dark"] .ai-settings { border-color: #454f59; }
 [data-theme="dark"] .ai-settings legend { color: #b6c2cf; }
 [data-theme="dark"] .privacy-note { color: #b6c2cf; background: #22272b; }

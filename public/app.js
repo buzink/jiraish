@@ -140,6 +140,7 @@ const state = {
   backlogUpdating: false,
   backlogSprintOrdering: false,
   backlogPositionItemIds: [],
+  backlogCopyItemIds: [],
   backlogPositionGroupKey: "",
   roadmapYear: null,
   roadmapQuarter: null,
@@ -576,6 +577,12 @@ const els = {
   createWorkItemError: document.querySelector("#createWorkItemError"),
   createWorkItemSubmit: document.querySelector("#createWorkItemSubmit"),
   createWorkItemAiSubmit: document.querySelector("#createWorkItemAiSubmit"),
+  backlogCopyDialog: document.querySelector("#backlogCopyDialog"),
+  backlogCopyForm: document.querySelector("#backlogCopyForm"),
+  backlogCopyKey: document.querySelector("#backlogCopyKey"),
+  backlogCopyColumns: document.querySelector("#backlogCopyColumns"),
+  backlogCopyError: document.querySelector("#backlogCopyError"),
+  backlogCopySubmit: document.querySelector("#backlogCopySubmit"),
   backlogPositionDialog: document.querySelector("#backlogPositionDialog"),
   backlogPositionForm: document.querySelector("#backlogPositionForm"),
   backlogPositionKey: document.querySelector("#backlogPositionKey"),
@@ -5353,6 +5360,16 @@ function createBacklogRow(item) {
     feature => updateBacklogItemParent(item, feature),
     "No epics or features available"
   );
+  const copyTable = document.createElement("button");
+  copyTable.type = "button";
+  copyTable.className = "backlog-row-position";
+  copyTable.setAttribute("role", "menuitem");
+  copyTable.textContent = "Copy as table";
+  copyTable.addEventListener("click", event => {
+    event.stopPropagation();
+    closeBacklogRowMenus();
+    showBacklogCopyDialog(item);
+  });
   const moveToPosition = document.createElement("button");
   moveToPosition.type = "button";
   moveToPosition.className = "backlog-row-position";
@@ -5375,7 +5392,7 @@ function createBacklogRow(item) {
     menu.open = false;
     deleteBacklogItems(item);
   });
-  options.append(assignMenu, sprintMenu, featureMenu, moveToPosition, remove);
+  options.append(assignMenu, sprintMenu, featureMenu, copyTable, moveToPosition, remove);
   menu.append(trigger, options);
   const positionOptions = () => {
     if (!menu.open) return;
@@ -6157,6 +6174,140 @@ function renderBacklogSelection() {
     row.setAttribute("aria-selected", String(selected));
     row.setAttribute("aria-label", `${selected ? "Selected " : ""}${row.dataset.baseLabel}`);
   });
+}
+
+// Widths mirror the .backlog-table column widths in styles.css; null = takes the remaining width.
+const BACKLOG_COPY_COLUMNS = [
+  ["Type", item => item.type, 105],
+  ["Key", item => workItemKey(item.id), 92],
+  ["Summary", item => item.title, null],
+  ["State", item => item.state, 130],
+  ["Priority", item => item.priority ?? "—", 58],
+  ["Points", item => item.points ?? "—", 62],
+  ["Assigned to", item => item.assignee || "Unassigned", 150]
+];
+
+function backlogItemsAsHtmlTable(items, columns = BACKLOG_COPY_COLUMNS) {
+  const widthStyle = width => (width ? `width:${width}px` : "width:auto");
+  const cols = columns.map(([, , width]) => (
+    width ? `<col width="${width}" style="${widthStyle(width)}">` : `<col style="${widthStyle(width)}">`
+  )).join("");
+  const header = columns.map(([label, , width]) => (
+    `<th style="${widthStyle(width)};text-align:left">${escapeHtml(label)}</th>`
+  )).join("");
+  const rows = items.map(item => (
+    `<tr>${columns.map(([, value, width]) => `<td style="${widthStyle(width)}">${escapeHtml(value(item))}</td>`).join("")}</tr>`
+  ));
+  return `<table style="width:100%;table-layout:fixed;border-collapse:collapse">\n<colgroup>${cols}</colgroup>\n<thead>\n<tr>${header}</tr>\n</thead>\n<tbody>\n${rows.join("\n")}\n</tbody>\n</table>`;
+}
+
+function backlogItemsAsMarkdownTable(items, columns = BACKLOG_COPY_COLUMNS) {
+  const cell = value => String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  const line = cells => `| ${cells.map(cell).join(" | ")} |`;
+  return [
+    line(columns.map(([label]) => label)),
+    `| ${columns.map(() => "---").join(" | ")} |`,
+    ...items.map(item => line(columns.map(([, value]) => value(item))))
+  ].join("\n");
+}
+
+async function copyBacklogItemsAsTable(items, format, columns = BACKLOG_COPY_COLUMNS) {
+  if (!items.length || !columns.length) return false;
+  const label = format === "html" ? "HTML" : "Markdown";
+  const count = items.length === 1 ? workItemKey(items[0].id) : `${items.length} work items`;
+  try {
+    if (format === "html") {
+      const html = backlogItemsAsHtmlTable(items, columns);
+      if (window.ClipboardItem && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([html], { type: "text/plain" })
+        })]);
+      } else {
+        await navigator.clipboard.writeText(html);
+      }
+    } else {
+      await navigator.clipboard.writeText(backlogItemsAsMarkdownTable(items, columns));
+    }
+    els.backlogMeta.textContent = `Copied ${count} as ${label} table.`;
+    return true;
+  } catch (error) {
+    els.backlogMeta.textContent = `Could not copy ${count} as ${label}: ${error.message || error}`;
+    return false;
+  }
+}
+
+const BACKLOG_COPY_PREFERENCES_KEY = "jiraish.backlogCopyTable";
+
+function readBacklogCopyPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(BACKLOG_COPY_PREFERENCES_KEY) || "null");
+    if (saved && typeof saved === "object") return saved;
+  } catch {}
+  return {};
+}
+
+function saveBacklogCopyPreferences(preferences) {
+  try {
+    localStorage.setItem(BACKLOG_COPY_PREFERENCES_KEY, JSON.stringify(preferences));
+  } catch {}
+}
+
+function showBacklogCopyDialog(item) {
+  const targets = backlogActionTargets(item);
+  if (!targets.length) return;
+  state.backlogCopyItemIds = targets.map(target => Number(target.id));
+  const preferences = readBacklogCopyPreferences();
+  const format = preferences.format === "html" ? "html" : "markdown";
+  const savedColumns = Array.isArray(preferences.columns) ? new Set(preferences.columns) : null;
+  els.backlogCopyKey.textContent = targets.length === 1 ? workItemKey(targets[0].id) : `${targets.length} selected issues`;
+  els.backlogCopyForm.elements.format.value = format;
+  els.backlogCopyColumns.replaceChildren(...BACKLOG_COPY_COLUMNS.map(([label]) => {
+    const option = document.createElement("label");
+    option.className = "checkbox-label";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = "column";
+    input.value = label;
+    input.checked = savedColumns ? savedColumns.has(label) : true;
+    option.append(input, document.createTextNode(label));
+    return option;
+  }));
+  updateBacklogCopySubmit();
+  if (!els.backlogCopyDialog.open) els.backlogCopyDialog.showModal();
+  requestAnimationFrame(() => els.backlogCopySubmit.focus());
+}
+
+function selectedBacklogCopyColumns() {
+  const chosen = new Set([...els.backlogCopyColumns.querySelectorAll("input:checked")].map(input => input.value));
+  return BACKLOG_COPY_COLUMNS.filter(([label]) => chosen.has(label));
+}
+
+function updateBacklogCopySubmit() {
+  const none = !selectedBacklogCopyColumns().length;
+  els.backlogCopySubmit.disabled = none;
+  els.backlogCopyError.textContent = none ? "Choose at least one column." : "";
+}
+
+function closeBacklogCopyDialog() {
+  state.backlogCopyItemIds = [];
+  if (els.backlogCopyDialog.open) els.backlogCopyDialog.close();
+}
+
+async function submitBacklogCopyDialog(event) {
+  event.preventDefault();
+  const columns = selectedBacklogCopyColumns();
+  const format = els.backlogCopyForm.elements.format.value === "html" ? "html" : "markdown";
+  const ids = new Set(state.backlogCopyItemIds);
+  const items = state.backlogItems.filter(candidate => ids.has(Number(candidate.id)));
+  if (!columns.length) return updateBacklogCopySubmit();
+  if (!items.length) {
+    els.backlogCopyError.textContent = "The selected work items are no longer on the backlog.";
+    return;
+  }
+  saveBacklogCopyPreferences({ format, columns: columns.map(([label]) => label) });
+  if (await copyBacklogItemsAsTable(items, format, columns)) closeBacklogCopyDialog();
+  else els.backlogCopyError.textContent = els.backlogMeta.textContent;
 }
 
 function backlogActionTargets(item) {
@@ -14016,6 +14167,18 @@ els.createWorkItemDialog.addEventListener("close", () => {
 });
 els.createWorkItemDialog.addEventListener("click", event => {
   if (event.target === els.createWorkItemDialog) requestCloseCreateWorkItemDialog();
+});
+els.backlogCopyForm.addEventListener("submit", submitBacklogCopyDialog);
+els.backlogCopyColumns.addEventListener("change", updateBacklogCopySubmit);
+document.querySelectorAll("[data-close-backlog-copy]").forEach(button => {
+  button.addEventListener("click", () => closeBacklogCopyDialog());
+});
+els.backlogCopyDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  closeBacklogCopyDialog();
+});
+els.backlogCopyDialog.addEventListener("click", event => {
+  if (event.target === els.backlogCopyDialog) closeBacklogCopyDialog();
 });
 els.backlogPositionForm.addEventListener("submit", moveBacklogItemToPosition);
 document.querySelectorAll("[data-close-backlog-position]").forEach(button => {

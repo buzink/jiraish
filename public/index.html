@@ -711,6 +711,34 @@
       </form>
     </dialog>
 
+    <dialog id="backlogCopyDialog" class="dialog backlog-position-dialog backlog-copy-dialog" aria-labelledby="backlogCopyHeading">
+      <form id="backlogCopyForm">
+        <div class="dialog-heading compact">
+          <div>
+            <div class="issue-breadcrumb"><span id="backlogCopyKey">Work item</span><span aria-hidden="true">/</span><span>Backlog</span></div>
+            <h2 id="backlogCopyHeading">Copy as table</h2>
+          </div>
+          <button class="close-button" type="button" data-close-backlog-copy aria-label="Close">×</button>
+        </div>
+        <fieldset class="backlog-copy-fieldset">
+          <legend>Format</legend>
+          <div class="tag-match-toggle backlog-copy-format" role="radiogroup" aria-label="Format">
+            <label><input type="radio" name="format" value="markdown" checked><span>Markdown</span></label>
+            <label><input type="radio" name="format" value="html"><span>HTML</span></label>
+          </div>
+        </fieldset>
+        <fieldset class="backlog-copy-fieldset">
+          <legend>Columns</legend>
+          <div id="backlogCopyColumns" class="backlog-copy-columns"></div>
+        </fieldset>
+        <p id="backlogCopyError" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-backlog-copy>Cancel</button>
+          <button id="backlogCopySubmit" class="primary-button" type="submit">Copy</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="backlogPositionDialog" class="dialog backlog-position-dialog" aria-labelledby="backlogPositionHeading">
       <form id="backlogPositionForm">
         <div class="dialog-heading compact">
