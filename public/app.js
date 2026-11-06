@@ -88,7 +88,7 @@ const state = {
   litellmModel: localStorage.getItem(STORAGE.litellmModel) || "",
   gaClientId: localStorage.getItem(STORAGE.gaClientId) || "",
   gaPropertyId: localStorage.getItem(STORAGE.gaPropertyId) || "",
-  analytics: { token: "", tokenExpires: 0, data: null, dataKey: "", status: "", message: "", metric: "screenPageViews", requestToken: 0 },
+  analytics: { token: "", tokenExpires: 0, data: null, dataKey: "", status: "", message: "", metric: "screenPageViews", pageOffset: 0, requestToken: 0 },
   githubOwners: readJson(STORAGE.githubOwners, []),
   githubAllOwners: localStorage.getItem(STORAGE.githubAllOwners) !== "false",
   githubRepos: readJson(STORAGE.githubRepos, []),
@@ -3291,10 +3291,13 @@ async function showMainView(view) {
 const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 const ANALYTICS_METRICS = [
   { name: "screenPageViews", label: "Views" },
-  { name: "activeUsers", label: "Active users" },
-  { name: "sessions", label: "Sessions" },
-  { name: "eventCount", label: "Event count" }
+  { name: "activeUsers", label: "Active users" }
 ];
+const ANALYTICS_TOP_PAGES = 10;
+// The top pages table pages through ranks 1–10 up to 41–50.
+const ANALYTICS_TOP_PAGES_MAX = 50;
+// Enough page titles to find risers and fallers outside the top 10.
+const ANALYTICS_RISER_PAGES = 1000;
 const analyticsCompact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const analyticsFull = new Intl.NumberFormat("en-GB");
 let googleIdentityPromise = null;
@@ -3427,17 +3430,11 @@ function analyticsPeriod(iteration) {
   };
 }
 
-async function runAnalyticsReport(startDate, endDate) {
+async function analyticsRunReport(request) {
   const response = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(state.gaPropertyId)}:runReport`, {
     method: "POST",
     headers: { Authorization: `Bearer ${state.analytics.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "date" }],
-      metrics: ANALYTICS_METRICS.map(metric => ({ name: metric.name })),
-      metricAggregations: ["TOTAL"],
-      orderBys: [{ dimension: { dimensionName: "date" } }]
-    })
+    body: JSON.stringify(request)
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -3445,6 +3442,73 @@ async function runAnalyticsReport(startDate, endDate) {
     error.status = response.status;
     throw error;
   }
+  return data;
+}
+
+// The most viewed page titles in a period, most views first.
+async function runAnalyticsTopPages(startDate, endDate, limit = ANALYTICS_TOP_PAGES) {
+  const data = await analyticsRunReport({
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: "pageTitle" }],
+    metrics: [{ name: "screenPageViews" }],
+    orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+    limit
+  });
+  return (data.rows || []).map(row => ({
+    title: row.dimensionValues?.[0]?.value || "(not set)",
+    views: Number(row.metricValues?.[0]?.value) || 0
+  }));
+}
+
+// URL fragments that mark a page as an event or a news article.
+const ANALYTICS_EVENT_PATHS = ["/events/"];
+const ANALYTICS_NEWS_PATHS = ["/artikelen/", "/articles/"];
+
+// The page whose URL contains one of the fragments with the most views in a period, or null.
+async function runAnalyticsTopPageMatching(startDate, endDate, pathFragments) {
+  const filters = pathFragments.map(value => ({ filter: { fieldName: "pagePath", stringFilter: { matchType: "CONTAINS", value } } }));
+  const data = await analyticsRunReport({
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: "pagePath" }, { name: "pageTitle" }],
+    metrics: [{ name: "screenPageViews" }],
+    dimensionFilter: filters.length === 1 ? filters[0] : { orGroup: { expressions: filters } },
+    orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+    limit: 1
+  });
+  const row = data.rows?.[0];
+  if (!row) return null;
+  return {
+    path: row.dimensionValues?.[0]?.value || "",
+    title: row.dimensionValues?.[1]?.value || row.dimensionValues?.[0]?.value || "(not set)",
+    views: Number(row.metricValues?.[0]?.value) || 0
+  };
+}
+
+// Share of page views on mobile devices, as a fraction from 0 to 1 (null without views).
+async function runAnalyticsMobileShare(startDate, endDate) {
+  const data = await analyticsRunReport({
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: "deviceCategory" }],
+    metrics: [{ name: "screenPageViews" }]
+  });
+  let total = 0;
+  let mobile = 0;
+  for (const row of data.rows || []) {
+    const views = Number(row.metricValues?.[0]?.value) || 0;
+    total += views;
+    if (String(row.dimensionValues?.[0]?.value || "").toLocaleLowerCase("en") === "mobile") mobile += views;
+  }
+  return total ? mobile / total : null;
+}
+
+async function runAnalyticsReport(startDate, endDate) {
+  const data = await analyticsRunReport({
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: "date" }],
+    metrics: ANALYTICS_METRICS.map(metric => ({ name: metric.name })),
+    metricAggregations: ["TOTAL"],
+    orderBys: [{ dimension: { dimensionName: "date" } }]
+  });
   const byDay = new Map((data.rows || []).map(row => {
     const raw = row.dimensionValues?.[0]?.value || "";
     return [`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`, row.metricValues.map(value => Number(value.value) || 0)];
@@ -3476,13 +3540,37 @@ async function loadSprintReviewAnalytics(iteration, { force = false } = {}) {
   const requestToken = ++state.analytics.requestToken;
   setAnalyticsStatus("loading", "Loading Google Analytics data…");
   try {
-    const [current, previous, lastYear] = await Promise.all([
+    const [current, previous, lastYear, topPages, mobileShare, topEvent, topNews] = await Promise.all([
       runAnalyticsReport(period.start, period.end),
       runAnalyticsReport(period.previousStart, period.previousEnd),
-      runAnalyticsReport(period.lastYearStart, period.lastYearEnd)
+      runAnalyticsReport(period.lastYearStart, period.lastYearEnd),
+      Promise.all([
+        runAnalyticsTopPages(period.start, period.end, ANALYTICS_RISER_PAGES),
+        runAnalyticsTopPages(period.previousStart, period.previousEnd, ANALYTICS_RISER_PAGES),
+        runAnalyticsTopPages(period.lastYearStart, period.lastYearEnd, ANALYTICS_TOP_PAGES_MAX)
+      ]),
+      Promise.all([
+        runAnalyticsMobileShare(period.start, period.end),
+        runAnalyticsMobileShare(period.previousStart, period.previousEnd)
+      ]),
+      runAnalyticsTopPageMatching(period.start, period.end, ANALYTICS_EVENT_PATHS),
+      runAnalyticsTopPageMatching(period.start, period.end, ANALYTICS_NEWS_PATHS)
     ]);
     if (requestToken !== state.analytics.requestToken) return;
-    state.analytics.data = { current, previous, lastYear, period, iteration };
+    const movers = analyticsPageMovers(topPages[0], topPages[1]);
+    state.analytics.pageOffset = 0;
+    state.analytics.data = {
+      current,
+      previous,
+      lastYear,
+      topPages: topPages.map(pages => pages.slice(0, ANALYTICS_TOP_PAGES_MAX)),
+      movers,
+      mobileShare,
+      topEvent,
+      topNews,
+      period,
+      iteration
+    };
     state.analytics.dataKey = key;
     setAnalyticsStatus("ready");
   } catch (error) {
@@ -3521,7 +3609,22 @@ function analyticsMetricsHtml(data) {
       <strong class="analytics-metric-value" title="${escapeHtml(analyticsFull.format(current))}">${escapeHtml(analyticsCompact.format(current).toLowerCase())}</strong>
       ${change}
     </button>`;
-  }).join("");
+  }).join("") + analyticsMobileShareHtml(data.mobileShare);
+}
+
+// Not a chart metric, so a plain fact instead of a button. The change is in percentage points.
+function analyticsMobileShareHtml([current, previous]) {
+  const value = current === null ? "–" : `${Math.round(current * 100)}%`;
+  let change = `<span class="analytics-metric-change">–</span>`;
+  if (current !== null && previous !== null) {
+    const points = (current - previous) * 100;
+    change = `<span class="analytics-metric-change ${points >= 0 ? "is-up" : "is-down"}" title="Previous sprint: ${Math.round(previous * 100)}%">${points >= 0 ? "↑" : "↓"} ${Math.abs(points).toFixed(1)} pp</span>`;
+  }
+  return `<div class="analytics-metric analytics-metric-fact" title="Share of views on mobile devices">
+    <span class="analytics-metric-label">Mobile views</span>
+    <strong class="analytics-metric-value">${value}</strong>
+    ${change}
+  </div>`;
 }
 
 // A fixed coordinate system that scales with the slide, like the rest of the presentation.
@@ -3530,9 +3633,9 @@ function analyticsChartSvg(data) {
   const current = data.current.series.map(day => day.values[metricIndex]);
   const previous = data.previous.series.map(day => day.values[metricIndex]);
   const lastYear = data.lastYear.series.map(day => day.values[metricIndex]);
-  const width = 1000;
-  const height = 330;
-  const pad = { top: 12, right: 64, bottom: 52, left: 8 };
+  const width = 640;
+  const height = 360;
+  const pad = { top: 12, right: 52, bottom: 52, left: 8 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
   const max = analyticsNiceMax(Math.max(...current, ...previous, ...lastYear, 0));
@@ -3547,7 +3650,7 @@ function analyticsChartSvg(data) {
     parts.push(`<line class="analytics-grid" x1="${pad.left}" x2="${pad.left + plotWidth}" y1="${lineY}" y2="${lineY}"/>`);
     parts.push(`<text class="analytics-axis" x="${width - 4}" y="${lineY}" text-anchor="end" dominant-baseline="middle">${escapeHtml(analyticsCompact.format(value).toLowerCase())}</text>`);
   }
-  const labelEvery = Math.max(1, Math.ceil(count / 8));
+  const labelEvery = Math.max(1, Math.ceil(count / 7));
   data.current.series.forEach((day, index) => {
     if (index % labelEvery) return;
     const date = new Date(`${day.date}T00:00:00Z`);
@@ -3568,7 +3671,95 @@ function analyticsChartSvg(data) {
     parts.push(`<rect class="analytics-hover" x="${(x(index) - slot / 2).toFixed(1)}" y="${pad.top}" width="${slot.toFixed(1)}" height="${plotHeight}"><title>${escapeHtml(title)}</title></rect>`);
   });
   const metric = ANALYTICS_METRICS[metricIndex];
-  return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(`${metric.label} per day`)}">${parts.join("")}</svg>`;
+  return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMin meet" role="img" aria-label="${escapeHtml(`${metric.label} per day`)}">${parts.join("")}</svg>`;
+}
+
+// The pages with the largest gain and the largest loss in views over the previous sprint.
+// Absolute, so tiny pages going from 1 to 10 views do not win on percentage.
+function analyticsPageMovers(currentPages, previousPages) {
+  const previousViews = new Map(previousPages.map(page => [page.title, page.views]));
+  const currentViews = new Map(currentPages.map(page => [page.title, page.views]));
+  let riser = null;
+  let faller = null;
+  for (const title of new Set([...currentViews.keys(), ...previousViews.keys()])) {
+    const before = previousViews.get(title) || 0;
+    const views = currentViews.get(title) || 0;
+    const change = views - before;
+    if (change > 0 && (!riser || change > riser.change)) riser = { title, views, before, change };
+    if (change < 0 && (!faller || change < faller.change)) faller = { title, views, before, change };
+  }
+  return { riser, faller };
+}
+
+function analyticsMoverHtml(mover, { label, emptyText }) {
+  if (!mover) {
+    return `<div class="analytics-mover">
+      <span class="analytics-metric-label">${escapeHtml(label)}</span>
+      <strong class="analytics-mover-title is-empty">${escapeHtml(emptyText)}</strong>
+    </div>`;
+  }
+  const up = mover.change > 0;
+  const percent = mover.before > 0
+    ? `${up ? "+" : "−"}${analyticsFull.format(Math.round(Math.abs(mover.change) / mover.before * 100))}%`
+    : "new";
+  return `<div class="analytics-mover" title="${escapeHtml(`${mover.title}: ${analyticsFull.format(mover.before)} → ${analyticsFull.format(mover.views)} views`)}">
+    <span class="analytics-metric-label">${escapeHtml(label)}</span>
+    <strong class="analytics-mover-title">${escapeHtml(mover.title)}</strong>
+    <span class="analytics-metric-change ${up ? "is-up" : "is-down"}">${up ? "↑" : "↓"} ${escapeHtml(analyticsCompact.format(Math.abs(mover.change)).toLowerCase())} views · ${escapeHtml(percent)}</span>
+  </div>`;
+}
+
+function analyticsMoversHtml(movers) {
+  return `<div class="analytics-movers">
+    ${analyticsMoverHtml(movers.riser, { label: "Biggest riser", emptyText: "No page gained views" })}
+    ${analyticsMoverHtml(movers.faller, { label: "Biggest faller", emptyText: "No page lost views" })}
+  </div>`;
+}
+
+function analyticsTopEventHtml(event, { label = "Top event", emptyText = "No event pages viewed" } = {}) {
+  const body = event
+    ? `<strong class="analytics-top-event-title">${escapeHtml(event.title)}</strong>
+      <span class="analytics-top-event-views">${escapeHtml(analyticsCompact.format(event.views).toLowerCase())} views</span>`
+    : `<span class="analytics-top-event-title is-empty">${escapeHtml(emptyText)}</span>`;
+  const tooltip = event ? ` data-tooltip="${escapeHtml(`${event.title}\n${event.path} · ${analyticsFull.format(event.views)} views`)}"` : "";
+  return `<div class="analytics-top-event"${tooltip}>
+    <span class="analytics-top-event-label">${escapeHtml(label)}</span>
+    ${body}
+  </div>`;
+}
+
+function analyticsTopPagesHtml(data, iteration) {
+  const columns = [
+    { label: sprintReviewTitle(iteration), className: "is-current", pages: data.topPages[0] },
+    { label: "Previous sprint", className: "is-previous", pages: data.topPages[1] },
+    { label: "Last year", className: "is-last-year", pages: data.topPages[2] }
+  ];
+  const available = Math.max(...columns.map(column => column.pages.length), 1);
+  const lastOffset = Math.floor((Math.min(available, ANALYTICS_TOP_PAGES_MAX) - 1) / ANALYTICS_TOP_PAGES) * ANALYTICS_TOP_PAGES;
+  const offset = Math.min(state.analytics.pageOffset || 0, lastOffset);
+  const rows = Array.from({ length: ANALYTICS_TOP_PAGES }, (_, row) => offset + row).map(index => `<tr>
+    <th scope="row">${index + 1}</th>
+    ${columns.map(column => {
+      const page = column.pages[index];
+      return page
+        ? `<td data-tooltip="${escapeHtml(page.title)}" aria-label="${escapeHtml(`${page.title}, ${analyticsFull.format(page.views)} views`)}"><span class="analytics-page-views">${escapeHtml(analyticsCompact.format(page.views).toLowerCase())}</span><span class="analytics-page-title">${escapeHtml(page.title)}</span></td>`
+        : `<td class="is-empty">–</td>`;
+    }).join("")}
+  </tr>`).join("");
+  const rangeLabel = `${offset + 1}–${offset + ANALYTICS_TOP_PAGES}`;
+  return `<section class="analytics-top-pages" aria-label="Most viewed pages, ranks ${rangeLabel}">
+    <div class="analytics-top-pages-pager">
+      <button type="button" data-analytics-pages="-1" aria-label="Previous ${ANALYTICS_TOP_PAGES} pages" title="Previous ${ANALYTICS_TOP_PAGES}"${offset === 0 ? " disabled" : ""}>‹</button>
+      <span>${rangeLabel}</span>
+      <button type="button" data-analytics-pages="1" aria-label="Next ${ANALYTICS_TOP_PAGES} pages" title="Next ${ANALYTICS_TOP_PAGES}"${offset >= lastOffset ? " disabled" : ""}>›</button>
+    </div>
+    <table>
+      <thead><tr><th scope="col"><span class="sr-only">Rank</span></th>${columns.map(column => `<th scope="col" class="${column.className}">${escapeHtml(column.label)}</th>`).join("")}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${analyticsTopEventHtml(data.topEvent)}
+    ${analyticsTopEventHtml(data.topNews, { label: "Top news", emptyText: "No news articles viewed" })}
+  </section>`;
 }
 
 function sprintReviewAnalyticsSlideHtml(iteration) {
@@ -3580,7 +3771,11 @@ function sprintReviewAnalyticsSlideHtml(iteration) {
   let body;
   if (status === "ready" && data) {
     body = `<div class="analytics-card">
-      <div class="analytics-metrics" role="tablist" aria-label="Metric">${analyticsMetricsHtml(data)}</div>
+      <div class="analytics-top">
+        <div class="analytics-metrics" role="tablist" aria-label="Metric">${analyticsMetricsHtml(data)}</div>
+        ${analyticsMoversHtml(data.movers)}
+        ${analyticsTopPagesHtml(data, iteration)}
+      </div>
       <div class="analytics-chart">${analyticsChartSvg(data)}</div>
       <div class="analytics-footer">
         <div class="analytics-legend" aria-hidden="true">
@@ -3588,7 +3783,6 @@ function sprintReviewAnalyticsSlideHtml(iteration) {
           <span><i class="analytics-legend-previous"></i>Previous sprint</span>
           <span><i class="analytics-legend-last-year"></i>Same period last year</span>
         </div>
-        <span class="analytics-range">Previous sprint ${escapeHtml(analyticsFormatDay(data.period.previousStart))} – ${escapeHtml(analyticsFormatDay(data.period.previousEnd))} · last year ${escapeHtml(analyticsFormatDay(data.period.lastYearStart))} – ${escapeHtml(analyticsFormatDay(data.period.lastYearEnd))}</span>
       </div>
     </div>`;
   } else if (status === "login") {
@@ -15184,6 +15378,11 @@ els.sprintReviewStage.addEventListener("click", event => {
   const metric = event.target.closest("[data-analytics-metric]")?.dataset.analyticsMetric;
   if (metric) {
     state.analytics.metric = metric;
+    return rerenderSprintReviewAnalyticsSlide();
+  }
+  const pageStep = event.target.closest("[data-analytics-pages]:not(:disabled)")?.dataset.analyticsPages;
+  if (pageStep) {
+    state.analytics.pageOffset = Math.max(0, (state.analytics.pageOffset || 0) + Number(pageStep) * ANALYTICS_TOP_PAGES);
     return rerenderSprintReviewAnalyticsSlide();
   }
   const feature = event.target.closest("[data-review-feature]");

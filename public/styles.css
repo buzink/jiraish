@@ -1938,3 +1938,87 @@ body.is-sprint-review main { padding: 0; }
 [data-theme="dark"] .sprint-review-analytics-slide { --analytics-last-year: #fdd663; }
 .analytics-line-last-year { fill: none; stroke: var(--analytics-last-year); stroke-width: 2; stroke-dasharray: 1.5 5; stroke-linecap: round; opacity: .9; }
 .analytics-legend i.analytics-legend-last-year { border-top: 3px dotted var(--analytics-last-year); }
+.analytics-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 46%); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "metrics pages" "chart pages" "footer footer"; column-gap: clamp(16px, 3cqi, 40px); }
+.analytics-top { display: contents; }
+.analytics-metrics { grid-area: metrics; }
+.analytics-chart { grid-area: chart; }
+.analytics-footer { grid-area: footer; }
+.analytics-top-pages { grid-area: pages; min-width: 0; min-height: 0; overflow: hidden; font-size: clamp(9px, 1.15cqi, 15px); }
+.analytics-top-pages-label { margin-bottom: .4em; color: var(--muted); font-size: .85em; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.analytics-top-pages table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.analytics-top-pages thead th { padding: 0 .5em .45em; text-align: left; color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--line); }
+.analytics-top-pages thead th::before { content: ""; display: inline-block; width: 1.4em; margin-right: .45em; vertical-align: middle; border-top: 3px solid var(--analytics-blue); }
+.analytics-top-pages thead th.is-previous::before { border-top: 2px dashed var(--analytics-blue); }
+.analytics-top-pages thead th.is-last-year::before { border-top: 3px dotted var(--analytics-last-year); }
+.analytics-top-pages thead th:first-child { width: 1.8em; padding-right: 0; border-bottom-color: var(--line); }
+.analytics-top-pages thead th:first-child::before { display: none; }
+.analytics-top-pages tbody th { padding: .32em 0; color: var(--muted); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.analytics-top-pages td { padding: .32em .5em; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); color: var(--text); }
+.analytics-page-title { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.analytics-page-views { float: right; margin-left: .5em; color: var(--muted); font-size: .85em; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.analytics-top-pages td.is-empty { color: var(--muted); }
+@media (max-width: 700px) {
+  .analytics-card { grid-template-columns: minmax(0, 1fr); grid-template-areas: "metrics" "chart" "pages" "footer"; }
+}
+/* Top pages table: same look as the sprint tables on the other slides. */
+.analytics-top-pages-label { margin-bottom: .2em; font-size: .7em; letter-spacing: .06em; }
+.analytics-top-pages thead th { padding: .5em .7em; color: var(--muted); font-size: .7em; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; border-bottom: 2px solid var(--line); }
+.analytics-top-pages thead th:first-child { padding: .5em 0; border-bottom-color: var(--line); }
+.analytics-top-pages tbody th { padding: .5em 0; vertical-align: top; }
+.analytics-top-pages td { padding: .5em .7em; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--text); }
+.analytics-top-pages { font-size: clamp(10px, 1.3cqi, 17px); }
+.analytics-top-pages thead th, .analytics-top-pages-label { font-size: .75em; }
+/* The top pages table starts level with the chart, below the metrics. */
+.analytics-card { grid-template-areas: "metrics ." "chart pages" "footer footer"; }
+.analytics-chart, .analytics-top-pages { margin-top: clamp(8px, 1.4cqi, 18px); }
+.analytics-chart { padding-top: 0; }
+/* The top pages table starts level with the chart, below the metrics. */
+.analytics-card { grid-template-areas: "metrics ." "chart pages" "footer footer"; }
+.analytics-chart, .analytics-top-pages { margin-top: clamp(8px, 1.4cqi, 18px); }
+.analytics-chart { padding-top: 0; }
+.analytics-card { grid-template-areas: "metrics ." "chart pages" "footer pages"; }
+.analytics-top-pages td, .analytics-top-pages tbody th { padding-top: .38em; padding-bottom: .38em; }
+/* Biggest riser: a key fact above the top pages table, styled like the metrics above the chart. */
+.analytics-card { grid-template-areas: "metrics riser" "chart pages" "footer pages"; }
+.analytics-riser { grid-area: riser; min-width: 0; display: grid; align-content: start; justify-items: start; gap: .1em; padding-bottom: clamp(8px, 1.4cqi, 18px); border-bottom: 1px solid var(--line); font-size: clamp(11px, 1.55cqi, 20px); }
+.analytics-riser-title { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 2.4em; font-weight: 400; line-height: 1.1; color: var(--navy); }
+.analytics-riser-title.is-empty { font-size: 1.2em; color: var(--muted); }
+.analytics-metric-fact .analytics-metric-value { opacity: .75; }
+/* Biggest riser and faller side by side, replacing the single riser block. */
+.analytics-movers { grid-area: riser; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(12px, 2cqi, 28px); padding-bottom: clamp(8px, 1.4cqi, 18px); border-bottom: 1px solid var(--line); font-size: clamp(11px, 1.55cqi, 20px); }
+.analytics-mover { min-width: 0; display: grid; align-content: start; justify-items: start; gap: .1em; }
+.analytics-mover-title { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 1.7em; font-weight: 400; line-height: 1.41; color: var(--navy); }
+.analytics-mover-title.is-empty { font-size: 1.2em; color: var(--muted); }
+/* Pager for ranks 1–10 / 11–20 / 21–30, sitting at the right end of the table header. */
+.analytics-top-pages { position: relative; }
+.analytics-top-pages thead th:last-child { padding-right: 6.5em; }
+.analytics-top-pages-pager { position: absolute; top: 0; right: 0; display: flex; align-items: center; gap: .15em; height: 2.1em; color: var(--muted); font-size: .75em; font-weight: 700; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+.analytics-top-pages-pager span { min-width: 3.4em; text-align: center; }
+.analytics-top-pages-pager button { display: grid; place-items: center; width: 1.7em; height: 1.7em; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--navy); font-size: 1.35em; line-height: 1; }
+.analytics-top-pages-pager button:hover:not(:disabled) { background: var(--board-bg); }
+.analytics-top-pages-pager button:focus-visible { outline: 2px solid var(--blue-600); outline-offset: 1px; }
+.analytics-top-pages-pager button:disabled { opacity: .3; cursor: default; }
+.analytics-top-pages thead th:last-child { padding-right: 9em; }
+/* Full page title on hover, shown immediately (titles are cut off in the cells). */
+.analytics-top-pages { overflow: visible; }
+.analytics-top-pages td[data-tooltip] { position: relative; }
+.analytics-top-pages td[data-tooltip]::after { content: attr(data-tooltip); position: absolute; z-index: 20; bottom: calc(100% - 2px); left: .3em; width: max-content; max-width: 26em; padding: .45em .65em; border-radius: 4px; color: white; background: #172b4d; box-shadow: 0 3px 8px rgba(9, 30, 66, .28); font-size: .95em; font-weight: 600; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(2px); transition: opacity .12s ease, transform .12s ease, visibility .12s; }
+.analytics-top-pages td:last-child[data-tooltip]::after { left: auto; right: .3em; }
+.analytics-top-pages td[data-tooltip]:hover::after { opacity: 1; visibility: visible; transform: translateY(0); }
+[data-theme="dark"] .analytics-top-pages td[data-tooltip]::after { color: #1d2125; background: #dee4ea; }
+/* Top event: one line under the top pages table. */
+.analytics-top-event { position: relative; display: flex; align-items: baseline; gap: .7em; margin-top: .9em; padding: .55em .7em; border-radius: 6px; background: var(--board-bg); color: var(--text); }
+.analytics-top-event-label { flex: none; color: var(--muted); font-size: .75em; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.analytics-top-event-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; color: var(--navy); }
+.analytics-top-event-title.is-empty { font-weight: 400; color: var(--muted); }
+.analytics-top-event-views { flex: none; color: var(--muted); font-size: .85em; font-variant-numeric: tabular-nums; }
+.analytics-top-event[data-tooltip]::after { content: attr(data-tooltip); position: absolute; z-index: 20; bottom: calc(100% + 4px); right: 0; width: max-content; max-width: 30em; padding: .45em .65em; border-radius: 4px; color: white; background: #172b4d; box-shadow: 0 3px 8px rgba(9, 30, 66, .28); font-size: .95em; font-weight: 600; line-height: 1.35; white-space: pre-line; overflow-wrap: anywhere; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s ease, visibility .12s; }
+.analytics-top-event[data-tooltip]:hover::after { opacity: 1; visibility: visible; }
+[data-theme="dark"] .analytics-top-event[data-tooltip]::after { color: #1d2125; background: #dee4ea; }
+.analytics-top-event + .analytics-top-event { margin-top: .4em; }
+.analytics-top-event-label { min-width: 5.6em; }
+/* Tighter rows so Top event and Top news fit under the table. */
+.analytics-top-pages td, .analytics-top-pages tbody th { padding-top: .26em; padding-bottom: .26em; }
+.analytics-top-event { margin-top: .6em; padding: .4em .7em; }
+.analytics-top-event + .analytics-top-event { margin-top: .3em; }
+.analytics-top-pages td, .analytics-top-pages tbody th { padding-top: .2em; padding-bottom: .2em; }
