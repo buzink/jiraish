@@ -16,13 +16,15 @@
   --progress-state-gray-light: #a5adba;
   --progress-state-gray: #7a869a;
   --progress-state-blue: #0055cc;
-  --progress-state-sky: #0c66e4;
-  --progress-state-magenta: #943d73;
-  --progress-state-yellow: #7f5f01;
-  --progress-state-red: #ae2e24;
-  --progress-state-purple: #5e4db2;
-  --progress-state-orange: #a54800;
-  --progress-state-green: #216e4e;
+  --progress-state-sky: #0c7bd1;
+  --progress-state-cyan: #1c9fbf;
+  --progress-state-teal: #0f7a7a;
+  --progress-state-mint: #2abb9b;
+  --progress-state-lime: #6a9a23;
+  --progress-state-green: #1f845a;
+  --progress-state-indigo: #3b4cc0;
+  --progress-state-violet: #6a4fd0;
+  --progress-state-red: #c9372c;
   --shadow: 0 1px 2px rgba(9, 30, 66, .18), 0 0 1px rgba(9, 30, 66, .31);
 }
 
@@ -140,12 +142,14 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
 .sprint-progress-state > i[data-state-tone="gray"] { background: var(--progress-state-gray); }
 .sprint-progress-state > i[data-state-tone="blue"] { background: var(--progress-state-blue); }
 .sprint-progress-state > i[data-state-tone="sky"] { background: var(--progress-state-sky); }
-.sprint-progress-state > i[data-state-tone="magenta"] { background: var(--progress-state-magenta); }
-.sprint-progress-state > i[data-state-tone="yellow"] { background: var(--progress-state-yellow); }
-.sprint-progress-state > i[data-state-tone="red"] { background: var(--progress-state-red); }
-.sprint-progress-state > i[data-state-tone="purple"] { background: var(--progress-state-purple); }
-.sprint-progress-state > i[data-state-tone="orange"] { background: var(--progress-state-orange); }
+.sprint-progress-state > i[data-state-tone="cyan"] { background: var(--progress-state-cyan); }
+.sprint-progress-state > i[data-state-tone="teal"] { background: var(--progress-state-teal); }
+.sprint-progress-state > i[data-state-tone="mint"] { background: var(--progress-state-mint); }
+.sprint-progress-state > i[data-state-tone="lime"] { background: var(--progress-state-lime); }
 .sprint-progress-state > i[data-state-tone="green"] { background: var(--progress-state-green); }
+.sprint-progress-state > i[data-state-tone="indigo"] { background: var(--progress-state-indigo); }
+.sprint-progress-state > i[data-state-tone="violet"] { background: var(--progress-state-violet); }
+.sprint-progress-state > i[data-state-tone="red"] { background: var(--progress-state-red); }
 .sprint-progress-state .card-state { white-space: nowrap; }
 .sprint-progress-state-empty { color: var(--muted); font-size: 10px; }
 .mobile-disclosure-toggle { display: none; }
@@ -850,16 +854,18 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .issue-status:hover { filter: brightness(.97); }
 .issue-status:focus-visible { outline: 2px solid #4c9aff; outline-offset: 2px; }
 .issue-status.is-saving { cursor: wait; opacity: .72; }
+.card-state[data-state-tone="gray-light"], .issue-status[data-state-tone="gray-light"] { color: #505f79; background: #f1f2f4; }
+.card-state[data-state-tone="gray"], .issue-status[data-state-tone="gray"] { color: #44546f; background: #dcdfe4; }
 .card-state[data-state-tone="blue"], .issue-status[data-state-tone="blue"] { color: #0055cc; background: #cce0ff; }
-.card-state[data-state-tone="gray-light"], .issue-status[data-state-tone="gray-light"] { color: #44546f; background: #f1f2f4; }
-.card-state[data-state-tone="gray"], .issue-status[data-state-tone="gray"] { color: #42526e; background: #dfe1e6; }
-.card-state[data-state-tone="sky"], .issue-status[data-state-tone="sky"] { color: #0c66e4; background: #e9f2ff; }
-.card-state[data-state-tone="magenta"], .issue-status[data-state-tone="magenta"] { color: #943d73; background: #ffecf8; }
-.card-state[data-state-tone="yellow"], .issue-status[data-state-tone="yellow"] { color: #7f5f01; background: #fff7d6; }
-.card-state[data-state-tone="red"], .issue-status[data-state-tone="red"] { color: #ae2e24; background: #ffeceb; }
-.card-state[data-state-tone="purple"], .issue-status[data-state-tone="purple"] { color: #5e4db2; background: #f3f0ff; }
-.card-state[data-state-tone="orange"], .issue-status[data-state-tone="orange"] { color: #a54800; background: #fff3eb; }
-.card-state[data-state-tone="green"], .issue-status[data-state-tone="green"] { color: #216e4e; background: #dcfff1; }
+.card-state[data-state-tone="sky"], .issue-status[data-state-tone="sky"] { color: #075985; background: #d0ebff; }
+.card-state[data-state-tone="cyan"], .issue-status[data-state-tone="cyan"] { color: #1d6b81; background: #c8eff9; }
+.card-state[data-state-tone="teal"], .issue-status[data-state-tone="teal"] { color: #ffffff; background: #0f7a7a; }
+.card-state[data-state-tone="mint"], .issue-status[data-state-tone="mint"] { color: #0f6b55; background: #c5f4e0; }
+.card-state[data-state-tone="lime"], .issue-status[data-state-tone="lime"] { color: #3b6d11; background: #dff3c6; }
+.card-state[data-state-tone="green"], .issue-status[data-state-tone="green"] { color: #ffffff; background: #1f845a; }
+.card-state[data-state-tone="indigo"], .issue-status[data-state-tone="indigo"] { color: #3b4cc0; background: #dde2ff; }
+.card-state[data-state-tone="violet"], .issue-status[data-state-tone="violet"] { color: #4f3fb0; background: #e6e0ff; }
+.card-state[data-state-tone="red"], .issue-status[data-state-tone="red"] { color: #ffffff; background: #c9372c; }
 .issue-state-menu { position: absolute; z-index: 12; top: calc(100% + 6px); left: 0; width: 250px; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); box-shadow: 0 8px 20px rgba(9, 30, 66, .25); }
 .issue-state-menu[hidden] { display: none; }
 .issue-state-menu-title { padding: 10px 12px 7px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
@@ -1344,13 +1350,15 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
   --progress-state-gray-light: #8c9bab;
   --progress-state-gray: #738496;
   --progress-state-blue: #579dff;
-  --progress-state-sky: #6cc3e0;
-  --progress-state-magenta: #e774bb;
-  --progress-state-yellow: #f5cd47;
-  --progress-state-red: #f87168;
-  --progress-state-purple: #9f8fef;
-  --progress-state-orange: #fea362;
+  --progress-state-sky: #4ab0f0;
+  --progress-state-cyan: #6cc3e0;
+  --progress-state-teal: #3cc4c0;
+  --progress-state-mint: #7ee2b8;
+  --progress-state-lime: #b3df72;
   --progress-state-green: #4bce97;
+  --progress-state-indigo: #8f9bff;
+  --progress-state-violet: #b8a6ff;
+  --progress-state-red: #f87168;
   --shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 0 1px rgba(255, 255, 255, .08);
 }
 [data-theme="dark"] .topbar { background: #0c1524; box-shadow: 0 2px 10px rgba(0, 0, 0, .5); }
@@ -1483,16 +1491,18 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .issue-detail-field-search input, [data-theme="dark"] .issue-points-form input { border-color: #596773; color: #b6c2cf; background: #22272b; }
 [data-theme="dark"] .issue-status { color: #85b8ff; background: #1c3b5c; }
 [data-theme="dark"] .card-state[data-state-tone="neutral"], [data-theme="dark"] .issue-status[data-state-tone="neutral"] { color: #b6c2cf; background: #38414a; }
-[data-theme="dark"] .card-state[data-state-tone="gray-light"], [data-theme="dark"] .issue-status[data-state-tone="gray-light"] { color: #c7d1db; background: #333c43; }
-[data-theme="dark"] .card-state[data-state-tone="gray"], [data-theme="dark"] .issue-status[data-state-tone="gray"] { color: #d5dce3; background: #454f59; }
+[data-theme="dark"] .card-state[data-state-tone="gray-light"], [data-theme="dark"] .issue-status[data-state-tone="gray-light"] { color: #c7d1db; background: #2c333a; }
+[data-theme="dark"] .card-state[data-state-tone="gray"], [data-theme="dark"] .issue-status[data-state-tone="gray"] { color: #dee4ea; background: #454f59; }
 [data-theme="dark"] .card-state[data-state-tone="blue"], [data-theme="dark"] .issue-status[data-state-tone="blue"] { color: #cce0ff; background: #09326c; }
-[data-theme="dark"] .card-state[data-state-tone="sky"], [data-theme="dark"] .issue-status[data-state-tone="sky"] { color: #c6edfb; background: #164555; }
-[data-theme="dark"] .card-state[data-state-tone="magenta"], [data-theme="dark"] .issue-status[data-state-tone="magenta"] { color: #fdd0ec; background: #50253f; }
-[data-theme="dark"] .card-state[data-state-tone="yellow"], [data-theme="dark"] .issue-status[data-state-tone="yellow"] { color: #f8e6a0; background: #533f04; }
-[data-theme="dark"] .card-state[data-state-tone="red"], [data-theme="dark"] .issue-status[data-state-tone="red"] { color: #ffd5d2; background: #5d1f1a; }
-[data-theme="dark"] .card-state[data-state-tone="purple"], [data-theme="dark"] .issue-status[data-state-tone="purple"] { color: #dfd8fd; background: #352c63; }
-[data-theme="dark"] .card-state[data-state-tone="orange"], [data-theme="dark"] .issue-status[data-state-tone="orange"] { color: #fec195; background: #702e00; }
-[data-theme="dark"] .card-state[data-state-tone="green"], [data-theme="dark"] .issue-status[data-state-tone="green"] { color: #baf3db; background: #164b35; }
+[data-theme="dark"] .card-state[data-state-tone="sky"], [data-theme="dark"] .issue-status[data-state-tone="sky"] { color: #cfe9fb; background: #0b4468; }
+[data-theme="dark"] .card-state[data-state-tone="cyan"], [data-theme="dark"] .issue-status[data-state-tone="cyan"] { color: #c6edfb; background: #164555; }
+[data-theme="dark"] .card-state[data-state-tone="teal"], [data-theme="dark"] .issue-status[data-state-tone="teal"] { color: #062b2b; background: #3cc4c0; }
+[data-theme="dark"] .card-state[data-state-tone="mint"], [data-theme="dark"] .issue-status[data-state-tone="mint"] { color: #bff2dc; background: #11493b; }
+[data-theme="dark"] .card-state[data-state-tone="lime"], [data-theme="dark"] .issue-status[data-state-tone="lime"] { color: #d3f1a7; background: #2f4a17; }
+[data-theme="dark"] .card-state[data-state-tone="green"], [data-theme="dark"] .issue-status[data-state-tone="green"] { color: #0e2b1f; background: #4bce97; }
+[data-theme="dark"] .card-state[data-state-tone="indigo"], [data-theme="dark"] .issue-status[data-state-tone="indigo"] { color: #d6dbff; background: #262f73; }
+[data-theme="dark"] .card-state[data-state-tone="violet"], [data-theme="dark"] .issue-status[data-state-tone="violet"] { color: #e0d8ff; background: #352a6e; }
+[data-theme="dark"] .card-state[data-state-tone="red"], [data-theme="dark"] .issue-status[data-state-tone="red"] { color: #2b0c09; background: #f87168; }
 [data-theme="dark"] .issue-state-menu { border-color: #596773; background: #282e33; box-shadow: 0 8px 22px rgba(0, 0, 0, .45); }
 [data-theme="dark"] .issue-state-menu-message.is-error { color: #ff7452; }
 [data-theme="dark"] .description-editor { background: #22272b; }

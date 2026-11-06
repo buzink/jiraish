@@ -59,17 +59,16 @@ const DEFAULT_MAPPING = {
 const STATE_TONES = {
   "new": "gray-light",
   "ready for sprint": "gray",
-  "on hold": "red",
   "active": "blue",
   "pr under review": "sky",
-  "test on dev": "magenta",
-  "rework dev": "yellow",
-  "ready for release to accept": "red",
-  "ready to release to accept": "red",
-  "test on acc": "purple",
-  "rework acc": "orange",
-  "resolved": "blue",
-  "closed": "green"
+  "test on dev": "cyan",
+  "ready for release to accept": "teal",
+  "test on acc": "mint",
+  "resolved": "lime",
+  "closed": "green",
+  "rework dev": "indigo",
+  "rework acc": "violet",
+  "on hold": "red"
 };
 
 const SPRINT_PROGRESS_COLUMNS = [
