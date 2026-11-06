@@ -1890,3 +1890,51 @@ body.is-sprint-review main { padding: 0; }
   .sprint-review-features-label { text-align: left; }
   .sprint-review-features ul { justify-content: flex-start; }
 }
+
+/* Sprint review: Google Analytics slide */
+.sprint-review-analytics-slide { --analytics-blue: #1a73e8; --analytics-up: #188038; --analytics-down: #d93025; }
+[data-theme="dark"] .sprint-review-analytics-slide { --analytics-blue: #4f8ff0; --analytics-up: #81c995; --analytics-down: #f28b82; }
+.analytics-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.analytics-metrics { display: flex; gap: clamp(16px, 4cqi, 64px); padding-bottom: clamp(8px, 1.4cqi, 18px); border-bottom: 1px solid var(--line); }
+.analytics-metric { display: grid; justify-items: start; gap: .1em; padding: 0; border: 0; background: none; color: var(--text); text-align: left; font-size: clamp(11px, 1.55cqi, 20px); }
+.analytics-metric-label { color: var(--muted); font-size: 1em; }
+.analytics-metric.is-selected .analytics-metric-label { color: var(--analytics-blue); }
+.analytics-metric:hover .analytics-metric-label, .analytics-metric:focus-visible .analytics-metric-label { color: var(--navy); }
+.analytics-metric.is-selected:hover .analytics-metric-label { color: var(--analytics-blue); }
+.analytics-metric:focus-visible { outline: 2px solid var(--blue-600); outline-offset: 4px; border-radius: 4px; }
+.analytics-metric-value { font-size: 2.4em; font-weight: 400; line-height: 1.1; color: var(--navy); }
+.analytics-metric:not(.is-selected) .analytics-metric-value { opacity: .75; }
+.analytics-metric-change { font-size: .9em; font-weight: 600; letter-spacing: .02em; color: var(--muted); }
+.analytics-metric-change.is-up { color: var(--analytics-up); }
+.analytics-metric-change.is-down { color: var(--analytics-down); }
+.analytics-chart { flex: 1; min-height: 0; display: flex; padding-top: clamp(6px, 1cqi, 14px); }
+.analytics-chart svg { width: 100%; height: 100%; overflow: visible; }
+.analytics-grid { stroke: var(--line); stroke-width: 1; }
+.analytics-tick { stroke: var(--line); stroke-width: 1; }
+.analytics-axis { fill: var(--muted); font-size: 15px; }
+.analytics-line-current { fill: none; stroke: var(--analytics-blue); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.analytics-line-previous { fill: none; stroke: var(--analytics-blue); stroke-width: 1.6; stroke-dasharray: 5 5; opacity: .9; }
+.analytics-point { fill: var(--analytics-blue); }
+.analytics-hover { fill: transparent; }
+.analytics-hover:hover { fill: color-mix(in srgb, var(--analytics-blue) 8%, transparent); }
+.analytics-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5em 2em; padding-top: clamp(6px, 1cqi, 12px); color: var(--muted); font-size: clamp(11px, 1.35cqi, 17px); }
+.analytics-legend { display: flex; gap: 1.6em; color: var(--text); }
+.analytics-legend > span { display: inline-flex; align-items: center; gap: .5em; }
+.analytics-legend i { display: inline-block; width: 1.6em; height: 0; border-top: 3px solid var(--analytics-blue); }
+.analytics-legend i.analytics-legend-previous { border-top-style: dashed; border-top-width: 2px; }
+.analytics-login { margin: auto 0; display: grid; justify-items: start; gap: 1em; font-size: clamp(13px, 1.8cqi, 22px); color: var(--text); }
+.analytics-login p { margin: 0; }
+.analytics-login .primary-button { font-size: .85em; }
+.analytics-message { color: var(--muted); }
+.analytics-message.is-error { color: var(--analytics-down); }
+@media (max-width: 700px) {
+  .analytics-metrics { flex-wrap: wrap; gap: 12px 24px; }
+  .analytics-chart { min-height: 220px; }
+}
+.sprint-review-analytics-slide header { margin-bottom: clamp(12px, 2cqi, 28px); }
+.sprint-review-analytics-slide h2 { margin: 0; font-size: clamp(24px, 4.6cqi, 60px); line-height: 1.1; color: var(--blue-700); }
+.sprint-review-analytics-slide header p { margin: .35em 0 0; color: var(--muted); font-size: clamp(12px, 1.6cqi, 20px); }
+.sprint-review-analytics-slide { --analytics-last-year: #b06000; }
+[data-theme="dark"] .sprint-review-analytics-slide { --analytics-last-year: #fdd663; }
+.analytics-line-last-year { fill: none; stroke: var(--analytics-last-year); stroke-width: 2; stroke-dasharray: 1.5 5; stroke-linecap: round; opacity: .9; }
+.analytics-legend i.analytics-legend-last-year { border-top: 3px dotted var(--analytics-last-year); }

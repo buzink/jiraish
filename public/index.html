@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261104-commit-environments" />
+    <link rel="stylesheet" href="styles.css?v=20261106-analytics" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -652,6 +652,18 @@
           </label>
           <p id="litellmStatus" class="github-owner-status" aria-live="polite"></p>
         </fieldset>
+        <fieldset class="ai-settings analytics-settings">
+          <legend>Google Analytics</legend>
+          <label for="gaClientIdInput">
+            OAuth client ID (type: Web application)
+            <input id="gaClientIdInput" name="gaClientId" type="text" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off" />
+          </label>
+          <label for="gaPropertyIdInput">
+            GA4 property ID
+            <input id="gaPropertyIdInput" name="gaPropertyId" type="text" inputmode="numeric" placeholder="379071837" autocomplete="off" />
+            <span class="field-help">The Analytics slide in the sprint review appears when both fields are filled. Add this site's address as an authorized JavaScript origin of the OAuth client.</span>
+          </label>
+        </fieldset>
         <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
         <div id="stateMappings" class="state-mappings"></div>
         <div class="settings-footer">
@@ -1234,6 +1246,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261104-commit-environments" defer></script>
+    <script src="app.js?v=20261106-analytics" defer></script>
   </body>
 </html>

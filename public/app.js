@@ -21,7 +21,9 @@ const STORAGE = {
   wikiExpandedItems: "wish-board.wiki-expanded-items",
   forYouCustom: "wish-board.for-you-custom-table",
   filterTagMode: "wish-board.filter-tag-mode",
-  latestCommitRepos: "wish-board.latest-commit-repos"
+  latestCommitRepos: "wish-board.latest-commit-repos",
+  gaClientId: "wish-board.ga-client-id",
+  gaPropertyId: "wish-board.ga-property-id"
 };
 
 const DEFAULT_URL = "";
@@ -84,6 +86,9 @@ const state = {
   litellmUrl: localStorage.getItem(STORAGE.litellmUrl) || "",
   litellmApiKey: localStorage.getItem(STORAGE.litellmApiKey) || "",
   litellmModel: localStorage.getItem(STORAGE.litellmModel) || "",
+  gaClientId: localStorage.getItem(STORAGE.gaClientId) || "",
+  gaPropertyId: localStorage.getItem(STORAGE.gaPropertyId) || "",
+  analytics: { token: "", tokenExpires: 0, data: null, dataKey: "", status: "", message: "", metric: "screenPageViews", requestToken: 0 },
   githubOwners: readJson(STORAGE.githubOwners, []),
   githubAllOwners: localStorage.getItem(STORAGE.githubAllOwners) !== "false",
   githubRepos: readJson(STORAGE.githubRepos, []),
@@ -560,6 +565,8 @@ const els = {
   pat: document.querySelector("#patInput"),
   githubToken: document.querySelector("#githubTokenInput"),
   litellmUrl: document.querySelector("#litellmUrlInput"),
+  gaClientId: document.querySelector("#gaClientIdInput"),
+  gaPropertyId: document.querySelector("#gaPropertyIdInput"),
   litellmApiKey: document.querySelector("#litellmApiKeyInput"),
   litellmModel: document.querySelector("#litellmModelInput"),
   litellmCustomModel: document.querySelector("#litellmCustomModelInput"),
@@ -3281,6 +3288,329 @@ async function showMainView(view) {
   render();
 }
 
+const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
+const ANALYTICS_METRICS = [
+  { name: "screenPageViews", label: "Views" },
+  { name: "activeUsers", label: "Active users" },
+  { name: "sessions", label: "Sessions" },
+  { name: "eventCount", label: "Event count" }
+];
+const analyticsCompact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const analyticsFull = new Intl.NumberFormat("en-GB");
+let googleIdentityPromise = null;
+let analyticsTokenClient = null;
+let analyticsTokenClientId = "";
+
+function analyticsConfigured() {
+  return Boolean(state.gaClientId && state.gaPropertyId);
+}
+
+function resetAnalyticsToken() {
+  resetAnalyticsTokenOnly();
+  analyticsTokenClient = null;
+  analyticsTokenClientId = "";
+}
+
+function resetAnalyticsTokenOnly() {
+  state.analytics.token = "";
+  state.analytics.tokenExpires = 0;
+}
+
+function analyticsTokenValid() {
+  return Boolean(state.analytics.token) && Date.now() < state.analytics.tokenExpires;
+}
+
+function loadGoogleIdentity() {
+  if (window.google?.accounts?.oauth2) return Promise.resolve();
+  googleIdentityPromise ||= new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      googleIdentityPromise = null;
+      reject(new Error("Google sign-in could not be loaded."));
+    };
+    document.head.append(script);
+  });
+  return googleIdentityPromise;
+}
+
+function setAnalyticsStatus(status, message = "") {
+  state.analytics.status = status;
+  state.analytics.message = message;
+  rerenderSprintReviewAnalyticsSlide();
+}
+
+// Must run directly from a click: Google only opens the sign-in popup for a user gesture.
+function signInToAnalytics() {
+  if (!window.google?.accounts?.oauth2) {
+    setAnalyticsStatus("login", "Google sign-in is still loading. Try again in a moment.");
+    loadGoogleIdentity().catch(error => setAnalyticsStatus("login", error.message));
+    return;
+  }
+  if (!analyticsTokenClient || analyticsTokenClientId !== state.gaClientId) {
+    analyticsTokenClientId = state.gaClientId;
+    analyticsTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: state.gaClientId,
+      scope: ANALYTICS_SCOPE,
+      callback: () => {}
+    });
+  }
+  analyticsTokenClient.callback = response => {
+    if (response.error) {
+      setAnalyticsStatus("login", `Google sign-in failed: ${response.error_description || response.error}`);
+      return;
+    }
+    state.analytics.token = response.access_token;
+    state.analytics.tokenExpires = Date.now() + (Number(response.expires_in || 3600) - 60) * 1000;
+    loadSprintReviewAnalytics(state.iteration, { force: true });
+  };
+  analyticsTokenClient.error_callback = error => {
+    setAnalyticsStatus("login", error?.type === "popup_closed"
+      ? "Sign-in was cancelled."
+      : `Google sign-in failed: ${error?.message || error?.type || "unknown error"}`);
+  };
+  analyticsTokenClient.requestAccessToken();
+}
+
+function analyticsIsoDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+function analyticsToday() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function analyticsAddDays(isoDate, days) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function analyticsAddYears(isoDate, years) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCFullYear(date.getUTCFullYear() + years);
+  return date.toISOString().slice(0, 10);
+}
+
+function analyticsDayCount(start, end) {
+  return Math.round((new Date(`${end}T00:00:00Z`) - new Date(`${start}T00:00:00Z`)) / 86400000) + 1;
+}
+
+function analyticsFormatDay(isoDate, options = { day: "numeric", month: "short", year: "numeric" }) {
+  return new Intl.DateTimeFormat("en-GB", { ...options, timeZone: "UTC" }).format(new Date(`${isoDate}T00:00:00Z`));
+}
+
+// The sprint period, cut off at today while the sprint is running, plus an equally long period right before it.
+function analyticsPeriod(iteration) {
+  const start = analyticsIsoDate(iteration?.attributes?.startDate);
+  const finish = analyticsIsoDate(iteration?.attributes?.finishDate);
+  if (!start || !finish) return { error: "This sprint has no start and end date." };
+  const today = analyticsToday();
+  if (start > today) return { future: true, start, finish };
+  const end = finish < today ? finish : today;
+  const days = analyticsDayCount(start, end);
+  return {
+    start,
+    end,
+    finish,
+    days,
+    running: end < finish,
+    previousStart: analyticsAddDays(start, -days),
+    previousEnd: analyticsAddDays(start, -1),
+    // The same number of days, starting on the same date one year earlier.
+    lastYearStart: analyticsAddYears(start, -1),
+    lastYearEnd: analyticsAddDays(analyticsAddYears(start, -1), days - 1)
+  };
+}
+
+async function runAnalyticsReport(startDate, endDate) {
+  const response = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(state.gaPropertyId)}:runReport`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${state.analytics.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: "date" }],
+      metrics: ANALYTICS_METRICS.map(metric => ({ name: metric.name })),
+      metricAggregations: ["TOTAL"],
+      orderBys: [{ dimension: { dimensionName: "date" } }]
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error?.message || `Google Analytics returned ${response.status}.`);
+    error.status = response.status;
+    throw error;
+  }
+  const byDay = new Map((data.rows || []).map(row => {
+    const raw = row.dimensionValues?.[0]?.value || "";
+    return [`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`, row.metricValues.map(value => Number(value.value) || 0)];
+  }));
+  const days = analyticsDayCount(startDate, endDate);
+  const series = Array.from({ length: days }, (_, index) => {
+    const date = analyticsAddDays(startDate, index);
+    return { date, values: byDay.get(date) || ANALYTICS_METRICS.map(() => 0) };
+  });
+  // Totals come from GA itself: users are unique per period, so they cannot be summed per day.
+  const totals = data.totals?.[0]?.metricValues?.map(value => Number(value.value) || 0) || ANALYTICS_METRICS.map(() => 0);
+  return { series, totals };
+}
+
+async function loadSprintReviewAnalytics(iteration, { force = false } = {}) {
+  if (!analyticsConfigured() || !iteration) return;
+  loadGoogleIdentity().catch(() => {});
+  const period = analyticsPeriod(iteration);
+  if (period.error) return setAnalyticsStatus("error", period.error);
+  if (period.future) {
+    return setAnalyticsStatus("future", `This sprint starts on ${analyticsFormatDay(period.start)}. Data is shown once the sprint has started.`);
+  }
+  if (!analyticsTokenValid()) {
+    resetAnalyticsTokenOnly();
+    return setAnalyticsStatus("login");
+  }
+  const key = `${state.gaPropertyId}|${period.start}|${period.end}`;
+  if (!force && state.analytics.dataKey === key && state.analytics.data) return setAnalyticsStatus("ready");
+  const requestToken = ++state.analytics.requestToken;
+  setAnalyticsStatus("loading", "Loading Google Analytics data…");
+  try {
+    const [current, previous, lastYear] = await Promise.all([
+      runAnalyticsReport(period.start, period.end),
+      runAnalyticsReport(period.previousStart, period.previousEnd),
+      runAnalyticsReport(period.lastYearStart, period.lastYearEnd)
+    ]);
+    if (requestToken !== state.analytics.requestToken) return;
+    state.analytics.data = { current, previous, lastYear, period, iteration };
+    state.analytics.dataKey = key;
+    setAnalyticsStatus("ready");
+  } catch (error) {
+    if (requestToken !== state.analytics.requestToken) return;
+    console.error(error);
+    if (error.status === 401) {
+      resetAnalyticsTokenOnly();
+      return setAnalyticsStatus("login", "Your Google sign-in has expired. Sign in again.");
+    }
+    setAnalyticsStatus("error", error.status === 403
+      ? `No access to GA4 property ${state.gaPropertyId}: ${error.message}`
+      : error.message || "Google Analytics data could not be loaded.");
+  }
+}
+
+function analyticsNiceMax(value) {
+  if (value <= 0) return 4;
+  const step = value / 4;
+  const magnitude = 10 ** Math.floor(Math.log10(step));
+  const nice = [1, 2, 2.5, 5, 10].map(factor => factor * magnitude).find(candidate => candidate >= step);
+  return nice * 4;
+}
+
+function analyticsMetricsHtml(data) {
+  return ANALYTICS_METRICS.map((metric, index) => {
+    const current = data.current.totals[index];
+    const previous = data.previous.totals[index];
+    const selected = metric.name === state.analytics.metric;
+    let change = `<span class="analytics-metric-change">–</span>`;
+    if (previous > 0) {
+      const percent = (current - previous) / previous * 100;
+      change = `<span class="analytics-metric-change ${percent >= 0 ? "is-up" : "is-down"}" title="Previous sprint: ${escapeHtml(analyticsFull.format(previous))}">${percent >= 0 ? "↑" : "↓"} ${Math.abs(percent).toFixed(1)}%</span>`;
+    }
+    return `<button class="analytics-metric${selected ? " is-selected" : ""}" type="button" role="tab" aria-selected="${selected}" data-analytics-metric="${metric.name}">
+      <span class="analytics-metric-label">${escapeHtml(metric.label)}</span>
+      <strong class="analytics-metric-value" title="${escapeHtml(analyticsFull.format(current))}">${escapeHtml(analyticsCompact.format(current).toLowerCase())}</strong>
+      ${change}
+    </button>`;
+  }).join("");
+}
+
+// A fixed coordinate system that scales with the slide, like the rest of the presentation.
+function analyticsChartSvg(data) {
+  const metricIndex = Math.max(0, ANALYTICS_METRICS.findIndex(metric => metric.name === state.analytics.metric));
+  const current = data.current.series.map(day => day.values[metricIndex]);
+  const previous = data.previous.series.map(day => day.values[metricIndex]);
+  const lastYear = data.lastYear.series.map(day => day.values[metricIndex]);
+  const width = 1000;
+  const height = 330;
+  const pad = { top: 12, right: 64, bottom: 52, left: 8 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const max = analyticsNiceMax(Math.max(...current, ...previous, ...lastYear, 0));
+  const count = data.current.series.length;
+  const x = index => pad.left + (count > 1 ? index / (count - 1) * plotWidth : plotWidth / 2);
+  const y = value => pad.top + plotHeight - value / max * plotHeight;
+  const path = values => values.map((value, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join("");
+  const parts = [];
+  for (let step = 0; step <= 4; step++) {
+    const value = max / 4 * step;
+    const lineY = y(value).toFixed(1);
+    parts.push(`<line class="analytics-grid" x1="${pad.left}" x2="${pad.left + plotWidth}" y1="${lineY}" y2="${lineY}"/>`);
+    parts.push(`<text class="analytics-axis" x="${width - 4}" y="${lineY}" text-anchor="end" dominant-baseline="middle">${escapeHtml(analyticsCompact.format(value).toLowerCase())}</text>`);
+  }
+  const labelEvery = Math.max(1, Math.ceil(count / 8));
+  data.current.series.forEach((day, index) => {
+    if (index % labelEvery) return;
+    const date = new Date(`${day.date}T00:00:00Z`);
+    const showMonth = index === 0 || date.getUTCDate() <= labelEvery;
+    parts.push(`<line class="analytics-tick" x1="${x(index).toFixed(1)}" x2="${x(index).toFixed(1)}" y1="${pad.top + plotHeight}" y2="${pad.top + plotHeight + 6}"/>`);
+    parts.push(`<text class="analytics-axis" x="${x(index).toFixed(1)}" y="${pad.top + plotHeight + 24}" text-anchor="middle">${date.getUTCDate()}</text>`);
+    if (showMonth) parts.push(`<text class="analytics-axis" x="${x(index).toFixed(1)}" y="${pad.top + plotHeight + 44}" text-anchor="middle">${escapeHtml(analyticsFormatDay(day.date, { month: "short" }))}</text>`);
+  });
+  parts.push(`<path class="analytics-line-last-year" d="${path(lastYear)}"/>`);
+  parts.push(`<path class="analytics-line-previous" d="${path(previous)}"/>`);
+  parts.push(`<path class="analytics-line-current" d="${path(current)}"/>`);
+  if (count === 1) parts.push(`<circle class="analytics-point" cx="${x(0)}" cy="${y(current[0])}" r="5"/>`);
+  const slot = count > 1 ? plotWidth / (count - 1) : plotWidth;
+  data.current.series.forEach((day, index) => {
+    const previousDay = data.previous.series[index];
+    const lastYearDay = data.lastYear.series[index];
+    const title = `${analyticsFormatDay(day.date)}: ${analyticsFull.format(current[index])}\nPrevious sprint (${analyticsFormatDay(previousDay.date)}): ${analyticsFull.format(previous[index])}\nLast year (${analyticsFormatDay(lastYearDay.date)}): ${analyticsFull.format(lastYear[index])}`;
+    parts.push(`<rect class="analytics-hover" x="${(x(index) - slot / 2).toFixed(1)}" y="${pad.top}" width="${slot.toFixed(1)}" height="${plotHeight}"><title>${escapeHtml(title)}</title></rect>`);
+  });
+  const metric = ANALYTICS_METRICS[metricIndex];
+  return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(`${metric.label} per day`)}">${parts.join("")}</svg>`;
+}
+
+function sprintReviewAnalyticsSlideHtml(iteration) {
+  const { status, message, data } = state.analytics;
+  const period = analyticsPeriod(iteration);
+  const range = period.start && !period.future
+    ? `${analyticsFormatDay(period.start)} – ${analyticsFormatDay(period.end)}${period.running ? " · sprint still running, up to today" : ""}`
+    : "";
+  let body;
+  if (status === "ready" && data) {
+    body = `<div class="analytics-card">
+      <div class="analytics-metrics" role="tablist" aria-label="Metric">${analyticsMetricsHtml(data)}</div>
+      <div class="analytics-chart">${analyticsChartSvg(data)}</div>
+      <div class="analytics-footer">
+        <div class="analytics-legend" aria-hidden="true">
+          <span><i class="analytics-legend-current"></i>${escapeHtml(sprintReviewTitle(iteration))}</span>
+          <span><i class="analytics-legend-previous"></i>Previous sprint</span>
+          <span><i class="analytics-legend-last-year"></i>Same period last year</span>
+        </div>
+        <span class="analytics-range">Previous sprint ${escapeHtml(analyticsFormatDay(data.period.previousStart))} – ${escapeHtml(analyticsFormatDay(data.period.previousEnd))} · last year ${escapeHtml(analyticsFormatDay(data.period.lastYearStart))} – ${escapeHtml(analyticsFormatDay(data.period.lastYearEnd))}</span>
+      </div>
+    </div>`;
+  } else if (status === "login") {
+    body = `<div class="analytics-login">
+      <p>Sign in with a Google account that can read GA4 property ${escapeHtml(state.gaPropertyId)}.</p>
+      <button class="primary-button" type="button" data-analytics-login>Sign in with Google</button>
+      ${message ? `<p class="analytics-message">${escapeHtml(message)}</p>` : ""}
+    </div>`;
+  } else {
+    body = `<p class="sprint-review-empty analytics-message${status === "error" ? " is-error" : ""}">${escapeHtml(message || "Loading Google Analytics data…")}</p>`;
+  }
+  return `<section class="sprint-review-slide sprint-review-analytics-slide">
+    <header><div><h2>Analytics</h2>${range ? `<p>${escapeHtml(range)}</p>` : ""}</div></header>
+    ${body}
+  </section>`;
+}
+
+function rerenderSprintReviewAnalyticsSlide() {
+  if (state.currentView !== "review") return;
+  if (state.reviewSlides?.[state.reviewSlide]?.analytics) showSprintReviewSlide(state.reviewSlide);
+}
+
 const SPRINT_REVIEW_TYPES = new Set(["user story", "product backlog item", "requirement", "bug"]);
 
 function sprintReviewTitle(iteration) {
@@ -3437,6 +3767,8 @@ async function loadSprintReview() {
     const sprintItems = sprintReviewItems(stories);
     const demoItems = sprintReviewItems(stories, { demoOnly: true });
     state.reviewFeatureFilters = new Map();
+    const analyticsSlide = () => sprintReviewAnalyticsSlideHtml(iteration);
+    analyticsSlide.analytics = true;
     state.reviewSlides = [
       () => `<section class="sprint-review-slide sprint-review-title-slide">
         <div class="sprint-review-eyebrow">${escapeHtml(team.name)} · Sprint review</div>
@@ -3444,6 +3776,7 @@ async function loadSprintReview() {
         ${dates ? `<p class="sprint-review-dates">${escapeHtml(dates)}</p>` : ""}
         <p class="sprint-review-recorded"><span aria-hidden="true">●</span> Meeting will be recorded</p>
       </section>`,
+      ...(analyticsConfigured() ? [analyticsSlide] : []),
       sprintReviewTableSlide(title, `${sprintItems.length} ${sprintItems.length === 1 ? "story or bug" : "stories and bugs"} in this sprint`, sprintItems, "No stories or bugs in this sprint.", { showDemo: true, showFeatures: true }),
       sprintReviewTableSlide("Demo", title, demoItems, "No stories or bugs in this sprint are tagged “demo”.", { showPerson: true }),
       nextIteration
@@ -3451,6 +3784,7 @@ async function loadSprintReview() {
         : sprintReviewTableSlide("Next sprint", "", [], "No next sprint is configured.")
     ];
     showSprintReviewSlide(state.reviewSlide || 0);
+    loadSprintReviewAnalytics(iteration);
   } catch (error) {
     console.error(error);
     if (requestToken === state.reviewRequestToken) renderSprintReviewMessage(error.message || "The sprint review could not be loaded.");
@@ -13628,6 +13962,8 @@ function showSettings() {
   els.githubRepoStatus.classList.remove("is-error");
   els.litellmUrl.value = state.litellmUrl;
   els.litellmApiKey.value = state.litellmApiKey;
+  els.gaClientId.value = state.gaClientId;
+  els.gaPropertyId.value = state.gaPropertyId;
   renderLitellmModelOptions([], state.litellmModel);
   els.litellmStatus.textContent = "";
   els.litellmStatus.classList.remove("is-error");
@@ -14072,6 +14408,12 @@ els.settingsForm.addEventListener("submit", async event => {
   state.githubOwners = githubOwners;
   state.githubAllRepos = githubAllRepos;
   state.githubRepos = githubRepos;
+  const gaClientId = els.gaClientId.value.trim();
+  const gaPropertyId = els.gaPropertyId.value.trim().replace(/^properties\//, "");
+  const analyticsChanged = gaClientId !== state.gaClientId || gaPropertyId !== state.gaPropertyId;
+  if (gaClientId !== state.gaClientId) resetAnalyticsToken();
+  state.gaClientId = gaClientId;
+  state.gaPropertyId = gaPropertyId;
   state.litellmUrl = litellmUrl;
   state.litellmApiKey = litellmApiKey;
   state.litellmModel = litellmModel;
@@ -14085,7 +14427,9 @@ els.settingsForm.addEventListener("submit", async event => {
   for (const [key, value] of [
     [STORAGE.litellmUrl, state.litellmUrl],
     [STORAGE.litellmApiKey, state.litellmApiKey],
-    [STORAGE.litellmModel, state.litellmModel]
+    [STORAGE.litellmModel, state.litellmModel],
+    [STORAGE.gaClientId, state.gaClientId],
+    [STORAGE.gaPropertyId, state.gaPropertyId]
   ]) {
     if (value) localStorage.setItem(key, value);
     else localStorage.removeItem(key);
@@ -14107,6 +14451,11 @@ els.settingsForm.addEventListener("submit", async event => {
     state.releaseReadiness.githubRepositoryMatches.clear();
   }
   els.settingsDialog.close();
+  if (analyticsChanged) {
+    state.analytics.data = null;
+    state.analytics.dataKey = "";
+    if (state.currentView === "review") await loadSprintReview();
+  }
   if (previousTeam !== state.teamId) {
     state.filters.sprint.clear();
     state.backlogItems = [];
@@ -14722,6 +15071,11 @@ els.backlogShowAllFeatures.addEventListener("click", () => {
 els.refresh.addEventListener("click", () => {
   if (state.currentView === "wiki") return loadWiki(true);
   if (state.currentView === "releases") return loadReleaseDebugPage(true);
+  if (state.currentView === "review") {
+    state.iterationStoriesCache.clear();
+    state.analytics.dataKey = "";
+    return loadSprintReview();
+  }
   if (state.currentView === "roadmap") {
     state.iterationStoriesCache.clear();
     return loadRoadmap(true);
@@ -14826,6 +15180,12 @@ els.sprintReviewPrev.addEventListener("click", () => showSprintReviewSlide(state
 els.sprintReviewNext.addEventListener("click", () => showSprintReviewSlide(state.reviewSlide + 1));
 els.sprintReviewFullscreen.addEventListener("click", toggleSprintReviewFullscreen);
 els.sprintReviewStage.addEventListener("click", event => {
+  if (event.target.closest("[data-analytics-login]")) return signInToAnalytics();
+  const metric = event.target.closest("[data-analytics-metric]")?.dataset.analyticsMetric;
+  if (metric) {
+    state.analytics.metric = metric;
+    return rerenderSprintReviewAnalyticsSlide();
+  }
   const feature = event.target.closest("[data-review-feature]");
   const filter = state.reviewFeatureFilters.get(state.reviewSlide) || {};
   if (feature) {
