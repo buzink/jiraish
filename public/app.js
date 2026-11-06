@@ -269,6 +269,7 @@ const state = {
   createWorkItemBusy: false,
   areaPathsCache: null,
   teamIterationsCache: null,
+  teamIterationsByPath: new Map(),
   commentsErrors: new Map(),
   historyErrors: new Map(),
   selectedItemId: null,
@@ -10648,11 +10649,11 @@ function renderWorkItemDetail(item, detail, loading = false, error = "") {
   els.workItemPriority.textContent = detail?.priority ?? "—";
   els.workItemPoints.textContent = detail?.points ?? item.points ?? "—";
   els.workItemArea.textContent = detail?.area || item.area || "—";
-  els.workItemIteration.textContent = detail?.iteration || state.iteration?.name || "—";
+  renderWorkItemIterationValue(detail?.iteration || state.iteration?.name || "");
   els.workItemPriority.setAttribute("aria-label", `Priority ${detail?.priority ?? "not set"}. Click to change.`);
   els.workItemPoints.setAttribute("aria-label", `Story points ${detail?.points ?? item.points ?? "not set"}. Click to change.`);
   els.workItemArea.setAttribute("aria-label", `Area ${detail?.area || item.area || "not set"}. Click to change.`);
-  els.workItemIteration.setAttribute("aria-label", `Sprint ${detail?.iteration || state.iteration?.name || "not set"}. Click to change.`);
+  els.workItemIteration.setAttribute("aria-label", `Sprint ${[detail?.iteration || state.iteration?.name || "not set", iterationDateRangeForPath(detail?.iteration || state.iteration?.path)].filter(Boolean).join(", ")}. Click to change.`);
   renderWorkItemParent(item, detail);
   renderLinkedWorkItems(detail?.linkedWorkItems || [], detail?.linkedWorkItemsError || "", detail ? item : null, loading);
   renderDetailTags(detail?.tags || item.tags);
@@ -11235,7 +11236,11 @@ async function loadTeamIterations() {
           const bDate = new Date(b.attributes?.startDate || b.attributes?.finishDate || 0).getTime();
           return bDate - aDate || b.name.localeCompare(a.name, "en", { numeric: true });
         })
-        .map(iteration => iteration.path || iteration.name)
+        .map(iteration => {
+          const path = iteration.path || iteration.name;
+          if (path) state.teamIterationsByPath.set(iterationPathKey(path), iteration);
+          return path;
+        })
         .filter((path, index, paths) => path && paths.indexOf(path) === index));
     state.teamIterationsCache.catch(() => { state.teamIterationsCache = null; });
   }
@@ -11271,20 +11276,67 @@ function renderSearchableDetailOptions({ item, paths, query, current, container,
   const filtered = paths.filter(path => !queryKey || path.toLocaleLowerCase("en").includes(queryKey));
   if (!filtered.length) return renderDetailFieldError(container, `No ${label.toLocaleLowerCase("en")} found.`);
   container.replaceChildren(...filtered.map(path => {
-    const button = createDetailFieldOption(path, path === current);
+    const button = createDetailFieldOption(path, path === current, field === "System.IterationPath" ? iterationDateRangeForPath(path) : "");
     if (!button.disabled) button.addEventListener("click", () => updateWorkItemField(item, field, path, label));
     return button;
   }));
 }
 
-function createDetailFieldOption(label, selected = false) {
+function iterationPathKey(value) {
+  return String(value || "").replace(/^\\+|\\+$/g, "").toLocaleLowerCase("en");
+}
+
+function iterationForPath(path) {
+  const key = iterationPathKey(path);
+  if (!key) return null;
+  return state.iterations.find(iteration => iterationPathKey(iteration.path || iteration.name) === key)
+    || state.teamIterationsByPath.get(key)
+    || null;
+}
+
+function iterationDateRangeForPath(path) {
+  const iteration = iterationForPath(path);
+  const start = formatDate(iteration?.attributes?.startDate);
+  const end = formatDate(iteration?.attributes?.finishDate);
+  return start && end ? `${start} – ${end}` : "";
+}
+
+function renderWorkItemIterationValue(path) {
+  const dates = iterationDateRangeForPath(path);
+  if (!path) {
+    els.workItemIteration.textContent = "—";
+    return;
+  }
+  if (!dates) {
+    els.workItemIteration.textContent = path;
+    return;
+  }
+  const name = document.createElement("span");
+  name.textContent = path;
+  const range = document.createElement("span");
+  range.className = "issue-detail-field-dates";
+  range.textContent = dates;
+  els.workItemIteration.replaceChildren(name, " ", range);
+}
+
+function createDetailFieldOption(label, selected = false, meta = "") {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "issue-detail-field-option";
   button.disabled = selected;
   button.setAttribute("aria-selected", String(selected));
   const text = document.createElement("span");
-  text.textContent = label;
+  if (meta) {
+    text.className = "issue-detail-field-option-label";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const dates = document.createElement("span");
+    dates.className = "issue-detail-field-dates";
+    dates.textContent = meta;
+    text.append(name, dates);
+  } else {
+    text.textContent = label;
+  }
   const check = document.createElement("span");
   check.className = "issue-detail-field-check";
   check.textContent = selected ? "✓" : "";
