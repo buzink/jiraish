@@ -268,6 +268,11 @@ const state = {
   childWorkItemReturn: null,
   createWorkItemBusy: false,
   areaPathsCache: null,
+  reviewSlides: [],
+  reviewFeatureFilters: new Map(),
+  reviewSlide: 0,
+  reviewIterationId: "",
+  reviewRequestToken: 0,
   teamIterationsCache: null,
   teamIterationsByPath: new Map(),
   commentsErrors: new Map(),
@@ -347,6 +352,14 @@ const els = {
   wikiViews: [...document.querySelectorAll("[data-wiki-view]")],
   releasesViews: [...document.querySelectorAll("[data-releases-view]")],
   searchViews: [...document.querySelectorAll("[data-search-view]")],
+  reviewViews: [...document.querySelectorAll("[data-review-view]")],
+  sprintReviewLink: document.querySelector("#sprintReviewLink"),
+  sprintReviewStage: document.querySelector("#sprintReviewStage"),
+  sprintReviewBack: document.querySelector("#sprintReviewBack"),
+  sprintReviewPrev: document.querySelector("#sprintReviewPrev"),
+  sprintReviewNext: document.querySelector("#sprintReviewNext"),
+  sprintReviewCounter: document.querySelector("#sprintReviewCounter"),
+  sprintReviewFullscreen: document.querySelector("#sprintReviewFullscreen"),
   roadmapMeta: document.querySelector("#roadmapMeta"),
   roadmapStatus: document.querySelector("#roadmapStatus"),
   roadmapContent: document.querySelector("#roadmapContent"),
@@ -1577,7 +1590,10 @@ async function loadParentDetails(items) {
   }
   for (const item of items) {
     const parent = parents.get(item.parentId);
-    if (parent) item.featureLabel = `${parent.title} (#${item.parentId})`;
+    if (!parent) continue;
+    item.featureLabel = `${parent.title} (#${item.parentId})`;
+    item.parentTitle = parent.title;
+    item.parentType = parent.type;
   }
 }
 
@@ -1839,6 +1855,9 @@ function render() {
     els.sprintBadge.dataset.sprintKind = "current-sprint";
     els.sprintMeta.textContent = team ? `Team ${team.name}` : "Azure DevOps is not connected";
   }
+  const reviewable = Boolean(state.iteration) && !filteredIterations.length;
+  els.sprintReviewLink.hidden = !reviewable;
+  if (reviewable) els.sprintReviewLink.href = appRouteHash({ view: "review", sprint: sprintRouteValue() });
 
   const query = state.search.trim().toLowerCase();
   const visibleStories = state.stories.filter(item => matchesFilters(item, query));
@@ -2993,6 +3012,7 @@ const APP_ROUTE_PATHS = {
   "for-you": "for-you",
   wiki: "wiki",
   releases: "releases",
+  review: "sprint-review",
   search: "search"
 };
 
@@ -3047,7 +3067,7 @@ function currentAppRoute(overrides = {}) {
     view,
     query: overrides.query !== undefined ? overrides.query : appQueryForView(view),
     itemId: overrides.itemId !== undefined ? overrides.itemId : state.selectedItemId,
-    sprint: overrides.sprint !== undefined ? overrides.sprint : (view === "board" ? sprintRouteValue() : ""),
+    sprint: overrides.sprint !== undefined ? overrides.sprint : (view === "board" || view === "review" ? sprintRouteValue() : ""),
     year: overrides.year !== undefined ? overrides.year : (view === "roadmap" ? state.roadmapYear : null),
     quarter: overrides.quarter !== undefined ? overrides.quarter : (view === "roadmap" ? state.roadmapQuarter : null),
     wikiId: overrides.wikiId !== undefined ? overrides.wikiId : (view === "wiki" ? state.wikiId : ""),
@@ -3060,7 +3080,7 @@ function currentAppRoute(overrides = {}) {
 function appRouteHash(route) {
   const view = APP_ROUTE_PATHS[route.view] ? route.view : "board";
   const params = new URLSearchParams();
-  if (view === "board" && route.sprint) params.set("sprint", route.sprint);
+  if ((view === "board" || view === "review") && route.sprint) params.set("sprint", route.sprint);
   if (view === "roadmap" && route.year) params.set("year", String(route.year));
   if (view === "roadmap" && route.quarter) params.set("quarter", String(route.quarter));
   if (route.query) params.set("q", route.query);
@@ -3080,7 +3100,7 @@ function writeAppRoute(route, { replace = false } = {}) {
 function primeAppRouteState(route) {
   state.currentView = route.view;
   if (route.view === "board") state.search = route.query;
-  if (route.view === "board") state.routeSprint = route.sprint;
+  if (route.view === "board" || route.view === "review") state.routeSprint = route.sprint;
   if (route.view === "backlog") state.backlogSearch = route.query;
   if (route.view === "roadmap") {
     if (Number.isInteger(route.year) && route.year > 0) state.roadmapYear = route.year;
@@ -3109,7 +3129,7 @@ function scheduleRouteQueryUpdate() {
 }
 
 async function applyRouteSprint(route) {
-  if (route.view !== "board" || !route.sprint || !state.iterations.length) return;
+  if ((route.view !== "board" && route.view !== "review") || !route.sprint || !state.iterations.length) return;
   const iteration = iterationForRoute(route.sprint);
   if (!iteration || iteration.id === state.iteration?.id) return;
   const team = state.teams.find(value => value.id === state.teamId);
@@ -3163,6 +3183,7 @@ async function restoreRoutedViewAfterBoardLoad() {
   if (state.currentView === "wiki") return showMainView("wiki");
   if (state.currentView === "search" && state.globalSearchQuery) return runGlobalSearch(state.globalSearchQuery);
   if (state.currentView === "search") return showMainView("search");
+  if (state.currentView === "review") return showMainView("review");
 }
 
 function applyMainViewVisibility(view) {
@@ -3173,7 +3194,10 @@ function applyMainViewVisibility(view) {
   const showWiki = view === "wiki";
   const showReleases = view === "releases";
   const showSearch = view === "search";
-  els.listViews.forEach(element => { element.hidden = showForYou || showRoadmap || showWiki || showReleases || showSearch; });
+  const showReview = view === "review";
+  els.listViews.forEach(element => { element.hidden = showForYou || showRoadmap || showWiki || showReleases || showSearch || showReview; });
+  els.reviewViews.forEach(element => { element.hidden = !showReview; });
+  document.body.classList.toggle("is-sprint-review", showReview);
   els.boardViews.forEach(element => { element.hidden = !showBoard; });
   els.backlogViews.forEach(element => { element.hidden = !showBacklog; });
   els.roadmapViews.forEach(element => { element.hidden = !showRoadmap; });
@@ -3182,13 +3206,13 @@ function applyMainViewVisibility(view) {
   els.releasesViews.forEach(element => { element.hidden = !showReleases; });
   els.searchViews.forEach(element => { element.hidden = !showSearch; });
   els.forYouNav.classList.toggle("is-active", showForYou);
-  els.sprintBoardNav.classList.toggle("is-active", showBoard);
+  els.sprintBoardNav.classList.toggle("is-active", showBoard || showReview);
   els.backlogNav.classList.toggle("is-active", showBacklog);
   els.roadmapNav.classList.toggle("is-active", showRoadmap);
   els.wikiNav.classList.toggle("is-active", showWiki);
   els.releasesNav.classList.toggle("is-active", showReleases);
   els.forYouNav.toggleAttribute("aria-current", showForYou);
-  els.sprintBoardNav.toggleAttribute("aria-current", showBoard);
+  els.sprintBoardNav.toggleAttribute("aria-current", showBoard || showReview);
   els.backlogNav.toggleAttribute("aria-current", showBacklog);
   els.roadmapNav.toggleAttribute("aria-current", showRoadmap);
   els.wikiNav.toggleAttribute("aria-current", showWiki);
@@ -3244,6 +3268,10 @@ async function showMainView(view) {
     renderGlobalSearch();
     return;
   }
+  if (view === "review") {
+    await loadSprintReview();
+    return;
+  }
   if (state.filters.sprint.size) {
     setLoading(true);
     try { await applySprintFilter(); }
@@ -3251,6 +3279,218 @@ async function showMainView(view) {
     finally { setLoading(false); }
   }
   render();
+}
+
+const SPRINT_REVIEW_TYPES = new Set(["user story", "product backlog item", "requirement", "bug"]);
+
+function sprintReviewTitle(iteration) {
+  const number = sprintRouteValue(iteration);
+  return /^\d+$/.test(number) ? `Sprint ${number}` : iteration?.name || "Sprint";
+}
+
+function sprintReviewDateRange(iteration) {
+  const start = iteration?.attributes?.startDate ? new Date(iteration.attributes.startDate) : null;
+  const end = iteration?.attributes?.finishDate ? new Date(iteration.attributes.finishDate) : null;
+  if (!start || !end) return "";
+  const dayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+  const full = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+  return `${start.getUTCFullYear() === end.getUTCFullYear() ? dayMonth.format(start) : full.format(start)} – ${full.format(end)}`;
+}
+
+function sprintReviewItems(stories, { demoOnly = false } = {}) {
+  const byTitle = (a, b) => a.title.localeCompare(b.title, "en", { numeric: true, sensitivity: "base" });
+  const byArea = (a, b) => sprintReviewArea(a).localeCompare(sprintReviewArea(b), "en", { numeric: true, sensitivity: "base" });
+  // Most story points first; unestimated items after the estimated ones.
+  const byPoints = (a, b) => (Number.isFinite(Number(b.points)) && b.points !== null ? Number(b.points) : -1)
+    - (Number.isFinite(Number(a.points)) && a.points !== null ? Number(a.points) : -1);
+  // Unassigned items go last in the demo table.
+  const byPerson = (a, b) => (!a.assignee - !b.assignee) || a.assignee.localeCompare(b.assignee, "en", { sensitivity: "base" });
+  return stories
+    .filter(item => SPRINT_REVIEW_TYPES.has(String(item.type || "").toLocaleLowerCase("en")))
+    .filter(item => String(item.state || "").toLocaleLowerCase("en") !== "removed")
+    .filter(item => !demoOnly || sprintReviewIsDemo(item))
+    .sort(demoOnly
+      ? (a, b) => byPerson(a, b) || byTitle(a, b)
+      : (a, b) => byArea(a, b) || byPoints(a, b) || byTitle(a, b));
+}
+
+function sprintReviewIsDemo(item) {
+  return item.tags.some(tag => tag.toLocaleLowerCase("en") === "demo");
+}
+
+function sprintReviewArea(item) {
+  return String(item.area || "").split("\\").filter(Boolean).pop() || "—";
+}
+
+function sprintReviewFeatures(items) {
+  const features = new Map();
+  for (const item of items) {
+    if (!item.parentId || String(item.parentType || "").toLocaleLowerCase("en") !== "feature") continue;
+    const feature = features.get(item.parentId) || { id: item.parentId, title: item.parentTitle || workItemKey(item.parentId), count: 0 };
+    feature.count++;
+    features.set(item.parentId, feature);
+  }
+  return [...features.values()].sort((a, b) => b.count - a.count || a.title.localeCompare(b.title, "en", { numeric: true, sensitivity: "base" }));
+}
+
+function sprintReviewFeaturesHtml(features, { activeId = null, expanded = false } = {}) {
+  if (!features.length) return "";
+  const limit = 8;
+  const collapsed = !expanded && features.length > limit;
+  let shown = collapsed ? features.slice(0, limit - 1) : features;
+  // Keep the selected feature visible even when it falls in the collapsed part.
+  if (collapsed && activeId && !shown.some(feature => feature.id === activeId)) {
+    shown = [...shown.slice(0, -1), features.find(feature => feature.id === activeId)];
+  }
+  const hidden = features.length - shown.length;
+  return `<aside class="sprint-review-features${activeId ? " is-filtered" : ""}" aria-label="Features">
+    <div class="sprint-review-features-label">
+      ${activeId ? `<button class="sprint-review-features-reset" type="button" data-review-feature-reset title="Show all items (Esc)">Reset <span aria-hidden="true">×</span></button>` : ""}
+      <span>Features</span>
+    </div>
+    <ul>
+      ${shown.map(feature => `<li style="--feature-hue: ${(features.indexOf(feature) * 47 + 200) % 360}">
+        <button class="sprint-review-feature${feature.id === activeId ? " is-active" : ""}" type="button" data-review-feature="${feature.id}" aria-pressed="${feature.id === activeId}" title="${escapeHtml(feature.title)}">
+          <span class="sprint-review-feature-title">${escapeHtml(feature.title)}</span>
+          <span class="sprint-review-feature-count" aria-label="${feature.count} ${feature.count === 1 ? "item" : "items"}">${feature.count}</span>
+        </button>
+      </li>`).join("")}
+      ${hidden ? `<li class="is-more"><button class="sprint-review-feature" type="button" data-review-features-expand><span class="sprint-review-feature-title">+${hidden} more</span></button></li>` : ""}
+    </ul>
+  </aside>`;
+}
+
+function sprintReviewTableSlide(title, subtitle, allItems, emptyText, { showPerson = false, showDemo = false, showFeatures = false } = {}) {
+  if (!showFeatures) return () => sprintReviewTableHtml(title, subtitle, allItems, emptyText, { showPerson, showDemo });
+  const features = sprintReviewFeatures(allItems);
+  return slideIndex => {
+    const filter = state.reviewFeatureFilters.get(slideIndex) || {};
+    const active = features.find(feature => feature.id === filter.featureId) || null;
+    const items = active ? allItems.filter(item => item.parentId === active.id) : allItems;
+    const shownSubtitle = active
+      ? `${items.length} of ${allItems.length} ${allItems.length === 1 ? "story or bug" : "stories and bugs"} · ${active.title}`
+      : subtitle;
+    return sprintReviewTableHtml(title, shownSubtitle, items, emptyText, {
+      showPerson,
+      showDemo,
+      featuresHtml: sprintReviewFeaturesHtml(features, { activeId: active?.id || null, expanded: filter.expanded })
+    });
+  };
+}
+
+function sprintReviewTableHtml(title, subtitle, items, emptyText, { showPerson = false, showDemo = false, featuresHtml = "" } = {}) {
+  const density = items.length > 16 ? "is-dense" : items.length > 9 ? "is-compact" : "";
+  const rows = items.map(item => {
+    const isBug = item.type.toLocaleLowerCase("en") === "bug";
+    return `<tr>
+      <td><span class="sprint-review-key">${escapeHtml(workItemKey(item.id))}</span>${escapeHtml(item.title)}</td>
+      <td><span class="work-type"><span class="type-icon ${isBug ? "bug" : ""}">${isBug ? "!" : "◆"}</span>${escapeHtml(isBug ? "Bug" : "Story")}</span></td>
+      <td>${escapeHtml(sprintReviewArea(item))}</td>
+      ${showPerson ? `<td>${escapeHtml(item.assignee || "Unassigned")}</td>` : ""}
+      ${showDemo ? `<td class="sprint-review-demo-cell">${sprintReviewIsDemo(item) ? `<span class="sprint-review-check" aria-label="Demo">✓</span>` : `<span class="sr-only">No demo</span>`}</td>` : ""}
+    </tr>`;
+  }).join("");
+  return `<section class="sprint-review-slide sprint-review-table-slide ${density}">
+    <header>
+      <div><h2>${escapeHtml(title)}</h2>${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}</div>
+      ${featuresHtml}
+    </header>
+    ${items.length ? `<div class="sprint-review-table-wrap"><table class="sprint-review-table${showPerson ? " has-person" : ""}">
+      <thead><tr><th>Name</th><th>Type</th><th>Area</th>${showPerson ? "<th>Person</th>" : ""}${showDemo ? `<th class="sprint-review-demo-cell">Demo</th>` : ""}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>` : `<p class="sprint-review-empty">${escapeHtml(emptyText)}</p>`}
+  </section>`;
+}
+
+function renderSprintReviewMessage(message) {
+  state.reviewSlides = [];
+  els.sprintReviewStage.innerHTML = `<section class="sprint-review-slide sprint-review-title-slide"><p class="sprint-review-empty">${escapeHtml(message)}</p></section>`;
+  els.sprintReviewCounter.textContent = "0 / 0";
+  els.sprintReviewPrev.disabled = true;
+  els.sprintReviewNext.disabled = true;
+}
+
+async function loadSprintReview() {
+  const team = state.teams.find(value => value.id === state.teamId);
+  const iteration = state.iteration;
+  els.sprintReviewBack.href = appRouteHash({ view: "board", sprint: sprintRouteValue() });
+  if (!team || !iteration) {
+    renderSprintReviewMessage(state.pat ? "Loading sprint…" : "Connect Azure DevOps to show the sprint review.");
+    return;
+  }
+  const requestToken = ++state.reviewRequestToken;
+  if (state.reviewIterationId !== iteration.id) {
+    state.reviewIterationId = iteration.id;
+    state.reviewSlide = 0;
+  }
+  if (!state.reviewSlides?.length) renderSprintReviewMessage("Loading sprint review…");
+  const ordered = chronologicalIterations();
+  const nextIteration = ordered[ordered.findIndex(value => value.id === iteration.id) + 1] || null;
+  try {
+    const [stories, nextStories] = await Promise.all([
+      fetchIterationStories(team, iteration),
+      nextIteration ? fetchIterationStories(team, nextIteration) : Promise.resolve([])
+    ]);
+    if (requestToken !== state.reviewRequestToken || state.currentView !== "review") return;
+    const title = sprintReviewTitle(iteration);
+    const dates = sprintReviewDateRange(iteration);
+    const sprintItems = sprintReviewItems(stories);
+    const demoItems = sprintReviewItems(stories, { demoOnly: true });
+    state.reviewFeatureFilters = new Map();
+    state.reviewSlides = [
+      () => `<section class="sprint-review-slide sprint-review-title-slide">
+        <div class="sprint-review-eyebrow">${escapeHtml(team.name)} · Sprint review</div>
+        <h1>${escapeHtml(title)}</h1>
+        ${dates ? `<p class="sprint-review-dates">${escapeHtml(dates)}</p>` : ""}
+        <p class="sprint-review-recorded"><span aria-hidden="true">●</span> Meeting will be recorded</p>
+      </section>`,
+      sprintReviewTableSlide(title, `${sprintItems.length} ${sprintItems.length === 1 ? "story or bug" : "stories and bugs"} in this sprint`, sprintItems, "No stories or bugs in this sprint.", { showDemo: true, showFeatures: true }),
+      sprintReviewTableSlide("Demo", title, demoItems, "No stories or bugs in this sprint are tagged “demo”.", { showPerson: true }),
+      nextIteration
+        ? sprintReviewTableSlide(sprintReviewTitle(nextIteration), ["Next sprint", sprintReviewDateRange(nextIteration)].filter(Boolean).join(" · "), sprintReviewItems(nextStories), "No stories or bugs planned for the next sprint yet.", { showFeatures: true })
+        : sprintReviewTableSlide("Next sprint", "", [], "No next sprint is configured.")
+    ];
+    showSprintReviewSlide(state.reviewSlide || 0);
+  } catch (error) {
+    console.error(error);
+    if (requestToken === state.reviewRequestToken) renderSprintReviewMessage(error.message || "The sprint review could not be loaded.");
+  }
+}
+
+function showSprintReviewSlide(index) {
+  const slides = state.reviewSlides || [];
+  if (!slides.length) return;
+  state.reviewSlide = Math.max(0, Math.min(slides.length - 1, index));
+  els.sprintReviewStage.innerHTML = slides[state.reviewSlide](state.reviewSlide);
+  els.sprintReviewCounter.textContent = `${state.reviewSlide + 1} / ${slides.length}`;
+  els.sprintReviewPrev.disabled = state.reviewSlide === 0;
+  els.sprintReviewNext.disabled = state.reviewSlide === slides.length - 1;
+}
+
+function setSprintReviewFeatureFilter(filter) {
+  state.reviewFeatureFilters.set(state.reviewSlide, filter);
+  showSprintReviewSlide(state.reviewSlide);
+}
+
+function toggleSprintReviewFullscreen() {
+  const view = document.querySelector("#sprintReviewView");
+  if (document.fullscreenElement) document.exitFullscreen?.();
+  else view.requestFullscreen?.().catch(error => console.warn(error));
+}
+
+function handleSprintReviewKeydown(event) {
+  if (state.currentView !== "review" || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (document.querySelector("dialog[open]") || event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  const steps = { ArrowRight: 1, PageDown: 1, " ": 1, ArrowLeft: -1, PageUp: -1 };
+  if (event.key in steps) showSprintReviewSlide(state.reviewSlide + (event.shiftKey && event.key === " " ? -1 : steps[event.key]));
+  else if (event.key === "Home") showSprintReviewSlide(0);
+  else if (event.key === "End") showSprintReviewSlide((state.reviewSlides || []).length - 1);
+  else if (event.key === "f" || event.key === "F") toggleSprintReviewFullscreen();
+  else if (event.key === "Escape" && !document.fullscreenElement && state.reviewFeatureFilters.get(state.reviewSlide)?.featureId) {
+    setSprintReviewFeatureFilter({ ...state.reviewFeatureFilters.get(state.reviewSlide), featureId: null });
+  }
+  else return;
+  event.preventDefault();
 }
 
 async function queryWorkItemIds(query, top = 100) {
@@ -14582,6 +14822,25 @@ function scheduleAppHistoryNavigation() {
   }, 0);
 }
 
+els.sprintReviewPrev.addEventListener("click", () => showSprintReviewSlide(state.reviewSlide - 1));
+els.sprintReviewNext.addEventListener("click", () => showSprintReviewSlide(state.reviewSlide + 1));
+els.sprintReviewFullscreen.addEventListener("click", toggleSprintReviewFullscreen);
+els.sprintReviewStage.addEventListener("click", event => {
+  const feature = event.target.closest("[data-review-feature]");
+  const filter = state.reviewFeatureFilters.get(state.reviewSlide) || {};
+  if (feature) {
+    const featureId = Number(feature.dataset.reviewFeature);
+    setSprintReviewFeatureFilter({ ...filter, featureId: filter.featureId === featureId ? null : featureId });
+  } else if (event.target.closest("[data-review-feature-reset]")) {
+    setSprintReviewFeatureFilter({ ...filter, featureId: null });
+  } else if (event.target.closest("[data-review-features-expand]")) {
+    setSprintReviewFeatureFilter({ ...filter, expanded: true });
+  }
+});
+document.addEventListener("keydown", handleSprintReviewKeydown);
+document.addEventListener("fullscreenchange", () => {
+  els.sprintReviewFullscreen.textContent = document.fullscreenElement ? "Exit full screen" : "Full screen";
+});
 window.addEventListener("popstate", scheduleAppHistoryNavigation);
 window.addEventListener("hashchange", scheduleAppHistoryNavigation);
 

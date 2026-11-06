@@ -82,7 +82,7 @@
             </div>
             <span id="sprintBadge" class="sprint-badge">Current sprint</span>
           </div>
-          <p id="sprintMeta" class="sprint-meta">Connect Azure DevOps to load the sprint board.</p>
+          <p class="sprint-meta"><span id="sprintMeta">Connect Azure DevOps to load the sprint board.</span><a id="sprintReviewLink" class="sprint-review-link" href="#/sprint-review" hidden>Review</a></p>
         </div>
         <div class="heading-actions">
           <details id="boardGroupControl" class="board-group-control">
@@ -551,6 +551,19 @@
             <button id="forYouCompletedShowAll" class="for-you-show-all" type="button" hidden>Show all</button>
           </section>
         </div>
+      </section>
+
+      <section id="sprintReviewView" class="sprint-review-view" aria-label="Sprint review" data-review-view hidden>
+        <div id="sprintReviewStage" class="sprint-review-stage" aria-live="polite"></div>
+        <nav class="sprint-review-controls" aria-label="Slides">
+          <a id="sprintReviewBack" class="sprint-review-back" href="#/sprint-board">← Back to sprint</a>
+          <div class="sprint-review-pager">
+            <button id="sprintReviewPrev" class="icon-button" type="button" aria-label="Previous slide" title="Previous slide (←)">‹</button>
+            <span id="sprintReviewCounter">0 / 0</span>
+            <button id="sprintReviewNext" class="icon-button" type="button" aria-label="Next slide" title="Next slide (→)">›</button>
+          </div>
+          <button id="sprintReviewFullscreen" class="secondary-button" type="button" title="Full screen (F)">Full screen</button>
+        </nav>
       </section>
     </main>
 
