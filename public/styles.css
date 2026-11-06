@@ -831,8 +831,10 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .work-item-actions summary:hover, .work-item-actions[open] summary { color: var(--navy); background: var(--board-bg); }
 .work-item-actions summary:focus-visible { outline: 2px solid #4c9aff; outline-offset: 1px; }
 .work-item-actions-menu { position: absolute; z-index: 30; top: calc(100% + 4px); right: 0; width: 150px; padding: 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); box-shadow: 0 8px 20px rgba(9, 30, 66, .25); }
-.work-item-actions-menu button { width: 100%; min-height: 34px; padding: 6px 9px; border: 0; border-radius: 3px; color: #ae2e24; background: transparent; font-size: 12px; font-weight: 600; text-align: left; }
-.work-item-actions-menu button:hover, .work-item-actions-menu button:focus-visible { color: #ae2e24; background: #ffeceb; outline: 0; }
+.work-item-actions-menu button { width: 100%; min-height: 34px; padding: 6px 9px; border: 0; border-radius: 3px; color: var(--text); background: transparent; font-size: 12px; font-weight: 600; text-align: left; }
+.work-item-actions-menu button:hover, .work-item-actions-menu button:focus-visible { color: var(--navy); background: var(--board-bg); outline: 0; }
+.work-item-actions-menu .work-item-delete-action { color: #ae2e24; }
+.work-item-actions-menu .work-item-delete-action:hover, .work-item-actions-menu .work-item-delete-action:focus-visible { color: #ae2e24; background: #ffeceb; }
 .work-item-actions-menu button:disabled { cursor: wait; opacity: .65; }
 .work-item-title-block { min-width: 0; flex: 1; }
 .issue-breadcrumb { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 600; }
@@ -1582,8 +1584,10 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .work-item-actions summary:hover, [data-theme="dark"] .work-item-actions[open] summary { color: #b6c2cf; background: #38414a; }
 [data-theme="dark"] .work-item-header-icon:hover:not(:disabled) { color: #b6c2cf; background: #38414a; }
 [data-theme="dark"] .work-item-actions-menu { border-color: #596773; background: #282e33; box-shadow: 0 8px 20px rgba(0, 0, 0, .45); }
-[data-theme="dark"] .work-item-actions-menu button { color: #ffb8a5; }
-[data-theme="dark"] .work-item-actions-menu button:hover, [data-theme="dark"] .work-item-actions-menu button:focus-visible { color: #ffd5d2; background: #5d1f1a; }
+[data-theme="dark"] .work-item-actions-menu button { color: #b6c2cf; }
+[data-theme="dark"] .work-item-actions-menu button:hover, [data-theme="dark"] .work-item-actions-menu button:focus-visible { color: #dee4ea; background: #38414a; }
+[data-theme="dark"] .work-item-actions-menu .work-item-delete-action { color: #ffb8a5; }
+[data-theme="dark"] .work-item-actions-menu .work-item-delete-action:hover, [data-theme="dark"] .work-item-actions-menu .work-item-delete-action:focus-visible { color: #ffd5d2; background: #5d1f1a; }
 [data-theme="dark"] .backlog-group { border-color: #38414a; background: #22272b; box-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
 [data-theme="dark"] .backlog-group > header, [data-theme="dark"] .backlog-table th { border-color: #38414a; background: #282e33; }
 [data-theme="dark"] .backlog-group-label { color: #b6c2cf; background: #38414a; }

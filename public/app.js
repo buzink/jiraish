@@ -606,6 +606,7 @@ const els = {
   workItemRefresh: document.querySelector("#workItemRefresh"),
   workItemActions: document.querySelector("#workItemActions"),
   deleteWorkItem: document.querySelector("#deleteWorkItem"),
+  duplicateWorkItem: document.querySelector("#duplicateWorkItem"),
   workItemLoading: document.querySelector("#workItemLoading"),
   workItemType: document.querySelector("#workItemType"),
   workItemKey: document.querySelector("#workItemKey"),
@@ -7726,6 +7727,94 @@ function removeDeletedWorkItem(itemId) {
   state.workItemYamlDiscoveryRequestTokens.delete(Number(itemId));
 }
 
+const DUPLICATE_WORK_ITEM_FIELDS = [
+  "System.Description",
+  "System.AreaPath",
+  "System.IterationPath",
+  "System.Tags",
+  "System.AssignedTo",
+  "Microsoft.VSTS.Common.AcceptanceCriteria",
+  "Microsoft.VSTS.TCM.ReproSteps",
+  "Microsoft.VSTS.TCM.SystemInfo",
+  "Microsoft.VSTS.Common.Priority",
+  "Microsoft.VSTS.Common.Severity",
+  "Microsoft.VSTS.Common.ValueArea",
+  "Microsoft.VSTS.Common.BusinessValue",
+  "Microsoft.VSTS.Scheduling.StoryPoints",
+  "Microsoft.VSTS.Scheduling.Effort",
+  "Microsoft.VSTS.Scheduling.OriginalEstimate"
+];
+
+async function duplicateSelectedWorkItem() {
+  const item = selectedWorkItem();
+  if (!item || state.workItemDuplicating) return;
+  els.workItemActions.open = false;
+  if (workItemHasUnsavedChanges()) {
+    els.workItemLoadStatus.textContent = "Save or discard your changes before duplicating this work item.";
+    els.workItemLoadStatus.classList.add("is-error");
+    return;
+  }
+  state.workItemDuplicating = true;
+  els.duplicateWorkItem.disabled = true;
+  els.workItemLoading.classList.add("is-active");
+  els.workItemLoadStatus.textContent = "Duplicating work item…";
+  els.workItemLoadStatus.classList.remove("is-error");
+  try {
+    const source = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
+    const fields = source.fields || {};
+    const type = fields["System.WorkItemType"] || item.type;
+    const title = `Copy of ${fields["System.Title"] || item.title}`.slice(0, 255);
+    const operations = [{ op: "add", path: "/fields/System.Title", value: title }];
+    DUPLICATE_WORK_ITEM_FIELDS.forEach(field => {
+      let value = fields[field];
+      if (field === "System.AssignedTo" && value) value = value.uniqueName || value.displayName || "";
+      if (value === undefined || value === null || value === "") return;
+      operations.push({ op: "add", path: `/fields/${field}`, value });
+    });
+    const parentRelation = (source.relations || []).find(relation => relation.rel === "System.LinkTypes.Hierarchy-Reverse");
+    if (parentRelation) {
+      operations.push({ op: "add", path: "/relations/-", value: { rel: parentRelation.rel, url: parentRelation.url } });
+    }
+    operations.push({
+      op: "add",
+      path: "/relations/-",
+      value: { rel: "System.LinkTypes.Related", url: `${activeAzureContext().base}/_apis/wit/workItems/${Number(item.id)}` }
+    });
+    const created = await azure(`/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify(operations)
+    });
+    const duplicate = normalizeWorkItem(created);
+    duplicate.parentId ||= item.parentId || null;
+    duplicate.featureLabel = item.featureLabel || "";
+    const sameId = existing => Number(existing.id) === Number(item.id);
+    const lowerType = String(duplicate.type).trim().toLocaleLowerCase("en");
+    if (lowerType === "epic") state.backlogEpics = [...state.backlogEpics, duplicate];
+    else if (lowerType === "feature") state.backlogFeatures = [...state.backlogFeatures, duplicate];
+    else if (state.backlogItems.some(sameId)) state.backlogItems = [...state.backlogItems, duplicate];
+    if (state.stories.some(sameId)) state.stories = [...state.stories, duplicate];
+    state.detailsCache.delete(Number(item.id));
+    if (duplicate.parentId) state.detailsCache.delete(Number(duplicate.parentId));
+    state.forYouProjectName = "";
+    els.workItemLoading.classList.remove("is-active");
+    els.workItemLoadStatus.textContent = "";
+    await showWorkItem(duplicate);
+    renderCurrentView();
+    showNotice(`${workItemKey(item.id)} duplicated as ${workItemKey(duplicate.id)}.`, "info");
+  } catch (error) {
+    console.error(error);
+    els.workItemLoadStatus.textContent = error.auth
+      ? "The work item could not be duplicated. The PAT requires ‘Work Items: Read & write’."
+      : error.message || "The work item could not be duplicated.";
+    els.workItemLoadStatus.classList.add("is-error");
+  } finally {
+    state.workItemDuplicating = false;
+    els.duplicateWorkItem.disabled = false;
+    els.workItemLoading.classList.remove("is-active");
+  }
+}
+
 async function deleteSelectedWorkItem() {
   const item = selectedWorkItem();
   if (!item) return;
@@ -13868,6 +13957,7 @@ els.remainingPointsDialog.addEventListener("close", () => {
 document.querySelectorAll("[data-close-work-item]").forEach(button => button.addEventListener("click", requestCloseWorkItemDialog));
 els.workItemRefresh.addEventListener("click", refreshSelectedWorkItem);
 els.deleteWorkItem.addEventListener("click", deleteSelectedWorkItem);
+els.duplicateWorkItem.addEventListener("click", duplicateSelectedWorkItem);
 document.querySelectorAll("[data-activity-tab]").forEach(button => button.addEventListener("click", () => setActivityTab(button.dataset.activityTab)));
 els.workItemState.addEventListener("click", event => { event.stopPropagation(); toggleWorkItemStateMenu(); });
 els.workItemStateMenu.addEventListener("click", event => event.stopPropagation());
