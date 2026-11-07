@@ -2086,3 +2086,61 @@ body.is-sprint-review main:not(.work-item-main) { padding: 0; }
 .sprint-review-item-link:focus-visible { outline: 2px solid var(--blue-600); outline-offset: 2px; border-radius: 2px; }
 .sprint-review-actions { display: flex; gap: 8px; }
 .sprint-review-view:fullscreen .sprint-review-actions #sprintReviewExport { visibility: hidden; }
+
+/* Sprint review: Roadmap slide (gantt of a quarter with Epic swimlanes) */
+.sprint-review-roadmap-slide { --gantt-label: clamp(120px, 19cqi, 260px); --gantt-committed: #0c66e4; --gantt-forecast: #8270db; --gantt-today: #c9372c; }
+[data-theme="dark"] .sprint-review-roadmap-slide { --gantt-committed: #579dff; --gantt-forecast: #9f8fef; --gantt-today: #f87168; }
+.roadmap-slide-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: clamp(8px, 1.4cqi, 18px); }
+.roadmap-slide-panel[hidden] { display: none; }
+.roadmap-slide-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.roadmap-slide-panel h2 { margin: 0; font-size: clamp(24px, 4.6cqi, 60px); line-height: 1.1; color: var(--blue-700); }
+.roadmap-slide-panel header p { margin: .35em 0 0; color: var(--muted); font-size: clamp(12px, 1.6cqi, 20px); }
+.roadmap-slide-pager { display: flex; gap: 8px; flex-shrink: 0; }
+.roadmap-slide-pager .secondary-button { white-space: nowrap; font-size: clamp(11px, 1.2cqi, 15px); font-variant-numeric: tabular-nums; }
+.roadmap-slide-pager .secondary-button:disabled { opacity: .4; cursor: default; }
+.roadmap-gantt { flex: 1; min-height: 0; display: flex; flex-direction: column; font-size: clamp(10px, 1.15cqi, 15px); }
+.roadmap-gantt-axis, .roadmap-gantt-epic { display: grid; grid-template-columns: var(--gantt-label) minmax(0, 1fr); }
+.roadmap-gantt-axis { border-bottom: 2px solid var(--line); }
+.roadmap-gantt-corner { align-self: end; padding: 0 .8em .5em 0; color: var(--muted); font-size: .8em; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.roadmap-gantt-scale { position: relative; }
+.roadmap-gantt-months, .roadmap-gantt-sprints { position: relative; }
+.roadmap-gantt-months { height: 1.9em; border-bottom: 1px solid var(--line); }
+.roadmap-gantt-month { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; padding-left: .6em; border-left: 1px solid var(--line); color: var(--navy); font-weight: 700; }
+.roadmap-gantt-sprints { height: 2.9em; }
+.roadmap-gantt-sprint { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 0 .5em; overflow: hidden; border-left: 1px dashed var(--line); line-height: 1.2; white-space: nowrap; }
+.roadmap-gantt-sprint strong { overflow: hidden; text-overflow: ellipsis; color: var(--text); font-size: .9em; }
+.roadmap-gantt-sprint small { overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: .75em; }
+.roadmap-gantt-sprint.is-current { background: color-mix(in srgb, var(--gantt-committed) 9%, transparent); }
+.roadmap-gantt-sprint.is-reviewed strong { color: var(--gantt-committed); }
+.roadmap-gantt-body { flex: 1; min-height: 0; overflow: auto; }
+.roadmap-gantt-epic { border-bottom: 1px solid var(--line); }
+.roadmap-gantt-epic-label { display: flex; flex-direction: column; gap: .2em; min-width: 0; padding: .6em .8em .6em .6em; border-left: 4px solid hsl(var(--epic-hue) 60% 55%); background: hsl(var(--epic-hue) 70% 97%); }
+[data-theme="dark"] .roadmap-gantt-epic-label { background: hsl(var(--epic-hue) 30% 16%); }
+.roadmap-gantt-epic-title { display: flex; align-items: flex-start; gap: .45em; min-width: 0; font-weight: 700; line-height: 1.25; }
+.roadmap-gantt-epic-title .roadmap-epic-icon { flex-shrink: 0; width: 1.5em; height: 1.5em; margin: 0; font-size: .8em; }
+.roadmap-gantt-epic-title button, .roadmap-gantt-epic-title a { min-width: 0; padding: 0; border: 0; background: none; color: var(--navy); font: inherit; text-align: left; text-decoration: none; cursor: pointer; overflow-wrap: anywhere; }
+.roadmap-gantt-epic-title button:hover, .roadmap-gantt-epic-title a:hover { text-decoration: underline; }
+.roadmap-gantt-epic-label small { color: var(--muted); font-size: .78em; }
+.roadmap-gantt-track { position: relative; display: flex; flex-direction: column; gap: .3em; padding: .45em 0; min-width: 0; }
+.roadmap-gantt-grid { position: absolute; inset: 0; pointer-events: none; }
+.roadmap-gantt-grid i:not(.roadmap-gantt-today) { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--line); }
+.roadmap-gantt-grid i.is-current { background: color-mix(in srgb, var(--gantt-committed) 6%, transparent); }
+.roadmap-gantt-today { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--gantt-today); z-index: 2; pointer-events: none; }
+.roadmap-gantt-row { position: relative; height: 1.9em; }
+.roadmap-gantt-row.is-empty { display: flex; align-items: center; padding-left: .8em; color: var(--muted); font-style: italic; }
+.roadmap-gantt-bar { position: absolute; top: 0; bottom: 0; z-index: 1; display: flex; align-items: center; min-width: 0; margin: 0 2px; padding: 0 .6em; overflow: hidden; border-radius: 4px; font: inherit; font-size: .9em; font-weight: 600; line-height: 1; text-align: left; text-decoration: none; white-space: nowrap; cursor: pointer; box-sizing: border-box; transition: transform .15s, box-shadow .15s; }
+.roadmap-gantt-bar span { overflow: hidden; text-overflow: ellipsis; }
+.roadmap-gantt-bar.is-committed { border: 1px solid var(--gantt-committed); background: var(--gantt-committed); color: #fff; }
+.roadmap-gantt-bar.is-forecasted { border: 1.5px dashed var(--gantt-forecast); background: color-mix(in srgb, var(--gantt-forecast) 14%, var(--surface)); color: var(--navy); }
+.roadmap-gantt-bar:hover, .roadmap-gantt-bar:focus-visible { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(9, 30, 66, .2); outline: none; }
+.roadmap-gantt-legend { display: flex; justify-content: flex-end; gap: 1.6em; color: var(--muted); font-size: clamp(10px, 1.1cqi, 14px); }
+.roadmap-gantt-legend span { display: inline-flex; align-items: center; gap: .5em; }
+.roadmap-gantt-legend i { display: inline-block; width: 1.8em; height: .9em; border-radius: 3px; box-sizing: border-box; }
+.roadmap-gantt-legend i.is-committed { background: var(--gantt-committed); }
+.roadmap-gantt-legend i.is-forecasted { border: 1.5px dashed var(--gantt-forecast); background: color-mix(in srgb, var(--gantt-forecast) 14%, var(--surface)); }
+.roadmap-gantt-legend i.is-today { width: 0; height: 1.1em; border-left: 2px solid var(--gantt-today); border-radius: 0; }
+.sprint-review-roadmap-slide .sprint-review-empty.is-error { color: var(--gantt-today); }
+@media (max-width: 700px) {
+  .roadmap-slide-panel > header { flex-direction: column; }
+  .sprint-review-roadmap-slide { --gantt-label: 110px; }
+}

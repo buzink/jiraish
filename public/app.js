@@ -283,6 +283,7 @@ const state = {
   reviewSlide: 0,
   reviewIterationId: "",
   reviewRequestToken: 0,
+  reviewRoadmap: { offset: 0, periods: new Map(), promise: null, requestToken: 0 },
   teamIterationsCache: null,
   teamIterationsByPath: new Map(),
   commentsErrors: new Map(),
@@ -2820,6 +2821,85 @@ function renderRoadmap() {
   });
 }
 
+// Committed Features (Stories in a sprint) and forecasted Features (forecast tags) per Epic, sprint and lane.
+async function buildRoadmapData(team, iterations, { year, quarter, force = false, fetchStories = fetchIterationStories } = {}) {
+  const [groups, portfolio] = await Promise.all([
+    Promise.all(iterations.map(async iteration => ({
+      iteration,
+      stories: await fetchStories(team, iteration)
+    }))),
+    loadRoadmapPortfolioItems(team, force)
+  ]);
+  const storyRecords = groups.flatMap(group => group.stories
+    .filter(story => story.parentId)
+    .map(story => ({ story, iteration: group.iteration })));
+  const possibleFeatures = await fetchWorkItems(storyRecords.map(record => record.story.parentId));
+  const features = [...new Map([...portfolio.features, ...possibleFeatures]
+    .filter(item => item.type.trim().toLocaleLowerCase("en") === "feature")
+    .map(feature => [Number(feature.id), feature])).values()];
+  const featuresById = new Map(features.map(feature => [Number(feature.id), feature]));
+  const parentEpics = await fetchWorkItems(features.map(feature => feature.parentId));
+  const epics = [...new Map([...portfolio.epics, ...parentEpics]
+    .filter(item => item.type.trim().toLocaleLowerCase("en") === "epic")
+    .map(epic => [Number(epic.id), epic])).values()];
+  const epicsById = new Map(epics.map(epic => [Number(epic.id), epic]));
+  const cells = new Map();
+  const epicFeatureCounts = new Map();
+  const epicForecastCounts = new Map();
+  const featuresByEpic = new Map();
+  features.forEach(feature => {
+    if (!epicsById.has(Number(feature.parentId))) return;
+    if (!featuresByEpic.has(Number(feature.parentId))) featuresByEpic.set(Number(feature.parentId), []);
+    featuresByEpic.get(Number(feature.parentId)).push(feature);
+  });
+  let storyCount = 0;
+  storyRecords.forEach(({ story, iteration }) => {
+    const feature = featuresById.get(Number(story.parentId));
+    const epic = feature ? epicsById.get(Number(feature.parentId)) : null;
+    if (!feature || !epic) return;
+    storyCount++;
+    if (!epicFeatureCounts.has(epic.id)) epicFeatureCounts.set(epic.id, new Set());
+    epicFeatureCounts.get(epic.id).add(feature.id);
+    roadmapStoryLanes(story, feature).forEach(lane => {
+      const key = roadmapCellKey(epic.id, iteration.id, lane);
+      if (!cells.has(key)) cells.set(key, new Map());
+      const entries = cells.get(key);
+      if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [], forecast: false });
+      entries.get(feature.id).stories.push(story);
+    });
+  });
+  features.forEach(feature => {
+    const epic = epicsById.get(Number(feature.parentId));
+    const placements = roadmapForecastPlacements(feature, iterations);
+    if (!epic || !placements.length) return;
+    if (!epicForecastCounts.has(epic.id)) epicForecastCounts.set(epic.id, new Set());
+    epicForecastCounts.get(epic.id).add(feature.id);
+    placements.forEach(({ iteration, lane }) => {
+      const key = roadmapCellKey(epic.id, iteration.id, lane);
+      if (!cells.has(key)) cells.set(key, new Map());
+      const entries = cells.get(key);
+      if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [], forecast: true });
+      else entries.get(feature.id).forecast = true;
+    });
+  });
+  const roadmapEpics = epics.filter(epic => (
+    epicFeatureCounts.has(epic.id) || roadmapEpicHasPeriodTag(epic, year, quarter)
+  ))
+    .sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }));
+  return {
+    iterations,
+    epics: roadmapEpics,
+    availableEpics: epics,
+    cells,
+    epicFeatureCounts,
+    epicForecastCounts,
+    featuresByEpic,
+    featureCount: new Set([...epicFeatureCounts.values()].flatMap(values => [...values])).size,
+    forecastCount: new Set([...epicForecastCounts.values()].flatMap(values => [...values])).size,
+    storyCount
+  };
+}
+
 async function loadRoadmap(force = false) {
   const team = state.teams.find(value => value.id === state.teamId);
   ensureRoadmapPeriod();
@@ -2838,84 +2918,9 @@ async function loadRoadmap(force = false) {
   els.roadmapStatus.classList.remove("is-error");
   els.roadmapContent.innerHTML = '<div class="roadmap-loading" aria-hidden="true"><span></span><span></span><span></span></div>';
   try {
-    const [groups, portfolio] = await Promise.all([
-      Promise.all(iterations.map(async iteration => ({
-        iteration,
-        stories: await fetchIterationStories(team, iteration)
-      }))),
-      loadRoadmapPortfolioItems(team, force)
-    ]);
+    const data = await buildRoadmapData(team, iterations, { year: state.roadmapYear, quarter: state.roadmapQuarter, force });
     if (requestToken !== state.roadmapRequestToken) return;
-    const storyRecords = groups.flatMap(group => group.stories
-      .filter(story => story.parentId)
-      .map(story => ({ story, iteration: group.iteration })));
-    const possibleFeatures = await fetchWorkItems(storyRecords.map(record => record.story.parentId));
-    if (requestToken !== state.roadmapRequestToken) return;
-    const features = [...new Map([...portfolio.features, ...possibleFeatures]
-      .filter(item => item.type.trim().toLocaleLowerCase("en") === "feature")
-      .map(feature => [Number(feature.id), feature])).values()];
-    const featuresById = new Map(features.map(feature => [Number(feature.id), feature]));
-    const parentEpics = await fetchWorkItems(features.map(feature => feature.parentId));
-    const epics = [...new Map([...portfolio.epics, ...parentEpics]
-      .filter(item => item.type.trim().toLocaleLowerCase("en") === "epic")
-      .map(epic => [Number(epic.id), epic])).values()];
-    if (requestToken !== state.roadmapRequestToken) return;
-    const epicsById = new Map(epics.map(epic => [Number(epic.id), epic]));
-    const cells = new Map();
-    const epicFeatureCounts = new Map();
-    const epicForecastCounts = new Map();
-    const featuresByEpic = new Map();
-    features.forEach(feature => {
-      if (!epicsById.has(Number(feature.parentId))) return;
-      if (!featuresByEpic.has(Number(feature.parentId))) featuresByEpic.set(Number(feature.parentId), []);
-      featuresByEpic.get(Number(feature.parentId)).push(feature);
-    });
-    let storyCount = 0;
-    storyRecords.forEach(({ story, iteration }) => {
-      const feature = featuresById.get(Number(story.parentId));
-      const epic = feature ? epicsById.get(Number(feature.parentId)) : null;
-      if (!feature || !epic) return;
-      storyCount++;
-      if (!epicFeatureCounts.has(epic.id)) epicFeatureCounts.set(epic.id, new Set());
-      epicFeatureCounts.get(epic.id).add(feature.id);
-      roadmapStoryLanes(story, feature).forEach(lane => {
-        const key = roadmapCellKey(epic.id, iteration.id, lane);
-        if (!cells.has(key)) cells.set(key, new Map());
-        const entries = cells.get(key);
-        if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [], forecast: false });
-        entries.get(feature.id).stories.push(story);
-      });
-    });
-    features.forEach(feature => {
-      const epic = epicsById.get(Number(feature.parentId));
-      const placements = roadmapForecastPlacements(feature, iterations);
-      if (!epic || !placements.length) return;
-      if (!epicForecastCounts.has(epic.id)) epicForecastCounts.set(epic.id, new Set());
-      epicForecastCounts.get(epic.id).add(feature.id);
-      placements.forEach(({ iteration, lane }) => {
-        const key = roadmapCellKey(epic.id, iteration.id, lane);
-        if (!cells.has(key)) cells.set(key, new Map());
-        const entries = cells.get(key);
-        if (!entries.has(feature.id)) entries.set(feature.id, { feature, stories: [], forecast: true });
-        else entries.get(feature.id).forecast = true;
-      });
-    });
-    const roadmapEpics = epics.filter(epic => (
-      epicFeatureCounts.has(epic.id) || roadmapEpicHasPeriodTag(epic, state.roadmapYear, state.roadmapQuarter)
-    ))
-      .sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }));
-    state.roadmapData = {
-      iterations,
-      epics: roadmapEpics,
-      availableEpics: epics,
-      cells,
-      epicFeatureCounts,
-      epicForecastCounts,
-      featuresByEpic,
-      featureCount: new Set([...epicFeatureCounts.values()].flatMap(values => [...values])).size,
-      forecastCount: new Set([...epicForecastCounts.values()].flatMap(values => [...values])).size,
-      storyCount
-    };
+    state.roadmapData = data;
     state.roadmapCacheKey = cacheKey;
     state.roadmapError = "";
     renderRoadmap();
@@ -4201,6 +4206,230 @@ function sprintReviewExtraSlideHtml(data, iteration, previousData = null) {
   </section>`;
 }
 
+// Sprint review: Roadmap slide. A gantt chart of the sprint's quarter (months and sprints on the
+// time axis) with an Epic swimlane per row and committed or forecasted Features as bars.
+// The previous and next quarter are loaded too, so the slide can page to them and the export has all three.
+const ROADMAP_SLIDE_OFFSETS = [-1, 0, 1];
+
+function roadmapDayNumber(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86400000 : null;
+}
+
+function roadmapShiftQuarter({ year, quarter }, offset) {
+  const index = year * 4 + quarter - 1 + offset;
+  return { year: Math.floor(index / 4), quarter: index % 4 + 1 };
+}
+
+function roadmapQuarterRange({ year, quarter }) {
+  return {
+    start: Date.UTC(year, (quarter - 1) * 3, 1) / 86400000,
+    end: Date.UTC(year, quarter * 3, 1) / 86400000
+  };
+}
+
+// Sprints that overlap the quarter, with their first day and the day after their last day.
+function roadmapQuarterSprints(period) {
+  const range = roadmapQuarterRange(period);
+  return chronologicalIterations().flatMap(iteration => {
+    const start = roadmapDayNumber(iteration.attributes?.startDate);
+    const finish = roadmapDayNumber(iteration.attributes?.finishDate);
+    if (start === null || finish === null) return [];
+    const end = finish + 1;
+    return start < range.end && end > range.start ? [{ iteration, start, end }] : [];
+  });
+}
+
+function loadSprintReviewRoadmap(team, iteration) {
+  const base = roadmapPeriodForIteration(iteration);
+  const requestToken = ++state.reviewRoadmap.requestToken;
+  const stories = new Map();
+  const fetchStories = (storyTeam, sprint) => {
+    if (!stories.has(sprint.id)) stories.set(sprint.id, fetchIterationStories(storyTeam, sprint));
+    return stories.get(sprint.id);
+  };
+  state.reviewRoadmap.offset = 0;
+  state.reviewRoadmap.periods = new Map(ROADMAP_SLIDE_OFFSETS.map(offset => {
+    const period = roadmapShiftQuarter(base, offset);
+    return [offset, { ...period, sprints: roadmapQuarterSprints(period), status: "loading", data: null, message: "" }];
+  }));
+  state.reviewRoadmap.promise = Promise.all([...state.reviewRoadmap.periods.values()].map(async entry => {
+    try {
+      const data = await buildRoadmapData(team, entry.sprints.map(sprint => sprint.iteration), {
+        year: entry.year, quarter: entry.quarter, fetchStories
+      });
+      if (requestToken !== state.reviewRoadmap.requestToken) return;
+      Object.assign(entry, { status: "ready", data });
+    } catch (error) {
+      console.error(error);
+      if (requestToken !== state.reviewRoadmap.requestToken) return;
+      Object.assign(entry, { status: "error", message: error.message || "The roadmap could not be loaded." });
+    }
+    rerenderSprintReviewRoadmapSlide();
+  }));
+  return state.reviewRoadmap.promise;
+}
+
+function rerenderSprintReviewRoadmapSlide() {
+  const slide = state.reviewSlides?.[state.reviewSlide];
+  if (state.currentView === "review" && slide?.roadmap) showSprintReviewSlide(state.reviewSlide);
+}
+
+function roadmapQuarterLabel({ year, quarter }) {
+  return `Q${quarter} ${year}`;
+}
+
+// Per Feature, the sprints it is committed (has Stories) or forecasted in, merged into bars of
+// neighbouring sprints with the same status.
+function roadmapSlideFeatureRows(data, epic, sprints) {
+  const features = new Map();
+  sprints.forEach((sprint, index) => {
+    ["frontend", "backend", "unassigned"].forEach(lane => {
+      data.cells.get(roadmapCellKey(epic.id, sprint.iteration.id, lane))?.forEach(entry => {
+        if (!features.has(entry.feature.id)) features.set(entry.feature.id, { feature: entry.feature, sprints: new Map() });
+        const placed = features.get(entry.feature.id).sprints;
+        const current = placed.get(index) || { committed: false, stories: 0, lanes: new Set() };
+        if (entry.stories.length) current.committed = true;
+        current.stories += entry.stories.length;
+        if (lane !== "unassigned") current.lanes.add(lane);
+        placed.set(index, current);
+      });
+    });
+  });
+  return [...features.values()].map(({ feature, sprints: placed }) => {
+    const indexes = [...placed.keys()].sort((left, right) => left - right);
+    const bars = [];
+    indexes.forEach(index => {
+      const value = placed.get(index);
+      const previous = bars.at(-1);
+      if (previous && previous.last === index - 1 && previous.committed === value.committed) {
+        previous.last = index;
+        previous.stories += value.stories;
+        value.lanes.forEach(lane => previous.lanes.add(lane));
+      } else {
+        bars.push({ first: index, last: index, committed: value.committed, stories: value.stories, lanes: new Set(value.lanes) });
+      }
+    });
+    return { feature, bars, first: indexes[0] };
+  }).sort((left, right) => left.first - right.first
+    || left.feature.title.localeCompare(right.feature.title, "en", { numeric: true, sensitivity: "base" }));
+}
+
+function roadmapSlidePanelHtml(entry, offset) {
+  const range = roadmapQuarterRange(entry);
+  const span = range.end - range.start;
+  const position = (start, end) => {
+    const left = Math.max(0, (start - range.start) / span * 100);
+    const right = Math.min(100, (end - range.start) / span * 100);
+    return `left: ${left.toFixed(3)}%; width: ${Math.max(0, right - left).toFixed(3)}%`;
+  };
+  const dayFormat = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const formatDay = day => dayFormat.format(new Date(day * 86400000));
+  const monthFormat = new Intl.DateTimeFormat("en-GB", { month: "long", timeZone: "UTC" });
+  const months = [0, 1, 2].map(index => {
+    const start = Date.UTC(entry.year, (entry.quarter - 1) * 3 + index, 1) / 86400000;
+    const end = Date.UTC(entry.year, (entry.quarter - 1) * 3 + index + 1, 1) / 86400000;
+    return `<span class="roadmap-gantt-month" style="${position(start, end)}">${escapeHtml(monthFormat.format(new Date(start * 86400000)))}</span>`;
+  }).join("");
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000;
+  const todayLine = today >= range.start && today < range.end
+    ? `<i class="roadmap-gantt-today" style="left: ${((today + .5 - range.start) / span * 100).toFixed(3)}%" title="Today"></i>`
+    : "";
+  const sprintMarks = entry.sprints.map(sprint => {
+    const current = sprint.iteration.id === state.currentIterationId;
+    const reviewed = sprint.iteration.id === state.iteration?.id;
+    return `<span class="roadmap-gantt-sprint${current ? " is-current" : ""}${reviewed ? " is-reviewed" : ""}" style="${position(sprint.start, sprint.end)}" title="${escapeHtml(`${sprint.iteration.name} · ${formatDay(sprint.start)} – ${formatDay(sprint.end - 1)}`)}">
+      <strong>${escapeHtml(sprint.iteration.name)}</strong><small>${escapeHtml(`${formatDay(sprint.start)} – ${formatDay(sprint.end - 1)}`)}</small>
+    </span>`;
+  }).join("");
+  const grid = `<div class="roadmap-gantt-grid" aria-hidden="true">${entry.sprints.map(sprint => (
+    `<i class="${sprint.iteration.id === state.currentIterationId ? "is-current" : ""}" style="${position(sprint.start, sprint.end)}"></i>`
+  )).join("")}${todayLine}</div>`;
+
+  const data = entry.data;
+  const epics = data
+    ? data.availableEpics.filter(epic => (
+      data.epicFeatureCounts.has(epic.id) || data.epicForecastCounts.has(epic.id) || roadmapEpicHasPeriodTag(epic, entry.year, entry.quarter)
+    )).sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }))
+    : [];
+  let body;
+  if (entry.status === "loading") {
+    body = `<p class="sprint-review-empty">Loading the roadmap…</p>`;
+  } else if (entry.status === "error") {
+    body = `<p class="sprint-review-empty is-error">${escapeHtml(entry.message)}</p>`;
+  } else if (!entry.sprints.length) {
+    body = `<p class="sprint-review-empty">No sprints in ${escapeHtml(roadmapQuarterLabel(entry))}.</p>`;
+  } else if (!epics.length) {
+    body = `<p class="sprint-review-empty">No committed or forecasted Features in ${escapeHtml(roadmapQuarterLabel(entry))}.</p>`;
+  } else {
+    const lanes = epics.map((epic, epicIndex) => {
+      const rows = roadmapSlideFeatureRows(data, epic, entry.sprints);
+      const committed = data.epicFeatureCounts.get(epic.id)?.size || 0;
+      const forecasted = rows.filter(row => row.bars.some(bar => !bar.committed)).length;
+      const epicLink = state.reviewExport
+        ? `<a href="${escapeHtml(workItemWebUrl(epic.id))}" target="_blank" rel="noopener noreferrer">${escapeHtml(epic.title)}</a>`
+        : `<button type="button" data-review-item="${Number(epic.id)}">${escapeHtml(epic.title)}</button>`;
+      const track = rows.length ? rows.map(row => `<div class="roadmap-gantt-row">${row.bars.map(bar => {
+        const sprintNames = entry.sprints.slice(bar.first, bar.last + 1).map(sprint => sprint.iteration.name).join(", ");
+        const lanes = [...bar.lanes].map(roadmapCanonicalLaneTag).join(", ");
+        const status = bar.committed ? `Committed · ${bar.stories} ${bar.stories === 1 ? "story" : "stories"}` : "Forecasted";
+        const tooltip = `${workItemKey(row.feature.id)} ${row.feature.title} · ${status} · ${sprintNames}${lanes ? ` · ${lanes}` : ""}`;
+        const label = `<span>${escapeHtml(row.feature.title)}</span>`;
+        const attributes = `class="roadmap-gantt-bar ${bar.committed ? "is-committed" : "is-forecasted"}" style="${position(entry.sprints[bar.first].start, entry.sprints[bar.last].end)}" title="${escapeHtml(tooltip)}"`;
+        return state.reviewExport
+          ? `<a ${attributes} href="${escapeHtml(workItemWebUrl(row.feature.id))}" target="_blank" rel="noopener noreferrer">${label}</a>`
+          : `<button ${attributes} type="button" data-review-item="${Number(row.feature.id)}">${label}</button>`;
+      }).join("")}</div>`).join("") : `<div class="roadmap-gantt-row is-empty"><span>No Features planned yet</span></div>`;
+      return `<div class="roadmap-gantt-epic" style="--epic-hue: ${(epicIndex * 47 + 200) % 360}">
+        <div class="roadmap-gantt-epic-label">
+          <span class="roadmap-gantt-epic-title"><span class="roadmap-epic-icon" aria-hidden="true">⚡</span>${epicLink}</span>
+          <small>${escapeHtml(`${workItemKey(epic.id)} · ${committed} committed · ${forecasted} forecasted`)}</small>
+        </div>
+        <div class="roadmap-gantt-track">${grid}${track}</div>
+      </div>`;
+    }).join("");
+    body = `<div class="roadmap-gantt">
+      <div class="roadmap-gantt-axis">
+        <div class="roadmap-gantt-corner">Epics</div>
+        <div class="roadmap-gantt-scale">
+          <div class="roadmap-gantt-months">${months}</div>
+          <div class="roadmap-gantt-sprints">${sprintMarks}${todayLine}</div>
+        </div>
+      </div>
+      <div class="roadmap-gantt-body">${lanes}</div>
+    </div>
+    <footer class="roadmap-gantt-legend" aria-hidden="true">
+      <span><i class="is-committed"></i>Committed</span>
+      <span><i class="is-forecasted"></i>Forecasted</span>
+      ${todayLine ? `<span><i class="is-today"></i>Today</span>` : ""}
+    </footer>`;
+  }
+  const previous = state.reviewRoadmap.periods.get(offset - 1);
+  const next = state.reviewRoadmap.periods.get(offset + 1);
+  const counts = data && epics.length
+    ? `${epics.length} ${epics.length === 1 ? "Epic" : "Epics"} · ${data.featureCount} committed · ${data.forecastCount} forecasted`
+    : "";
+  const subtitle = [`${formatDay(range.start)} – ${formatDay(range.end - 1)}`, `${entry.sprints.length} ${entry.sprints.length === 1 ? "sprint" : "sprints"}`, counts].filter(Boolean).join(" · ");
+  return `<div class="roadmap-slide-panel" data-roadmap-offset="${offset}"${offset !== state.reviewRoadmap.offset ? " hidden" : ""}>
+    <header>
+      <div><h2>Roadmap ${escapeHtml(roadmapQuarterLabel(entry))}</h2><p>${escapeHtml(subtitle)}</p></div>
+      <nav class="roadmap-slide-pager" aria-label="Quarter">
+        <button class="secondary-button" type="button" data-roadmap-step="-1"${previous ? "" : " disabled"}>‹ ${escapeHtml(previous ? roadmapQuarterLabel(previous) : "Previous")}</button>
+        <button class="secondary-button" type="button" data-roadmap-step="1"${next ? "" : " disabled"}>${escapeHtml(next ? roadmapQuarterLabel(next) : "Next")} ›</button>
+      </nav>
+    </header>
+    ${body}
+  </div>`;
+}
+
+function sprintReviewRoadmapSlideHtml() {
+  const offsets = state.reviewExport ? ROADMAP_SLIDE_OFFSETS : [state.reviewRoadmap.offset];
+  const panels = offsets.filter(offset => state.reviewRoadmap.periods.has(offset))
+    .map(offset => roadmapSlidePanelHtml(state.reviewRoadmap.periods.get(offset), offset)).join("");
+  return `<section class="sprint-review-slide sprint-review-roadmap-slide">${panels || `<p class="sprint-review-empty">Loading the roadmap…</p>`}</section>`;
+}
+
 async function loadSprintReview() {
   const team = state.teams.find(value => value.id === state.teamId);
   const iteration = state.iteration;
@@ -4233,6 +4462,9 @@ async function loadSprintReview() {
     state.reviewFeatureFilters = new Map();
     const analyticsSlide = () => sprintReviewAnalyticsSlideHtml(iteration);
     analyticsSlide.analytics = true;
+    const roadmapSlide = () => sprintReviewRoadmapSlideHtml();
+    roadmapSlide.roadmap = true;
+    loadSprintReviewRoadmap(team, iteration);
     state.reviewSlides = [
       () => `<section class="sprint-review-slide sprint-review-title-slide">
         <div class="sprint-review-eyebrow">${escapeHtml(team.name)} · Sprint review</div>
@@ -4242,6 +4474,7 @@ async function loadSprintReview() {
       </section>`,
       ...(analyticsConfigured() ? [analyticsSlide] : []),
       ...(extraData ? [() => sprintReviewExtraSlideHtml(extraData, iteration, previousExtraData)] : []),
+      roadmapSlide,
       sprintReviewTableSlide(title, `${sprintItems.length} ${sprintItems.length === 1 ? "story or bug" : "stories and bugs"} in this sprint`, sprintItems, "No stories or bugs in this sprint.", { showDemo: true, showFeatures: true }),
       sprintReviewTableSlide("Demo", title, demoItems, "No stories or bugs in this sprint are tagged “demo”.", { showPerson: true }),
       nextIteration
@@ -4351,6 +4584,16 @@ function sprintReviewExportRuntime() {
       });
       return;
     }
+    const roadmapStep = event.target.closest("[data-roadmap-step]:not(:disabled)");
+    if (roadmapStep) {
+      const panel = roadmapStep.closest("[data-roadmap-offset]");
+      const target = slide.querySelector(`[data-roadmap-offset="${Number(panel.dataset.roadmapOffset) + Number(roadmapStep.dataset.roadmapStep)}"]`);
+      if (target) {
+        panel.hidden = true;
+        target.hidden = false;
+      }
+      return;
+    }
     const pager = event.target.closest("[data-analytics-pages]:not(:disabled)");
     if (pager) return pageTopPages(pager.closest(".analytics-top-pages"), Number(pager.dataset.analyticsPages));
     const row = event.target.closest("tr.sprint-review-item-row");
@@ -4400,6 +4643,8 @@ async function exportSprintReview() {
       if (!response.ok) throw new Error(`The stylesheet could not be loaded (${response.status}).`);
       return response.text();
     });
+    // The Roadmap slide carries the previous, current and next quarter, so wait until all three are loaded.
+    if (slides.some(slide => slide.roadmap)) await state.reviewRoadmap.promise;
     const skipped = [];
     const sections = [];
     state.reviewExport = true;
@@ -15933,6 +16178,12 @@ els.sprintReviewFullscreen.addEventListener("click", toggleSprintReviewFullscree
 els.sprintReviewExport.addEventListener("click", exportSprintReview);
 els.sprintReviewStage.addEventListener("click", event => {
   if (event.target.closest("[data-analytics-login]")) return signInToAnalytics();
+  const roadmapStep = event.target.closest("[data-roadmap-step]:not(:disabled)")?.dataset.roadmapStep;
+  if (roadmapStep) {
+    const offset = state.reviewRoadmap.offset + Number(roadmapStep);
+    if (state.reviewRoadmap.periods.has(offset)) state.reviewRoadmap.offset = offset;
+    return rerenderSprintReviewRoadmapSlide();
+  }
   const reviewItem = event.target.closest("[data-review-item]")?.dataset.reviewItem;
   if (reviewItem) return showLinkedWorkItem(Number(reviewItem));
   const metric = event.target.closest("[data-analytics-metric]")?.dataset.analyticsMetric;
