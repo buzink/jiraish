@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261106-analytics" />
+    <link rel="stylesheet" href="styles.css?v=20261107-extra-source" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -591,11 +591,13 @@
         <div class="privacy-note"><strong>Private on this device.</strong> Your credentials are stored in local storage and sent only to Azure DevOps and GitHub respectively.</div>
         <p id="connectionError" class="form-error" role="alert"></p>
         <div class="dialog-actions">
+          <button class="text-button" type="button" data-import-settings title="Load settings from an exported JSON file">Import settings</button>
           <button id="cancelConnection" class="text-button" type="button">Cancel</button>
           <button class="primary-button" value="connect" type="submit">Connect</button>
         </div>
       </form>
     </dialog>
+    <input id="importSettingsFile" type="file" accept="application/json,.json" hidden />
 
     <dialog id="settingsDialog" class="dialog settings-dialog">
       <form id="settingsForm" method="dialog">
@@ -663,11 +665,20 @@
             <input id="gaPropertyIdInput" name="gaPropertyId" type="text" inputmode="numeric" placeholder="379071837" autocomplete="off" />
             <span class="field-help">The Analytics slide in the sprint review appears when both fields are filled. Add this site's address as an authorized JavaScript origin of the OAuth client.</span>
           </label>
+          <label for="analyticsExtraSourceInput">
+            Analytics additional source
+            <input id="analyticsExtraSourceInput" name="analyticsExtraSource" type="url" placeholder="https://buzink.github.io/sndata/" autocomplete="off" />
+            <span class="field-help">Base URL of the sprint data files. When sprint-&lt;number&gt;.json exists there, the sprint review gets an extra slide with its live chat and CSAT numbers.</span>
+          </label>
         </fieldset>
         <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
         <div id="stateMappings" class="state-mappings"></div>
         <div class="settings-footer">
-          <button id="changeConnection" class="text-button danger" type="button">Change connection</button>
+          <div class="settings-transfer">
+            <button id="changeConnection" class="text-button danger" type="button">Change connection</button>
+            <button class="text-button" type="button" data-export-settings title="Download all settings, including API keys, as a JSON file">Export settings</button>
+            <button class="text-button" type="button" data-import-settings title="Load settings from an exported JSON file">Import settings</button>
+          </div>
           <div class="dialog-actions inline">
             <button class="secondary-button" type="button" data-close-settings>Cancel</button>
             <button class="primary-button" value="save" type="submit">Save</button>
@@ -1246,6 +1257,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261106-analytics" defer></script>
+    <script src="app.js?v=20261107-extra-source" defer></script>
   </body>
 </html>

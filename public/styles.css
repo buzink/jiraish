@@ -794,6 +794,7 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .mapping-row select { height: 34px; margin: 0; }
 .settings-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 23px; }
 .settings-dialog { overflow-y: auto; }
+.settings-transfer { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
 .github-repo-settings { margin: 22px 0 0; padding: 15px; border: 1px solid var(--line); border-radius: 4px; }
 .github-repo-settings legend { padding: 0 5px; color: var(--navy); font-size: 13px; font-weight: 700; }
 .github-settings-group { display: grid; gap: 10px; }
@@ -2022,3 +2023,38 @@ body.is-sprint-review main { padding: 0; }
 .analytics-top-event { margin-top: .6em; padding: .4em .7em; }
 .analytics-top-event + .analytics-top-event { margin-top: .3em; }
 .analytics-top-pages td, .analytics-top-pages tbody th { padding-top: .2em; padding-bottom: .2em; }
+
+/* Sprint review: additional source slide (live chat and CSAT from sprint-<n>.json) */
+.sprint-review-extra-slide { --extra-accent: #1a73e8; --extra-good: #1f845a; --extra-bad: #c9372c; gap: clamp(10px, 1.8cqi, 24px); }
+[data-theme="dark"] .sprint-review-extra-slide { --extra-accent: #4f8ff0; --extra-good: #4bce97; --extra-bad: #f87168; }
+.sprint-review-extra-slide header h2 { margin: 0; font-size: clamp(24px, 4.6cqi, 60px); line-height: 1.1; color: var(--blue-700); }
+.sprint-review-extra-slide header p { margin: .35em 0 0; color: var(--muted); font-size: clamp(12px, 1.6cqi, 20px); }
+.extra-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(8px, 1.4cqi, 20px); padding-bottom: clamp(8px, 1.4cqi, 18px); border-bottom: 1px solid var(--line); font-size: clamp(10px, 1.4cqi, 18px); }
+.extra-tile { display: grid; align-content: start; gap: .15em; min-width: 0; }
+.extra-tile-label { color: var(--muted); }
+.extra-tile-value { font-size: 2.2em; font-weight: 400; line-height: 1.1; color: var(--navy); white-space: nowrap; }
+.extra-tile-detail { color: var(--muted); font-size: .8em; }
+.extra-panels { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr .8fr; gap: clamp(14px, 2.6cqi, 36px); font-size: clamp(10px, 1.25cqi, 16px); }
+.extra-panel { min-width: 0; min-height: 0; overflow: hidden; }
+.extra-panel h3 { margin: 0 0 .7em; color: var(--muted); font-size: .8em; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.extra-ranking, .extra-csat-distribution { margin: 0; padding: 0; list-style: none; display: grid; gap: .75em; }
+.extra-ranking li { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .8em; row-gap: .3em; align-items: end; }
+.extra-ranking-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); font-weight: 600; }
+.extra-ranking-name small { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: .8em; font-weight: 400; }
+.extra-ranking-value { color: var(--navy); font-variant-numeric: tabular-nums; font-weight: 600; }
+.extra-ranking-bar { grid-column: 1 / -1; height: .45em; border-radius: 999px; background: color-mix(in srgb, var(--line) 60%, transparent); overflow: hidden; }
+.extra-ranking-bar i { display: block; height: 100%; border-radius: inherit; background: var(--extra-accent); }
+.extra-csat-distribution li { display: grid; grid-template-columns: 1.6em minmax(0, 1fr) 2.6em; align-items: center; gap: .7em; }
+.extra-csat-emoji { font-size: 1.35em; line-height: 1; }
+.extra-csat-distribution .extra-ranking-bar { grid-column: auto; height: .7em; }
+.extra-csat-distribution .extra-ranking-value { text-align: right; }
+.extra-ranking-bar i.score-5, .extra-ranking-bar i.score-4 { background: var(--extra-good); }
+.extra-ranking-bar i.score-3 { background: var(--muted); }
+.extra-ranking-bar i.score-2, .extra-ranking-bar i.score-1 { background: var(--extra-bad); }
+.extra-footer { display: flex; justify-content: flex-end; gap: 1.6em; font-size: clamp(10px, 1.15cqi, 15px); }
+.extra-footer a { color: var(--blue-600); text-decoration: none; }
+.extra-footer a:hover { text-decoration: underline; }
+@media (max-width: 700px) {
+  .extra-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .extra-panels { grid-template-columns: 1fr; }
+}

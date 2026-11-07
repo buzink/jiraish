@@ -23,7 +23,8 @@ const STORAGE = {
   filterTagMode: "wish-board.filter-tag-mode",
   latestCommitRepos: "wish-board.latest-commit-repos",
   gaClientId: "wish-board.ga-client-id",
-  gaPropertyId: "wish-board.ga-property-id"
+  gaPropertyId: "wish-board.ga-property-id",
+  analyticsExtraSource: "wish-board.analytics-extra-source"
 };
 
 const DEFAULT_URL = "";
@@ -88,6 +89,7 @@ const state = {
   litellmModel: localStorage.getItem(STORAGE.litellmModel) || "",
   gaClientId: localStorage.getItem(STORAGE.gaClientId) || "",
   gaPropertyId: localStorage.getItem(STORAGE.gaPropertyId) || "",
+  analyticsExtraSource: localStorage.getItem(STORAGE.analyticsExtraSource) || "",
   analytics: { token: "", tokenExpires: 0, data: null, dataKey: "", status: "", message: "", metric: "screenPageViews", pageOffset: 0, requestToken: 0 },
   githubOwners: readJson(STORAGE.githubOwners, []),
   githubAllOwners: localStorage.getItem(STORAGE.githubAllOwners) !== "false",
@@ -567,6 +569,7 @@ const els = {
   litellmUrl: document.querySelector("#litellmUrlInput"),
   gaClientId: document.querySelector("#gaClientIdInput"),
   gaPropertyId: document.querySelector("#gaPropertyIdInput"),
+  analyticsExtraSource: document.querySelector("#analyticsExtraSourceInput"),
   litellmApiKey: document.querySelector("#litellmApiKeyInput"),
   litellmModel: document.querySelector("#litellmModelInput"),
   litellmCustomModel: document.querySelector("#litellmCustomModelInput"),
@@ -3934,6 +3937,128 @@ function renderSprintReviewMessage(message) {
   els.sprintReviewNext.disabled = true;
 }
 
+// Sprint data published elsewhere (e.g. ServiceNow live chat and CSAT numbers) as
+// <base>/sprint-<number>.json. The extra slide only appears when that file exists.
+const sprintReviewExtraCache = new Map();
+
+function sprintReviewExtraUrl(iteration) {
+  const base = state.analyticsExtraSource.trim();
+  const number = sprintRouteValue(iteration);
+  if (!base || !/^\d+$/.test(number)) return "";
+  return `${base.endsWith("/") ? base : `${base}/`}sprint-${number}.json`;
+}
+
+function loadSprintReviewExtraData(iteration) {
+  const url = sprintReviewExtraUrl(iteration);
+  if (!url) return Promise.resolve(null);
+  if (!sprintReviewExtraCache.has(url)) {
+    const request = fetch(url, { cache: "no-cache" })
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => (data && typeof data === "object" ? { ...data, url } : null))
+      .catch(error => {
+        console.warn(`Sprint data could not be loaded from ${url}.`, error);
+        sprintReviewExtraCache.delete(url);
+        return null;
+      });
+    sprintReviewExtraCache.set(url, request);
+  }
+  return sprintReviewExtraCache.get(url);
+}
+
+function sprintReviewDuration(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value)) return "–";
+  const rounded = Math.round(value);
+  const minutes = Math.floor(rounded / 60);
+  const rest = rounded % 60;
+  return minutes ? `${minutes}m ${String(rest).padStart(2, "0")}s` : `${rest}s`;
+}
+
+function sprintReviewExtraNumber(value) {
+  return Number.isFinite(Number(value)) ? analyticsFull.format(Number(value)) : "–";
+}
+
+function sprintReviewExtraTile(label, value, detail = "") {
+  return `<div class="extra-tile">
+    <span class="extra-tile-label">${escapeHtml(label)}</span>
+    <strong class="extra-tile-value">${escapeHtml(value)}</strong>
+    ${detail ? `<span class="extra-tile-detail">${escapeHtml(detail)}</span>` : ""}
+  </div>`;
+}
+
+// A ranked list with bars sized relative to the largest entry.
+// With splitGroup, "Group - Name" shows Name with the group in small text below it.
+function sprintReviewExtraRanking(title, ranking, { splitGroup = false } = {}) {
+  const items = Array.isArray(ranking?.top) ? ranking.top : [];
+  if (!items.length) return "";
+  const max = Math.max(...items.map(item => Number(item.percentage) || 0), 1);
+  return `<section class="extra-panel">
+    <h3>${escapeHtml(title)}</h3>
+    <ol class="extra-ranking">
+      ${items.map(item => {
+        const [group, ...rest] = splitGroup ? String(item.name || "").split(" - ") : [String(item.name || "")];
+        const name = rest.length ? rest.join(" - ") : group;
+        return `<li title="${escapeHtml(`${item.name}: ${sprintReviewExtraNumber(item.count)} (${item.percentage}%)`)}">
+          <span class="extra-ranking-name">${escapeHtml(name)}${rest.length ? `<small>${escapeHtml(group)}</small>` : ""}</span>
+          <span class="extra-ranking-value">${escapeHtml(sprintReviewExtraNumber(item.count))}</span>
+          <span class="extra-ranking-bar"><i style="width: ${((Number(item.percentage) || 0) / max * 100).toFixed(1)}%"></i></span>
+        </li>`;
+      }).join("")}
+    </ol>
+  </section>`;
+}
+
+function sprintReviewExtraCsat(csat) {
+  if (!csat) return "";
+  const distribution = Array.isArray(csat.distribution) ? csat.distribution : [];
+  const max = Math.max(...distribution.map(item => Number(item.percentage) || 0), 1);
+  return `<section class="extra-panel extra-csat">
+    <h3>Customer satisfaction</h3>
+    <ol class="extra-csat-distribution">
+      ${distribution.map(item => `<li title="${escapeHtml(`Score ${item.score}: ${sprintReviewExtraNumber(item.count)} (${item.percentage}%)`)}">
+        <span class="extra-csat-emoji" aria-label="Score ${escapeHtml(String(item.score))}">${escapeHtml(item.emoji || String(item.score))}</span>
+        <span class="extra-ranking-bar"><i class="score-${Number(item.score) || 0}" style="width: ${((Number(item.percentage) || 0) / max * 100).toFixed(1)}%"></i></span>
+        <span class="extra-ranking-value">${escapeHtml(sprintReviewExtraNumber(item.count))}</span>
+      </li>`).join("")}
+    </ol>
+  </section>`;
+}
+
+function sprintReviewExtraSlideHtml(data, iteration) {
+  const chat = data.liveChat || {};
+  const csat = data.csat || null;
+  const start = data.period?.start;
+  const end = data.period?.end;
+  const range = start && end ? `${analyticsFormatDay(start)} – ${analyticsFormatDay(end)}` : sprintReviewDateRange(iteration);
+  const source = data.source?.dashboard || "Additional source";
+  const tiles = [
+    sprintReviewExtraTile("Chats started", sprintReviewExtraNumber(chat.startedChats)),
+    sprintReviewExtraTile("Email reply requested", sprintReviewExtraNumber(chat.requestedEmailReply)),
+    sprintReviewExtraTile("Avg wait", sprintReviewDuration(chat.avgWaitSeconds)),
+    sprintReviewExtraTile("Avg first response", sprintReviewDuration(chat.avgFirstResponseSeconds)),
+    sprintReviewExtraTile("Avg chat duration", sprintReviewDuration(chat.avgTotalChatSeconds),
+      `agent ${sprintReviewDuration(chat.avgAgentResponseSeconds)} · student ${sprintReviewDuration(chat.avgStudentResponseSeconds)}`)
+  ];
+  if (csat) {
+    tiles.push(sprintReviewExtraTile("Satisfied", `${Math.round(Number(csat.topTwoPercentage) || 0)}%`,
+      `avg ${Number(csat.average || 0).toFixed(2)} / 5 · ${sprintReviewExtraNumber(csat.responses)} responses`));
+  }
+  const links = [
+    data.source?.liveChatUrl ? `<a href="${escapeHtml(data.source.liveChatUrl)}" target="_blank" rel="noopener noreferrer">Live chat dashboard ↗</a>` : "",
+    data.source?.csatUrl ? `<a href="${escapeHtml(data.source.csatUrl)}" target="_blank" rel="noopener noreferrer">CSAT dashboard ↗</a>` : ""
+  ].filter(Boolean).join("");
+  return `<section class="sprint-review-slide sprint-review-extra-slide">
+    <header><div><h2>Live chat</h2><p>${escapeHtml([range, source].filter(Boolean).join(" · "))}</p></div></header>
+    <div class="extra-tiles">${tiles.join("")}</div>
+    <div class="extra-panels">
+      ${sprintReviewExtraRanking("Top business services", chat.businessServices, { splitGroup: true })}
+      ${sprintReviewExtraRanking("Top assignment groups", chat.assignmentGroups)}
+      ${sprintReviewExtraCsat(csat)}
+    </div>
+    ${links ? `<footer class="extra-footer">${links}</footer>` : ""}
+  </section>`;
+}
+
 async function loadSprintReview() {
   const team = state.teams.find(value => value.id === state.teamId);
   const iteration = state.iteration;
@@ -3951,9 +4076,10 @@ async function loadSprintReview() {
   const ordered = chronologicalIterations();
   const nextIteration = ordered[ordered.findIndex(value => value.id === iteration.id) + 1] || null;
   try {
-    const [stories, nextStories] = await Promise.all([
+    const [stories, nextStories, extraData] = await Promise.all([
       fetchIterationStories(team, iteration),
-      nextIteration ? fetchIterationStories(team, nextIteration) : Promise.resolve([])
+      nextIteration ? fetchIterationStories(team, nextIteration) : Promise.resolve([]),
+      loadSprintReviewExtraData(iteration)
     ]);
     if (requestToken !== state.reviewRequestToken || state.currentView !== "review") return;
     const title = sprintReviewTitle(iteration);
@@ -3971,6 +4097,7 @@ async function loadSprintReview() {
         <p class="sprint-review-recorded"><span aria-hidden="true">●</span> Meeting will be recorded</p>
       </section>`,
       ...(analyticsConfigured() ? [analyticsSlide] : []),
+      ...(extraData ? [() => sprintReviewExtraSlideHtml(extraData, iteration)] : []),
       sprintReviewTableSlide(title, `${sprintItems.length} ${sprintItems.length === 1 ? "story or bug" : "stories and bugs"} in this sprint`, sprintItems, "No stories or bugs in this sprint.", { showDemo: true, showFeatures: true }),
       sprintReviewTableSlide("Demo", title, demoItems, "No stories or bugs in this sprint are tagged “demo”.", { showPerson: true }),
       nextIteration
@@ -14158,6 +14285,7 @@ function showSettings() {
   els.litellmApiKey.value = state.litellmApiKey;
   els.gaClientId.value = state.gaClientId;
   els.gaPropertyId.value = state.gaPropertyId;
+  els.analyticsExtraSource.value = state.analyticsExtraSource;
   renderLitellmModelOptions([], state.litellmModel);
   els.litellmStatus.textContent = "";
   els.litellmStatus.classList.remove("is-error");
@@ -14608,6 +14736,9 @@ els.settingsForm.addEventListener("submit", async event => {
   if (gaClientId !== state.gaClientId) resetAnalyticsToken();
   state.gaClientId = gaClientId;
   state.gaPropertyId = gaPropertyId;
+  const analyticsExtraSource = els.analyticsExtraSource.value.trim();
+  const extraSourceChanged = analyticsExtraSource !== state.analyticsExtraSource;
+  state.analyticsExtraSource = analyticsExtraSource;
   state.litellmUrl = litellmUrl;
   state.litellmApiKey = litellmApiKey;
   state.litellmModel = litellmModel;
@@ -14623,7 +14754,8 @@ els.settingsForm.addEventListener("submit", async event => {
     [STORAGE.litellmApiKey, state.litellmApiKey],
     [STORAGE.litellmModel, state.litellmModel],
     [STORAGE.gaClientId, state.gaClientId],
-    [STORAGE.gaPropertyId, state.gaPropertyId]
+    [STORAGE.gaPropertyId, state.gaPropertyId],
+    [STORAGE.analyticsExtraSource, state.analyticsExtraSource]
   ]) {
     if (value) localStorage.setItem(key, value);
     else localStorage.removeItem(key);
@@ -14645,6 +14777,7 @@ els.settingsForm.addEventListener("submit", async event => {
     state.releaseReadiness.githubRepositoryMatches.clear();
   }
   els.settingsDialog.close();
+  if (extraSourceChanged && !analyticsChanged && state.currentView === "review") await loadSprintReview();
   if (analyticsChanged) {
     state.analytics.data = null;
     state.analytics.dataKey = "";
@@ -15040,6 +15173,70 @@ els.githubRepoOptions.addEventListener("change", event => {
   els.githubRepoStatus.classList.remove("is-error");
 });
 els.changeConnection.addEventListener("click", () => showConnection());
+
+const SETTINGS_EXPORT_FORMAT = "jiraish-settings";
+const SETTINGS_STORAGE_PREFIXES = ["wish-board.", "jiraish."];
+
+function isSettingsStorageKey(key) {
+  return SETTINGS_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
+// Exports every setting this app keeps in local storage, API keys and tokens included.
+function exportSettings() {
+  const settings = {};
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (key && isSettingsStorageKey(key)) settings[key] = localStorage.getItem(key);
+  }
+  const payload = { format: SETTINGS_EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(), settings };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `jiraish-settings-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function importSettingsFile(file) {
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    alert("This file is not valid JSON.");
+    return;
+  }
+  const settings = payload?.format === SETTINGS_EXPORT_FORMAT ? payload.settings : null;
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    alert("This file is not a jiraish settings export.");
+    return;
+  }
+  const entries = Object.entries(settings).filter(([key, value]) => isSettingsStorageKey(key) && typeof value === "string");
+  if (!entries.length) {
+    alert("This settings export contains no settings.");
+    return;
+  }
+  if (!confirm(`Import ${entries.length} settings? Your current settings, including API keys, are replaced and the page reloads.`)) return;
+  for (let index = localStorage.length - 1; index >= 0; index--) {
+    const key = localStorage.key(index);
+    if (key && isSettingsStorageKey(key)) localStorage.removeItem(key);
+  }
+  entries.forEach(([key, value]) => localStorage.setItem(key, value));
+  location.reload();
+}
+
+const importSettingsInput = document.querySelector("#importSettingsFile");
+document.querySelectorAll("[data-export-settings]").forEach(button => button.addEventListener("click", exportSettings));
+document.querySelectorAll("[data-import-settings]").forEach(button => button.addEventListener("click", () => {
+  importSettingsInput.value = "";
+  importSettingsInput.click();
+}));
+importSettingsInput.addEventListener("change", () => {
+  const file = importSettingsInput.files?.[0];
+  if (file) importSettingsFile(file);
+});
 els.theme.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
 });
@@ -15267,6 +15464,7 @@ els.refresh.addEventListener("click", () => {
   if (state.currentView === "releases") return loadReleaseDebugPage(true);
   if (state.currentView === "review") {
     state.iterationStoriesCache.clear();
+    sprintReviewExtraCache.clear();
     state.analytics.dataKey = "";
     return loadSprintReview();
   }
