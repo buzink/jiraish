@@ -2069,3 +2069,11 @@ body.is-sprint-review main { padding: 0; }
 @media (max-width: 700px) {
   .extra-tiles { flex-wrap: wrap; justify-content: flex-start; }
 }
+/* Trends in the ranking and CSAT rows: left of the count in rankings, right of it for CSAT. */
+.extra-ranking li { grid-template-columns: minmax(0, 1fr) auto auto; }
+.extra-ranking-trend { font-size: .85em; text-align: right; }
+.extra-ranking-trend:empty { display: none; }
+.extra-ranking li .extra-ranking-trend { align-self: end; }
+.extra-csat-distribution li { grid-template-columns: 1.6em minmax(0, 1fr) 2.6em 4.6em; }
+.extra-csat-distribution li .extra-ranking-trend { text-align: left; }
+.extra-csat-distribution li .extra-ranking-trend:empty { display: block; }

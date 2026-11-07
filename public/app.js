@@ -3980,7 +3980,7 @@ function sprintReviewExtraNumber(value) {
 
 // Change against the previous sprint. lowerIsBetter colours a drop green (e.g. wait times);
 // points shows the difference in percentage points instead of a relative change.
-function sprintReviewExtraTrend(current, previous, { lowerIsBetter = false, points = false } = {}) {
+function sprintReviewExtraTrend(current, previous, { lowerIsBetter = false, points = false, neutral = false } = {}) {
   const now = Number(current);
   const before = Number(previous);
   if (previous === undefined || previous === null || !Number.isFinite(now) || !Number.isFinite(before)) return "";
@@ -3989,7 +3989,7 @@ function sprintReviewExtraTrend(current, previous, { lowerIsBetter = false, poin
   const rounded = Math.round(Math.abs(change) * 10) / 10;
   if (rounded === 0) return `<span class="extra-trend" title="Same as previous sprint">→ 0${points ? " pp" : "%"}</span>`;
   const good = lowerIsBetter ? change < 0 : change > 0;
-  return `<span class="extra-trend ${good ? "is-good" : "is-bad"}" title="Previous sprint: ${escapeHtml(points ? `${before}%` : analyticsFull.format(before))}">${change > 0 ? "↑" : "↓"} ${rounded.toFixed(1)}${points ? " pp" : "%"}</span>`;
+  return `<span class="extra-trend ${neutral ? "" : good ? "is-good" : "is-bad"}" title="Previous sprint: ${escapeHtml(points ? `${before}%` : analyticsFull.format(before))}">${change > 0 ? "↑" : "↓"} ${rounded.toFixed(1)}${points ? " pp" : "%"}</span>`;
 }
 
 function sprintReviewExtraTile(label, value, { details = [], trend = "" } = {}) {
@@ -4005,8 +4005,11 @@ function sprintReviewExtraTile(label, value, { details = [], trend = "" } = {}) 
 
 // A ranked list with bars sized relative to the largest entry.
 // With splitGroup, "Group - Name" shows Name with the group in small text below it.
-function sprintReviewExtraRanking(title, ranking, { splitGroup = false } = {}) {
+// Trends compare each entry's count with the same name in the previous sprint's top list;
+// they are neutral because more contacts for a service is neither good nor bad.
+function sprintReviewExtraRanking(title, ranking, { splitGroup = false, previous = null } = {}) {
   const items = Array.isArray(ranking?.top) ? ranking.top : [];
+  const previousCounts = Array.isArray(previous?.top) ? new Map(previous.top.map(item => [item.name, item.count])) : null;
   if (!items.length) return "";
   const max = Math.max(...items.map(item => Number(item.percentage) || 0), 1);
   return `<section class="extra-panel">
@@ -4017,6 +4020,11 @@ function sprintReviewExtraRanking(title, ranking, { splitGroup = false } = {}) {
         const name = rest.length ? rest.join(" - ") : group;
         return `<li title="${escapeHtml(`${item.name}: ${sprintReviewExtraNumber(item.count)} (${item.percentage}%)`)}">
           <span class="extra-ranking-name">${escapeHtml(name)}${rest.length ? `<small>${escapeHtml(group)}</small>` : ""}</span>
+          <span class="extra-ranking-trend">${previousCounts
+            ? (previousCounts.has(item.name)
+              ? sprintReviewExtraTrend(item.count, previousCounts.get(item.name), { neutral: true })
+              : `<span class="extra-trend" title="Not in the previous sprint's top ${items.length}">new</span>`)
+            : ""}</span>
           <span class="extra-ranking-value">${escapeHtml(sprintReviewExtraNumber(item.count))}</span>
           <span class="extra-ranking-bar"><i style="width: ${((Number(item.percentage) || 0) / max * 100).toFixed(1)}%"></i></span>
         </li>`;
@@ -4025,9 +4033,14 @@ function sprintReviewExtraRanking(title, ranking, { splitGroup = false } = {}) {
   </section>`;
 }
 
-function sprintReviewExtraCsat(csat) {
+// Trends are the change in each score's share of responses, in percentage points:
+// a bigger share of 4–5 is good, of 1–2 is bad, 3 is neutral.
+function sprintReviewExtraCsat(csat, previousCsat = null) {
   if (!csat) return "";
   const distribution = Array.isArray(csat.distribution) ? csat.distribution : [];
+  const previousShares = Array.isArray(previousCsat?.distribution)
+    ? new Map(previousCsat.distribution.map(item => [Number(item.score), item.percentage]))
+    : null;
   const max = Math.max(...distribution.map(item => Number(item.percentage) || 0), 1);
   return `<section class="extra-panel extra-csat">
     <h3>Customer satisfaction</h3>
@@ -4036,6 +4049,13 @@ function sprintReviewExtraCsat(csat) {
         <span class="extra-csat-emoji" aria-label="Score ${escapeHtml(String(item.score))}">${escapeHtml(item.emoji || String(item.score))}</span>
         <span class="extra-ranking-bar"><i class="score-${Number(item.score) || 0}" style="width: ${((Number(item.percentage) || 0) / max * 100).toFixed(1)}%"></i></span>
         <span class="extra-ranking-value">${escapeHtml(sprintReviewExtraNumber(item.count))}</span>
+        <span class="extra-ranking-trend">${previousShares
+          ? sprintReviewExtraTrend(item.percentage, previousShares.get(Number(item.score)), {
+            points: true,
+            neutral: Number(item.score) === 3,
+            lowerIsBetter: Number(item.score) <= 2
+          })
+          : ""}</span>
       </li>`).join("")}
     </ol>
   </section>`;
@@ -4086,9 +4106,9 @@ function sprintReviewExtraSlideHtml(data, iteration, previousData = null) {
     <header><div><h2>Live chat</h2><p>${escapeHtml([range, source, previousData ? "trends against the previous sprint" : ""].filter(Boolean).join(" · "))}</p></div></header>
     <div class="extra-tiles">${tiles.join("")}</div>
     <div class="extra-panels">
-      ${sprintReviewExtraRanking("Top business services", chat.businessServices, { splitGroup: true })}
-      ${sprintReviewExtraRanking("Top assignment groups", chat.assignmentGroups)}
-      ${sprintReviewExtraCsat(csat)}
+      ${sprintReviewExtraRanking("Top business services", chat.businessServices, { splitGroup: true, previous: previousData ? previousChat.businessServices || {} : null })}
+      ${sprintReviewExtraRanking("Top assignment groups", chat.assignmentGroups, { previous: previousData ? previousChat.assignmentGroups || {} : null })}
+      ${sprintReviewExtraCsat(csat, previousData ? previousCsat : null)}
     </div>
     ${links ? `<footer class="extra-footer">${links}</footer>` : ""}
   </section>`;
