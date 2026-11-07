@@ -24,7 +24,8 @@ const STORAGE = {
   latestCommitRepos: "wish-board.latest-commit-repos",
   gaClientId: "wish-board.ga-client-id",
   gaPropertyId: "wish-board.ga-property-id",
-  analyticsExtraSource: "wish-board.analytics-extra-source"
+  analyticsExtraSource: "wish-board.analytics-extra-source",
+  gaToken: "wish-board.ga-token"
 };
 
 const DEFAULT_URL = "";
@@ -3315,13 +3316,45 @@ function analyticsConfigured() {
 
 function resetAnalyticsToken() {
   resetAnalyticsTokenOnly();
+  try { localStorage.removeItem(STORAGE.gaToken); } catch {}
   analyticsTokenClient = null;
   analyticsTokenClientId = "";
+}
+
+// Google only gives a browser app a token for about an hour, without a refresh token. It is kept
+// in localStorage until it expires so a page refresh does not ask for a new sign-in. After it
+// expires the record keeps the client ID, which marks that this browser signed in before.
+function readStoredAnalyticsToken() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE.gaToken) || "null");
+    return stored && typeof stored === "object" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeAnalyticsToken(token, expires) {
+  try {
+    localStorage.setItem(STORAGE.gaToken, JSON.stringify({ clientId: state.gaClientId, token, expires }));
+  } catch {}
+}
+
+function restoreAnalyticsToken() {
+  const stored = readStoredAnalyticsToken();
+  if (!stored?.token || stored.clientId !== state.gaClientId || !(Number(stored.expires) > Date.now())) return;
+  state.analytics.token = stored.token;
+  state.analytics.tokenExpires = Number(stored.expires);
+}
+
+function analyticsSignedInBefore() {
+  return readStoredAnalyticsToken()?.clientId === state.gaClientId;
 }
 
 function resetAnalyticsTokenOnly() {
   state.analytics.token = "";
   state.analytics.tokenExpires = 0;
+  const stored = readStoredAnalyticsToken();
+  if (stored?.token) storeAnalyticsToken("", 0);
 }
 
 function analyticsTokenValid() {
@@ -3372,6 +3405,7 @@ function signInToAnalytics() {
     }
     state.analytics.token = response.access_token;
     state.analytics.tokenExpires = Date.now() + (Number(response.expires_in || 3600) - 60) * 1000;
+    storeAnalyticsToken(state.analytics.token, state.analytics.tokenExpires);
     loadSprintReviewAnalytics(state.iteration, { force: true });
   };
   analyticsTokenClient.error_callback = error => {
@@ -3379,7 +3413,8 @@ function signInToAnalytics() {
       ? "Sign-in was cancelled."
       : `Google sign-in failed: ${error?.message || error?.type || "unknown error"}`);
   };
-  analyticsTokenClient.requestAccessToken();
+  // After an earlier sign-in, skip the account picker: Google then usually closes the popup by itself.
+  analyticsTokenClient.requestAccessToken(analyticsSignedInBefore() ? { prompt: "" } : {});
 }
 
 function analyticsIsoDate(value) {
@@ -15893,6 +15928,7 @@ applyTheme(document.documentElement.dataset.theme || "light");
 applyMobileDisclosures(mobileLayoutQuery.matches);
 const initialAppRoute = parseAppRoute();
 primeAppRouteState(initialAppRoute);
+restoreAnalyticsToken();
 applyMainViewVisibility(initialAppRoute.view);
 writeAppRoute(initialAppRoute, { replace: true });
 if (state.pat) loadBoard(); else { renderEmptyBoard(); showConnection(); }
