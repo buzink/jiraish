@@ -2058,3 +2058,14 @@ body.is-sprint-review main { padding: 0; }
   .extra-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .extra-panels { grid-template-columns: 1fr; }
 }
+/* Tiles size to their content so details fit beside the value; trend sits below, like the Analytics slide. */
+.extra-tiles { display: flex; justify-content: space-between; gap: clamp(10px, 1.8cqi, 24px); }
+.extra-tile { flex: 0 1 auto; }
+.extra-tile-main { display: flex; align-items: center; gap: .55em; min-width: 0; }
+.extra-tile-detail { display: grid; gap: .1em; color: var(--muted); font-size: .72em; line-height: 1.25; white-space: nowrap; }
+.extra-trend { font-size: .9em; font-weight: 600; letter-spacing: .02em; color: var(--muted); white-space: nowrap; }
+.extra-trend.is-good { color: var(--extra-good); }
+.extra-trend.is-bad { color: var(--extra-bad); }
+@media (max-width: 700px) {
+  .extra-tiles { flex-wrap: wrap; justify-content: flex-start; }
+}

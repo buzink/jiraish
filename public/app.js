@@ -3978,11 +3978,28 @@ function sprintReviewExtraNumber(value) {
   return Number.isFinite(Number(value)) ? analyticsFull.format(Number(value)) : "–";
 }
 
-function sprintReviewExtraTile(label, value, detail = "") {
+// Change against the previous sprint. lowerIsBetter colours a drop green (e.g. wait times);
+// points shows the difference in percentage points instead of a relative change.
+function sprintReviewExtraTrend(current, previous, { lowerIsBetter = false, points = false } = {}) {
+  const now = Number(current);
+  const before = Number(previous);
+  if (previous === undefined || previous === null || !Number.isFinite(now) || !Number.isFinite(before)) return "";
+  if (!points && before === 0) return "";
+  const change = points ? now - before : (now - before) / before * 100;
+  const rounded = Math.round(Math.abs(change) * 10) / 10;
+  if (rounded === 0) return `<span class="extra-trend" title="Same as previous sprint">→ 0${points ? " pp" : "%"}</span>`;
+  const good = lowerIsBetter ? change < 0 : change > 0;
+  return `<span class="extra-trend ${good ? "is-good" : "is-bad"}" title="Previous sprint: ${escapeHtml(points ? `${before}%` : analyticsFull.format(before))}">${change > 0 ? "↑" : "↓"} ${rounded.toFixed(1)}${points ? " pp" : "%"}</span>`;
+}
+
+function sprintReviewExtraTile(label, value, { details = [], trend = "" } = {}) {
   return `<div class="extra-tile">
     <span class="extra-tile-label">${escapeHtml(label)}</span>
-    <strong class="extra-tile-value">${escapeHtml(value)}</strong>
-    ${detail ? `<span class="extra-tile-detail">${escapeHtml(detail)}</span>` : ""}
+    <div class="extra-tile-main">
+      <strong class="extra-tile-value">${escapeHtml(value)}</strong>
+      ${details.length ? `<span class="extra-tile-detail">${details.map(detail => `<span>${escapeHtml(detail)}</span>`).join("")}</span>` : ""}
+    </div>
+    ${trend}
   </div>`;
 }
 
@@ -4024,31 +4041,49 @@ function sprintReviewExtraCsat(csat) {
   </section>`;
 }
 
-function sprintReviewExtraSlideHtml(data, iteration) {
+function sprintReviewExtraSlideHtml(data, iteration, previousData = null) {
   const chat = data.liveChat || {};
   const csat = data.csat || null;
+  const previousChat = previousData?.liveChat || {};
+  const previousCsat = previousData?.csat || {};
   const start = data.period?.start;
   const end = data.period?.end;
   const range = start && end ? `${analyticsFormatDay(start)} – ${analyticsFormatDay(end)}` : sprintReviewDateRange(iteration);
   const source = data.source?.dashboard || "Additional source";
+  const trend = (key, options) => sprintReviewExtraTrend(chat[key], previousChat[key], options);
+  // Share of contacts that became a chat: started chats out of started chats plus email reply requests.
+  const chatRate = value => {
+    const started = Number(value?.startedChats);
+    const total = started + Number(value?.requestedEmailReply);
+    return Number.isFinite(total) && total > 0 ? started / total * 100 : null;
+  };
+  const chatShare = chatRate(chat);
+  const previousChatShare = previousData ? chatRate(previousChat) : null;
   const tiles = [
-    sprintReviewExtraTile("Chats started", sprintReviewExtraNumber(chat.startedChats)),
-    sprintReviewExtraTile("Email reply requested", sprintReviewExtraNumber(chat.requestedEmailReply)),
-    sprintReviewExtraTile("Avg wait", sprintReviewDuration(chat.avgWaitSeconds)),
-    sprintReviewExtraTile("Avg first response", sprintReviewDuration(chat.avgFirstResponseSeconds)),
-    sprintReviewExtraTile("Avg chat duration", sprintReviewDuration(chat.avgTotalChatSeconds),
-      `agent ${sprintReviewDuration(chat.avgAgentResponseSeconds)} · student ${sprintReviewDuration(chat.avgStudentResponseSeconds)}`)
+    sprintReviewExtraTile("Chats started", sprintReviewExtraNumber(chat.startedChats), { trend: trend("startedChats") }),
+    sprintReviewExtraTile("Chat rate", chatShare === null ? "–" : `${Math.round(chatShare)}%`, {
+      trend: sprintReviewExtraTrend(chatShare === null ? undefined : Math.round(chatShare * 10) / 10,
+        previousChatShare === null ? undefined : Math.round(previousChatShare * 10) / 10, { points: true })
+    }),
+    sprintReviewExtraTile("Avg wait", sprintReviewDuration(chat.avgWaitSeconds), { trend: trend("avgWaitSeconds", { lowerIsBetter: true }) }),
+    sprintReviewExtraTile("Avg first response", sprintReviewDuration(chat.avgFirstResponseSeconds), { trend: trend("avgFirstResponseSeconds", { lowerIsBetter: true }) }),
+    sprintReviewExtraTile("Avg chat duration", sprintReviewDuration(chat.avgTotalChatSeconds), {
+      details: [`agent ${sprintReviewDuration(chat.avgAgentResponseSeconds)}`, `student ${sprintReviewDuration(chat.avgStudentResponseSeconds)}`],
+      trend: trend("avgTotalChatSeconds", { lowerIsBetter: true })
+    })
   ];
   if (csat) {
-    tiles.push(sprintReviewExtraTile("Satisfied", `${Math.round(Number(csat.topTwoPercentage) || 0)}%`,
-      `avg ${Number(csat.average || 0).toFixed(2)} / 5 · ${sprintReviewExtraNumber(csat.responses)} responses`));
+    tiles.push(sprintReviewExtraTile("Satisfied", `${Math.round(Number(csat.topTwoPercentage) || 0)}%`, {
+      details: [`avg ${Number(csat.average || 0).toFixed(2)} / 5`, `${sprintReviewExtraNumber(csat.responses)} responses`],
+      trend: sprintReviewExtraTrend(csat.topTwoPercentage, previousCsat.topTwoPercentage, { points: true })
+    }));
   }
   const links = [
     data.source?.liveChatUrl ? `<a href="${escapeHtml(data.source.liveChatUrl)}" target="_blank" rel="noopener noreferrer">Live chat dashboard ↗</a>` : "",
     data.source?.csatUrl ? `<a href="${escapeHtml(data.source.csatUrl)}" target="_blank" rel="noopener noreferrer">CSAT dashboard ↗</a>` : ""
   ].filter(Boolean).join("");
   return `<section class="sprint-review-slide sprint-review-extra-slide">
-    <header><div><h2>Live chat</h2><p>${escapeHtml([range, source].filter(Boolean).join(" · "))}</p></div></header>
+    <header><div><h2>Live chat</h2><p>${escapeHtml([range, source, previousData ? "trends against the previous sprint" : ""].filter(Boolean).join(" · "))}</p></div></header>
     <div class="extra-tiles">${tiles.join("")}</div>
     <div class="extra-panels">
       ${sprintReviewExtraRanking("Top business services", chat.businessServices, { splitGroup: true })}
@@ -4081,6 +4116,8 @@ async function loadSprintReview() {
       nextIteration ? fetchIterationStories(team, nextIteration) : Promise.resolve([]),
       loadSprintReviewExtraData(iteration)
     ]);
+    const previousIteration = ordered[ordered.findIndex(value => value.id === iteration.id) - 1] || null;
+    const previousExtraData = extraData && previousIteration ? await loadSprintReviewExtraData(previousIteration) : null;
     if (requestToken !== state.reviewRequestToken || state.currentView !== "review") return;
     const title = sprintReviewTitle(iteration);
     const dates = sprintReviewDateRange(iteration);
@@ -4097,7 +4134,7 @@ async function loadSprintReview() {
         <p class="sprint-review-recorded"><span aria-hidden="true">●</span> Meeting will be recorded</p>
       </section>`,
       ...(analyticsConfigured() ? [analyticsSlide] : []),
-      ...(extraData ? [() => sprintReviewExtraSlideHtml(extraData, iteration)] : []),
+      ...(extraData ? [() => sprintReviewExtraSlideHtml(extraData, iteration, previousExtraData)] : []),
       sprintReviewTableSlide(title, `${sprintItems.length} ${sprintItems.length === 1 ? "story or bug" : "stories and bugs"} in this sprint`, sprintItems, "No stories or bugs in this sprint.", { showDemo: true, showFeatures: true }),
       sprintReviewTableSlide("Demo", title, demoItems, "No stories or bugs in this sprint are tagged “demo”.", { showPerson: true }),
       nextIteration
