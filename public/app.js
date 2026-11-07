@@ -276,6 +276,7 @@ const state = {
   createWorkItemBusy: false,
   areaPathsCache: null,
   reviewSlides: [],
+  reviewExport: false,
   reviewFeatureFilters: new Map(),
   reviewSlide: 0,
   reviewIterationId: "",
@@ -367,6 +368,7 @@ const els = {
   sprintReviewNext: document.querySelector("#sprintReviewNext"),
   sprintReviewCounter: document.querySelector("#sprintReviewCounter"),
   sprintReviewFullscreen: document.querySelector("#sprintReviewFullscreen"),
+  sprintReviewExport: document.querySelector("#sprintReviewExport"),
   roadmapMeta: document.querySelector("#roadmapMeta"),
   roadmapStatus: document.querySelector("#roadmapStatus"),
   roadmapContent: document.querySelector("#roadmapContent"),
@@ -3739,8 +3741,14 @@ function analyticsTopPagesHtml(data, iteration) {
   ];
   const available = Math.max(...columns.map(column => column.pages.length), 1);
   const lastOffset = Math.floor((Math.min(available, ANALYTICS_TOP_PAGES_MAX) - 1) / ANALYTICS_TOP_PAGES) * ANALYTICS_TOP_PAGES;
-  const offset = Math.min(state.analytics.pageOffset || 0, lastOffset);
-  const rows = Array.from({ length: ANALYTICS_TOP_PAGES }, (_, row) => offset + row).map(index => `<tr>
+  const offset = state.reviewExport ? 0 : Math.min(state.analytics.pageOffset || 0, lastOffset);
+  // The exported file carries every page of ranks; its script shows one page at a time.
+  const indexes = state.reviewExport
+    ? Array.from({ length: lastOffset + ANALYTICS_TOP_PAGES }, (_, index) => index)
+    : Array.from({ length: ANALYTICS_TOP_PAGES }, (_, row) => offset + row);
+  const rows = indexes.map(index => {
+    const pageNumber = Math.floor(index / ANALYTICS_TOP_PAGES);
+    return `<tr${state.reviewExport ? ` data-page="${pageNumber}"${pageNumber ? " hidden" : ""}` : ""}>
     <th scope="row">${index + 1}</th>
     ${columns.map(column => {
       const page = column.pages[index];
@@ -3748,9 +3756,10 @@ function analyticsTopPagesHtml(data, iteration) {
         ? `<td data-tooltip="${escapeHtml(page.title)}" aria-label="${escapeHtml(`${page.title}, ${analyticsFull.format(page.views)} views`)}"><span class="analytics-page-views">${escapeHtml(analyticsCompact.format(page.views).toLowerCase())}</span><span class="analytics-page-title">${escapeHtml(page.title)}</span></td>`
         : `<td class="is-empty">–</td>`;
     }).join("")}
-  </tr>`).join("");
+  </tr>`;
+  }).join("");
   const rangeLabel = `${offset + 1}–${offset + ANALYTICS_TOP_PAGES}`;
-  return `<section class="analytics-top-pages" aria-label="Most viewed pages, ranks ${rangeLabel}">
+  return `<section class="analytics-top-pages" aria-label="Most viewed pages, ranks ${rangeLabel}" data-page-size="${ANALYTICS_TOP_PAGES}" data-page-count="${lastOffset / ANALYTICS_TOP_PAGES + 1}">
     <div class="analytics-top-pages-pager">
       <button type="button" data-analytics-pages="-1" aria-label="Previous ${ANALYTICS_TOP_PAGES} pages" title="Previous ${ANALYTICS_TOP_PAGES}"${offset === 0 ? " disabled" : ""}>‹</button>
       <span>${rangeLabel}</span>
@@ -3763,6 +3772,19 @@ function analyticsTopPagesHtml(data, iteration) {
     ${analyticsTopEventHtml(data.topEvent)}
     ${analyticsTopEventHtml(data.topNews, { label: "Top news", emptyText: "No news articles viewed" })}
   </section>`;
+}
+
+// For the exported file: a chart per metric, so its script can switch without app code.
+function analyticsExportChartsHtml(data) {
+  const selected = state.analytics.metric;
+  try {
+    return ANALYTICS_METRICS.map(metric => {
+      state.analytics.metric = metric.name;
+      return `<div class="analytics-export-chart" data-chart-metric="${metric.name}"${metric.name === selected ? "" : " hidden"}>${analyticsChartSvg(data)}</div>`;
+    }).join("");
+  } finally {
+    state.analytics.metric = selected;
+  }
 }
 
 function sprintReviewAnalyticsSlideHtml(iteration) {
@@ -3779,7 +3801,7 @@ function sprintReviewAnalyticsSlideHtml(iteration) {
         ${analyticsMoversHtml(data.movers)}
         ${analyticsTopPagesHtml(data, iteration)}
       </div>
-      <div class="analytics-chart">${analyticsChartSvg(data)}</div>
+      <div class="analytics-chart">${state.reviewExport ? analyticsExportChartsHtml(data) : analyticsChartSvg(data)}</div>
       <div class="analytics-footer">
         <div class="analytics-legend" aria-hidden="true">
           <span><i class="analytics-legend-current"></i>${escapeHtml(sprintReviewTitle(iteration))}</span>
@@ -3862,6 +3884,7 @@ function sprintReviewFeatures(items) {
 
 function sprintReviewFeaturesHtml(features, { activeId = null, expanded = false } = {}) {
   if (!features.length) return "";
+  if (state.reviewExport) expanded = true;
   const limit = 8;
   const collapsed = !expanded && features.length > limit;
   let shown = collapsed ? features.slice(0, limit - 1) : features;
@@ -3872,12 +3895,12 @@ function sprintReviewFeaturesHtml(features, { activeId = null, expanded = false 
   const hidden = features.length - shown.length;
   return `<aside class="sprint-review-features${activeId ? " is-filtered" : ""}" aria-label="Features">
     <div class="sprint-review-features-label">
-      ${activeId ? `<button class="sprint-review-features-reset" type="button" data-review-feature-reset title="Show all items (Esc)">Reset <span aria-hidden="true">×</span></button>` : ""}
+      ${activeId || state.reviewExport ? `<button class="sprint-review-features-reset" type="button" data-review-feature-reset title="Show all items (Esc)"${activeId ? "" : " hidden"}>Reset <span aria-hidden="true">×</span></button>` : ""}
       <span>Features</span>
     </div>
     <ul>
       ${shown.map(feature => `<li style="--feature-hue: ${(features.indexOf(feature) * 47 + 200) % 360}">
-        <button class="sprint-review-feature${feature.id === activeId ? " is-active" : ""}" type="button" data-review-feature="${feature.id}" aria-pressed="${feature.id === activeId}" title="${escapeHtml(feature.title)}">
+        <button class="sprint-review-feature${feature.id === activeId ? " is-active" : ""}" type="button" data-review-feature="${feature.id}" data-feature-title="${escapeHtml(feature.title)}" aria-pressed="${feature.id === activeId}" title="${escapeHtml(feature.title)}">
           <span class="sprint-review-feature-title">${escapeHtml(feature.title)}</span>
           <span class="sprint-review-feature-count" aria-label="${feature.count} ${feature.count === 1 ? "item" : "items"}">${feature.count}</span>
         </button>
@@ -3909,8 +3932,13 @@ function sprintReviewTableHtml(title, subtitle, items, emptyText, { showPerson =
   const density = items.length > 16 ? "is-dense" : items.length > 9 ? "is-compact" : "";
   const rows = items.map(item => {
     const isBug = item.type.toLocaleLowerCase("en") === "bug";
-    return `<tr>
-      <td><span class="sprint-review-key">${escapeHtml(workItemKey(item.id))}</span>${escapeHtml(item.title)}</td>
+    const label = `<span class="sprint-review-key">${escapeHtml(workItemKey(item.id))}</span>${escapeHtml(item.title)}`;
+    // The exported file has no work-item view, so issues link to Azure DevOps there.
+    const link = state.reviewExport
+      ? `<a class="sprint-review-item-link" href="${escapeHtml(workItemWebUrl(item.id))}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(workItemKey(item.id))} in Azure DevOps">${label}</a>`
+      : `<button class="sprint-review-item-link" type="button" data-review-item="${Number(item.id)}" title="Open ${escapeHtml(workItemKey(item.id))}">${label}</button>`;
+    return `<tr class="sprint-review-item-row" data-review-item="${Number(item.id)}" data-feature="${item.parentId ? Number(item.parentId) : ""}">
+      <td>${link}</td>
       <td><span class="work-type"><span class="type-icon ${isBug ? "bug" : ""}">${isBug ? "!" : "◆"}</span>${escapeHtml(isBug ? "Bug" : "Story")}</span></td>
       <td>${escapeHtml(sprintReviewArea(item))}</td>
       ${showPerson ? `<td>${escapeHtml(item.assignee || "Unassigned")}</td>` : ""}
@@ -3919,7 +3947,7 @@ function sprintReviewTableHtml(title, subtitle, items, emptyText, { showPerson =
   }).join("");
   return `<section class="sprint-review-slide sprint-review-table-slide ${density}">
     <header>
-      <div><h2>${escapeHtml(title)}</h2>${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}</div>
+      <div><h2>${escapeHtml(title)}</h2>${subtitle ? `<p data-default-subtitle="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</p>` : ""}</div>
       ${featuresHtml}
     </header>
     ${items.length ? `<div class="sprint-review-table-wrap"><table class="sprint-review-table${showPerson ? " has-person" : ""}">
@@ -4182,6 +4210,206 @@ function showSprintReviewSlide(index) {
 function setSprintReviewFeatureFilter(filter) {
   state.reviewFeatureFilters.set(state.reviewSlide, filter);
   showSprintReviewSlide(state.reviewSlide);
+}
+
+// Runs inside the exported HTML file, not in the app: slide navigation plus the parts of the
+// slides that stay interactive there (feature filters, metric switch, top pages pager).
+// It may only use the DOM, because none of the app's code or data is in the file.
+function sprintReviewExportRuntime() {
+  const slides = [...document.querySelectorAll(".sprint-review-slide")];
+  const counter = document.querySelector("[data-export-counter]");
+  const previous = document.querySelector("[data-export-prev]");
+  const next = document.querySelector("[data-export-next]");
+  let current = 0;
+
+  function show(index) {
+    current = Math.max(0, Math.min(slides.length - 1, index));
+    slides.forEach((slide, slideIndex) => { slide.hidden = slideIndex !== current; });
+    counter.textContent = `${current + 1} / ${slides.length}`;
+    previous.disabled = current === 0;
+    next.disabled = current === slides.length - 1;
+    history.replaceState(null, "", `#${current + 1}`);
+  }
+
+  function filterFeature(slide, featureId) {
+    const buttons = [...slide.querySelectorAll("[data-review-feature]")];
+    const active = buttons.find(button => button.dataset.reviewFeature === featureId) || null;
+    buttons.forEach(button => {
+      button.classList.toggle("is-active", button === active);
+      button.setAttribute("aria-pressed", String(button === active));
+    });
+    slide.querySelector(".sprint-review-features")?.classList.toggle("is-filtered", Boolean(active));
+    const reset = slide.querySelector("[data-review-feature-reset]");
+    if (reset) reset.hidden = !active;
+    const rows = [...slide.querySelectorAll("tr[data-feature]")];
+    rows.forEach(row => { row.hidden = Boolean(active) && row.dataset.feature !== featureId; });
+    const subtitle = slide.querySelector("[data-default-subtitle]");
+    if (subtitle) {
+      const shown = rows.filter(row => !row.hidden).length;
+      const noun = rows.length === 1 ? "story or bug" : "stories and bugs";
+      subtitle.textContent = active
+        ? `${shown} of ${rows.length} ${noun} · ${active.dataset.featureTitle}`
+        : subtitle.dataset.defaultSubtitle;
+    }
+  }
+
+  function pageTopPages(section, step) {
+    const size = Number(section.dataset.pageSize) || 10;
+    const count = Number(section.dataset.pageCount) || 1;
+    const page = Math.max(0, Math.min(count - 1, (Number(section.dataset.page) || 0) + step));
+    section.dataset.page = String(page);
+    section.querySelectorAll("tr[data-page]").forEach(row => { row.hidden = Number(row.dataset.page) !== page; });
+    section.querySelector(".analytics-top-pages-pager span").textContent = `${page * size + 1}–${page * size + size}`;
+    section.querySelector('[data-analytics-pages="-1"]').disabled = page === 0;
+    section.querySelector('[data-analytics-pages="1"]').disabled = page === count - 1;
+  }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.querySelector(".sprint-review-view").requestFullscreen?.();
+  }
+
+  previous.addEventListener("click", () => show(current - 1));
+  next.addEventListener("click", () => show(current + 1));
+  document.querySelector("[data-export-fullscreen]").addEventListener("click", toggleFullscreen);
+  document.addEventListener("click", event => {
+    const slide = event.target.closest(".sprint-review-slide");
+    if (!slide) return;
+    const feature = event.target.closest("[data-review-feature]");
+    if (feature) {
+      return filterFeature(slide, feature.classList.contains("is-active") ? null : feature.dataset.reviewFeature);
+    }
+    if (event.target.closest("[data-review-feature-reset]")) return filterFeature(slide, null);
+    const metric = event.target.closest("[data-analytics-metric]");
+    if (metric) {
+      slide.querySelectorAll("[data-analytics-metric]").forEach(button => {
+        const selected = button === metric;
+        button.classList.toggle("is-selected", selected);
+        button.setAttribute("aria-selected", String(selected));
+      });
+      slide.querySelectorAll("[data-chart-metric]").forEach(chart => {
+        chart.hidden = chart.dataset.chartMetric !== metric.dataset.analyticsMetric;
+      });
+      return;
+    }
+    const pager = event.target.closest("[data-analytics-pages]:not(:disabled)");
+    if (pager) return pageTopPages(pager.closest(".analytics-top-pages"), Number(pager.dataset.analyticsPages));
+    const row = event.target.closest("tr.sprint-review-item-row");
+    if (row && !event.target.closest("a")) row.querySelector("a")?.click();
+  });
+  document.addEventListener("keydown", event => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const steps = { ArrowRight: 1, PageDown: 1, " ": 1, ArrowLeft: -1, PageUp: -1 };
+    if (event.key in steps) show(current + (event.shiftKey && event.key === " " ? -1 : steps[event.key]));
+    else if (event.key === "Home") show(0);
+    else if (event.key === "End") show(slides.length - 1);
+    else if (event.key === "f" || event.key === "F") toggleFullscreen();
+    else if (event.key === "Escape" && !document.fullscreenElement) filterFeature(slides[current], null);
+    else return;
+    event.preventDefault();
+  });
+  document.addEventListener("fullscreenchange", () => {
+    document.querySelector("[data-export-fullscreen]").textContent = document.fullscreenElement ? "Exit full screen" : "Full screen";
+  });
+  show(Number(location.hash.slice(1)) - 1 || 0);
+}
+
+// Without the app's top bar the slides can use the full window height.
+const SPRINT_REVIEW_EXPORT_CSS = `
+body.sprint-review-export { margin: 0; }
+body.sprint-review-export main { padding: 0; }
+.sprint-review-export .sprint-review-view { min-height: 100vh; }
+.sprint-review-export .sprint-review-slide { width: min(100%, calc((100vh - 110px) * 16 / 9)); }
+.sprint-review-export .sprint-review-view:fullscreen .sprint-review-slide { width: min(100%, calc((100vh - 110px) * 16 / 9)); }
+.sprint-review-export-meta { color: var(--muted); font-size: 13px; }
+.sprint-review-export .sprint-review-view:fullscreen .sprint-review-export-meta { visibility: hidden; }
+.sprint-review-export a.sprint-review-item-link { text-decoration: none; }
+`;
+
+// Saves the sprint review as one self-contained HTML file: every slide with all its rows,
+// the app's stylesheet inlined and a small script for navigation and filters.
+async function exportSprintReview() {
+  const slides = state.reviewSlides || [];
+  const iteration = state.iteration;
+  if (!slides.length || !iteration) return;
+  const button = els.sprintReviewExport;
+  button.disabled = true;
+  button.textContent = "Exporting…";
+  try {
+    const stylesheet = document.querySelector('link[rel="stylesheet"][href^="styles.css"]')?.getAttribute("href") || "styles.css";
+    const css = await fetch(stylesheet).then(response => {
+      if (!response.ok) throw new Error(`The stylesheet could not be loaded (${response.status}).`);
+      return response.text();
+    });
+    const skipped = [];
+    const sections = [];
+    state.reviewExport = true;
+    try {
+      slides.forEach(slide => {
+        if (slide.analytics && !(state.analytics.status === "ready" && state.analytics.data)) {
+          skipped.push("Analytics");
+          return;
+        }
+        // "export" is never a slide index, so table slides render without a feature filter.
+        sections.push(slide("export"));
+      });
+    } finally {
+      state.reviewExport = false;
+    }
+    const title = `${sprintReviewTitle(iteration)} review`;
+    const team = state.teams.find(value => value.id === state.teamId);
+    const exported = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date());
+    const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    const html = `<!doctype html>
+<html lang="en" data-theme="${theme}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+${css}
+${SPRINT_REVIEW_EXPORT_CSS}
+</style>
+</head>
+<body class="is-sprint-review sprint-review-export">
+<main>
+<section class="sprint-review-view" aria-label="${escapeHtml(title)}">
+<div class="sprint-review-stage">
+${sections.map((section, index) => (index ? section.replace("<section ", "<section hidden ") : section)).join("\n")}
+</div>
+<nav class="sprint-review-controls" aria-label="Slides">
+<span class="sprint-review-export-meta">${escapeHtml([team?.name, `exported ${exported}`].filter(Boolean).join(" · "))}</span>
+<div class="sprint-review-pager">
+<button class="icon-button" type="button" data-export-prev aria-label="Previous slide" title="Previous slide (←)">‹</button>
+<span data-export-counter>1 / ${sections.length}</span>
+<button class="icon-button" type="button" data-export-next aria-label="Next slide" title="Next slide (→)">›</button>
+</div>
+<button class="secondary-button" type="button" data-export-fullscreen title="Full screen (F)">Full screen</button>
+</nav>
+</section>
+</main>
+<script>(${sprintReviewExportRuntime.toString()})();</script>
+</body>
+</html>
+`;
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${title.replace(/[^\w.-]+/g, "-")}.html`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    showNotice(skipped.length
+      ? `Exported without the ${skipped.join(" and ")} slide: sign in to Google on that slide first to include it.`
+      : `${title} exported.`, skipped.length ? "error" : "info", "", null, 6000);
+  } catch (error) {
+    console.error(error);
+    showNotice(error.message || "The sprint review could not be exported.", "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Export";
+  }
 }
 
 function toggleSprintReviewFullscreen() {
@@ -15628,8 +15856,11 @@ function scheduleAppHistoryNavigation() {
 els.sprintReviewPrev.addEventListener("click", () => showSprintReviewSlide(state.reviewSlide - 1));
 els.sprintReviewNext.addEventListener("click", () => showSprintReviewSlide(state.reviewSlide + 1));
 els.sprintReviewFullscreen.addEventListener("click", toggleSprintReviewFullscreen);
+els.sprintReviewExport.addEventListener("click", exportSprintReview);
 els.sprintReviewStage.addEventListener("click", event => {
   if (event.target.closest("[data-analytics-login]")) return signInToAnalytics();
+  const reviewItem = event.target.closest("[data-review-item]")?.dataset.reviewItem;
+  if (reviewItem) return showLinkedWorkItem(Number(reviewItem));
   const metric = event.target.closest("[data-analytics-metric]")?.dataset.analyticsMetric;
   if (metric) {
     state.analytics.metric = metric;

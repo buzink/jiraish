@@ -1863,7 +1863,7 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
   .sprint-review-slide { aspect-ratio: auto; min-height: 60vh; width: 100%; }
 }
 .sprint-review-pager .icon-button:hover:not(:disabled) { background: var(--blue-100); }
-body.is-sprint-review main { padding: 0; }
+body.is-sprint-review main:not(.work-item-main) { padding: 0; }
 .sprint-review-table .sprint-review-demo-cell { width: 1%; text-align: center; white-space: nowrap; }
 .sprint-review-check { color: var(--green); font-weight: 700; }
 .sprint-review-table-slide header { display: flex; align-items: flex-start; justify-content: space-between; gap: clamp(16px, 3cqi, 40px); }
@@ -2077,3 +2077,11 @@ body.is-sprint-review main { padding: 0; }
 .extra-csat-distribution li { grid-template-columns: 1.6em minmax(0, 1fr) 2.6em 4.6em; }
 .extra-csat-distribution li .extra-ranking-trend { text-align: left; }
 .extra-csat-distribution li .extra-ranking-trend:empty { display: block; }
+/* Review table rows open their work item. */
+.sprint-review-item-row { cursor: pointer; }
+.sprint-review-item-row:hover td { background: color-mix(in srgb, var(--blue-600) 7%, transparent); }
+.sprint-review-item-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.sprint-review-item-row:hover .sprint-review-item-link { color: var(--blue-600); }
+.sprint-review-item-link:focus-visible { outline: 2px solid var(--blue-600); outline-offset: 2px; border-radius: 2px; }
+.sprint-review-actions { display: flex; gap: 8px; }
+.sprint-review-view:fullscreen .sprint-review-actions #sprintReviewExport { visibility: hidden; }
