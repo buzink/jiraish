@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261107-ga-token" />
+    <link rel="stylesheet" href="styles.css?v=20261107-related-create" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -710,7 +710,7 @@
           <span class="field-help">For bugs, this text is saved as repro steps. AI sends this text to the configured LiteLLM model.</span>
         </label>
         <div id="createWorkItemParent" class="create-work-item-parent" hidden>
-          <span>Parent</span>
+          <span id="createWorkItemParentKind">Parent</span>
           <strong id="createWorkItemParentLabel"></strong>
         </div>
         <p id="createWorkItemError" class="form-error" role="alert"></p>
@@ -891,9 +891,29 @@
           </div>
           <button class="close-button" type="button" data-close-work-item-link aria-label="Close">×</button>
         </div>
-        <label class="sr-only" for="workItemLinkSearch">Find a work item</label>
-        <input id="workItemLinkSearch" type="search" placeholder="Search by title or ID" autocomplete="off" />
-        <div id="workItemLinkChoices" class="roadmap-forecast-choices" aria-live="polite"></div>
+        <section class="roadmap-dialog-section" aria-labelledby="workItemLinkExistingHeading">
+          <h3 id="workItemLinkExistingHeading" class="roadmap-dialog-section-title" hidden>Add an existing issue</h3>
+          <label class="sr-only" for="workItemLinkSearch">Find a work item</label>
+          <input id="workItemLinkSearch" type="search" placeholder="Search by title or ID" autocomplete="off" />
+          <div id="workItemLinkChoices" class="roadmap-forecast-choices" aria-live="polite"></div>
+        </section>
+        <div id="workItemLinkDivider" class="roadmap-dialog-divider" aria-hidden="true" hidden><span>or</span></div>
+        <section id="workItemLinkNew" class="roadmap-dialog-section roadmap-dialog-new" aria-labelledby="workItemLinkNewHeading" hidden>
+          <div>
+            <h3 id="workItemLinkNewHeading" class="roadmap-dialog-section-title">Create a new issue</h3>
+            <p>Created and linked as related right away.</p>
+          </div>
+          <div class="roadmap-dialog-create-group">
+            <button id="workItemLinkNewStory" class="secondary-button roadmap-dialog-create" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              <span>New story</span>
+            </button>
+            <button id="workItemLinkNewBug" class="secondary-button roadmap-dialog-create" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              <span>New bug</span>
+            </button>
+          </div>
+        </section>
         <p id="workItemLinkError" class="form-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="secondary-button" type="button" data-close-work-item-link>Cancel</button>
@@ -1260,6 +1280,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261107-ga-token" defer></script>
+    <script src="app.js?v=20261107-related-create" defer></script>
   </body>
 </html>

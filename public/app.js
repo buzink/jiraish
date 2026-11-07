@@ -273,6 +273,7 @@ const state = {
   createWorkItemReturnToParent: false,
   createWorkItemTags: [],
   createWorkItemRoadmap: null,
+  createWorkItemRelated: null,
   childWorkItemReturn: null,
   createWorkItemBusy: false,
   areaPathsCache: null,
@@ -600,6 +601,7 @@ const els = {
   createWorkItemDescription: document.querySelector("#createWorkItemDescription"),
   createWorkItemParent: document.querySelector("#createWorkItemParent"),
   createWorkItemParentLabel: document.querySelector("#createWorkItemParentLabel"),
+  createWorkItemParentKind: document.querySelector("#createWorkItemParentKind"),
   createWorkItemError: document.querySelector("#createWorkItemError"),
   createWorkItemSubmit: document.querySelector("#createWorkItemSubmit"),
   createWorkItemAiSubmit: document.querySelector("#createWorkItemAiSubmit"),
@@ -719,6 +721,11 @@ const els = {
   workItemLinkSearch: document.querySelector("#workItemLinkSearch"),
   workItemLinkChoices: document.querySelector("#workItemLinkChoices"),
   workItemLinkError: document.querySelector("#workItemLinkError"),
+  workItemLinkExistingHeading: document.querySelector("#workItemLinkExistingHeading"),
+  workItemLinkDivider: document.querySelector("#workItemLinkDivider"),
+  workItemLinkNew: document.querySelector("#workItemLinkNew"),
+  workItemLinkNewStory: document.querySelector("#workItemLinkNewStory"),
+  workItemLinkNewBug: document.querySelector("#workItemLinkNewBug"),
   workItemCommentCount: document.querySelector("#workItemCommentCount"),
   workItemHistoryCount: document.querySelector("#workItemHistoryCount"),
   workItemPullRequestCount: document.querySelector("#workItemPullRequestCount"),
@@ -1115,17 +1122,20 @@ async function toggleCreateWorkItemMenu() {
   await loadCreateWorkItemTypes();
 }
 
-function openCreateWorkItemDialog(type, parent = null, { returnToParent = false, tags = [], roadmap = null } = {}) {
+function openCreateWorkItemDialog(type, parent = null, { returnToParent = false, tags = [], roadmap = null, related = null } = {}) {
   state.createWorkItemType = type;
   state.createWorkItemParent = parent;
   state.createWorkItemReturnToParent = Boolean(parent && returnToParent);
   state.createWorkItemTags = tags;
   state.createWorkItemRoadmap = roadmap;
+  state.createWorkItemRelated = parent ? null : related;
   closeCreateWorkItemMenu();
   els.createWorkItemTypeLabel.textContent = type;
   els.createWorkItemHeadingType.textContent = type.toLocaleLowerCase("en");
-  els.createWorkItemParent.hidden = !parent;
-  els.createWorkItemParentLabel.textContent = parent ? `${workItemKey(parent.id)} · ${parent.title}` : "";
+  const linked = parent || state.createWorkItemRelated;
+  els.createWorkItemParent.hidden = !linked;
+  els.createWorkItemParentKind.textContent = parent ? "Parent" : "Related to";
+  els.createWorkItemParentLabel.textContent = linked ? `${workItemKey(linked.id)} · ${linked.title}` : "";
   els.createWorkItemTitle.value = "";
   els.createWorkItemDescription.value = "";
   els.createWorkItemError.textContent = "";
@@ -1184,6 +1194,7 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
   const returnToParent = state.createWorkItemReturnToParent;
   const extraTags = state.createWorkItemTags || [];
   const roadmap = state.createWorkItemRoadmap;
+  const related = state.createWorkItemRelated;
   title = String(title || "").trim();
   description = String(description || "").trim();
   acceptanceCriteria = String(acceptanceCriteria || "").trim();
@@ -1225,6 +1236,16 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
         }
       });
     }
+    if (related) {
+      operations.push({
+        op: "add",
+        path: "/relations/-",
+        value: {
+          rel: "System.LinkTypes.Related",
+          url: `${activeAzureContext().base}/_apis/wit/workItems/${Number(related.id)}`
+        }
+      });
+    }
     const created = await azure(`/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`, {
       method: "POST",
       headers: { "Content-Type": "application/json-patch+json" },
@@ -1246,11 +1267,14 @@ async function createWorkItemFromDraft({ title, description = "", acceptanceCrit
     state.forYouProjectName = "";
     if (!parent) state.backlogTeamId = "";
     if (parent) state.detailsCache.delete(Number(parent.id));
+    if (related) state.detailsCache.delete(Number(related.id));
     els.createWorkItemDialog.close();
     await showWorkItem(item);
     if (roadmap) addRoadmapPortfolioItem(item);
     if (returnToParent && isSelectedWorkItem(item.id)) {
       state.childWorkItemReturn = { childId: Number(item.id), parent };
+    } else if (related && isSelectedWorkItem(item.id)) {
+      state.childWorkItemReturn = { childId: Number(item.id), parent: related };
     } else if (roadmap && isSelectedWorkItem(item.id)) {
       state.childWorkItemReturn = { childId: Number(item.id), parent: null, roadmap };
     }
@@ -11202,11 +11226,23 @@ function openWorkItemLinkDialog(item, mode) {
   els.workItemLinkContext.textContent = mode === "parent"
     ? `Choose ${parentFilter?.include ? `the ${parentFilter.include.join(" or ")}` : "the work item"} that ${item.title} belongs to.`
     : `Link ${item.title} to another work item as related.`;
+  const related = mode !== "parent";
+  els.workItemLinkExistingHeading.hidden = !related;
+  els.workItemLinkDivider.hidden = !related;
+  els.workItemLinkNew.hidden = !related;
   els.workItemLinkSearch.value = "";
   els.workItemLinkError.textContent = "";
   els.workItemLinkDialog.showModal();
   els.workItemLinkSearch.focus();
   searchWorkItemLinkChoices();
+}
+
+function createRelatedWorkItem(type) {
+  const context = state.workItemLinkContext;
+  if (!context || context.mode === "parent" || state.workItemRelationUpdating) return;
+  const { item } = context;
+  closeWorkItemLinkDialog();
+  openCreateWorkItemDialog(type, null, { related: item });
 }
 
 function closeWorkItemLinkDialog() {
@@ -15443,6 +15479,8 @@ els.workItemAddRelated.addEventListener("click", () => {
   if (state.selectedItem) openWorkItemLinkDialog(state.selectedItem, "related");
 });
 els.workItemLinkSearch.addEventListener("input", searchWorkItemLinkChoices);
+els.workItemLinkNewStory.addEventListener("click", () => createRelatedWorkItem(backlogStoryType()));
+els.workItemLinkNewBug.addEventListener("click", () => createRelatedWorkItem("Bug"));
 els.workItemLinkDialog.querySelectorAll("[data-close-work-item-link]").forEach(button => {
   button.addEventListener("click", closeWorkItemLinkDialog);
 });
@@ -15603,6 +15641,7 @@ els.createWorkItemDialog.addEventListener("close", () => {
   state.createWorkItemReturnToParent = false;
   state.createWorkItemTags = [];
   state.createWorkItemRoadmap = null;
+  state.createWorkItemRelated = null;
   state.createWorkItemBusy = false;
   updateCreateWorkItemActions();
 });
