@@ -13544,6 +13544,7 @@ function descriptionEditorHtml() {
 function sanitizedRichHtmlString(html) {
   const safe = document.createElement("div");
   safe.append(sanitizeRichHtml(String(html || "")));
+  linkifyBareUrls(safe);
   restoreAuthenticatedImageSources(safe);
   return safe.innerHTML.trim();
 }
@@ -13870,6 +13871,8 @@ function richEditorHtml(editor) {
   restoreAuthenticatedImageSources(source);
   const safe = document.createElement("div");
   safe.append(sanitizeRichHtml(source.innerHTML));
+  // Azure DevOps does not autolink plain URLs, so save them as real links.
+  linkifyBareUrls(safe);
   restoreAuthenticatedImageSources(safe);
   const html = safe.innerHTML.trim();
   return html === "<br>" ? "" : html;
@@ -14586,10 +14589,12 @@ function setRichContent(element, value, fallback) {
     const plain = document.createElement("span");
     plain.className = "plain-rich-text";
     plain.textContent = value;
+    linkifyBareUrls(plain);
     element.replaceChildren(plain);
     return;
   }
   element.replaceChildren(sanitizeRichHtml(value));
+  linkifyBareUrls(element);
   element.querySelectorAll("a.internal-work-item-link[data-work-item-id]").forEach(link => {
     const itemId = Number(link.dataset.workItemId);
     if (itemId > 0) link.setAttribute("href", appRouteHash(currentAppRoute({ itemId })));
@@ -14597,6 +14602,52 @@ function setRichContent(element, value, fallback) {
   hydrateRichTextImages(element);
   highlightCodeBlocks(element);
   element.querySelectorAll('input[type="checkbox"]').forEach(checkbox => { checkbox.disabled = true; });
+}
+
+// Turns bare http(s) URLs in text into links, skipping text already inside a link or code.
+function linkifyBareUrls(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: node => node.parentElement?.closest("a, pre, code")
+      ? NodeFilter.FILTER_REJECT
+      : /https?:\/\//i.test(node.nodeValue || "") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    const text = node.nodeValue;
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    for (const match of text.matchAll(/https?:\/\/[^\s<>"]+/gi)) {
+      let url = match[0];
+      // Leave trailing punctuation (and an unbalanced closing bracket) outside the link.
+      while (/[.,;:!?'")\]]$/.test(url)) {
+        const last = url.at(-1);
+        const count = char => url.split(char).length - 1;
+        if (last === ")" && count("(") >= count(")")) break;
+        if (last === "]" && count("[") >= count("]")) break;
+        url = url.slice(0, -1);
+      }
+      const href = safeRichTextUrl(url, false);
+      if (!href) continue;
+      if (match.index > cursor) fragment.append(text.slice(cursor, match.index));
+      const link = document.createElement("a");
+      link.href = href;
+      link.textContent = url;
+      const workItemId = workItemIdFromUrl(href);
+      if (workItemId) {
+        link.classList.add("internal-work-item-link");
+        link.dataset.workItemId = String(workItemId);
+      } else {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      }
+      fragment.append(link);
+      cursor = match.index + url.length;
+    }
+    if (!cursor) return;
+    if (cursor < text.length) fragment.append(text.slice(cursor));
+    node.replaceWith(fragment);
+  });
 }
 
 function sanitizeRichHtml(value) {
