@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261111-sprint-points" />
+    <link rel="stylesheet" href="styles.css?v=20261111-roadmap-span2" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -274,6 +274,11 @@
           <div class="roadmap-heading-actions">
             <button id="roadmapCreateSprints" class="primary-button" type="button">Create sprints</button>
             <button id="roadmapCurrentQuarter" class="secondary-button" type="button">Current quarter</button>
+            <label class="roadmap-forecast-toggle" for="roadmapForecastToggle">
+              <input id="roadmapForecastToggle" type="checkbox" role="switch" />
+              <span class="roadmap-forecast-switch" aria-hidden="true"></span>
+              <span>Forecast</span>
+            </label>
           </div>
         </header>
         <div id="roadmapStatus" class="roadmap-status" aria-live="polite"></div>
@@ -1280,6 +1285,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261111-sprint-points" defer></script>
+    <script src="app.js?v=20261111-roadmap-span2" defer></script>
   </body>
 </html>

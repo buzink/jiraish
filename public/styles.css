@@ -738,6 +738,24 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .dialog-actions.inline { margin-top: 0; }
 .roadmap-heading-actions { display: flex; align-items: center; gap: 8px; }
+.roadmap-forecast-toggle { position: relative; display: inline-flex; align-items: center; gap: 7px; margin-left: 4px; color: #42526e; font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; }
+.roadmap-forecast-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.roadmap-forecast-switch { position: relative; width: 30px; height: 16px; flex: 0 0 auto; border-radius: 8px; background: #a5adba; transition: background .15s; }
+.roadmap-forecast-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.roadmap-forecast-toggle input:checked + .roadmap-forecast-switch { background: var(--blue-600); }
+.roadmap-forecast-toggle input:checked + .roadmap-forecast-switch::after { transform: translateX(14px); }
+.roadmap-forecast-toggle input:focus-visible + .roadmap-forecast-switch { outline: 2px solid var(--blue-600); outline-offset: 2px; }
+[data-theme="dark"] .roadmap-forecast-toggle { color: inherit; }
+.roadmap-span-cell { position: relative; }
+.roadmap-span-columns { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(var(--roadmap-span-columns), 1fr); pointer-events: none; }
+.roadmap-span-columns i + i { border-left: 1px solid var(--line); }
+.roadmap-span-columns i.is-current { background: color-mix(in srgb, var(--blue-100) 24%, var(--surface)); }
+.roadmap-span-grid { position: relative; display: grid; grid-template-columns: repeat(var(--roadmap-span-columns), minmax(0, 1fr)); grid-auto-flow: row dense; gap: 7px 0; padding: 10px 0; }
+.roadmap-span-grid > * { margin: 0 10px; width: auto; }
+.roadmap-feature-card.is-spanning .roadmap-feature-open { display: block; }
+.roadmap-feature-sticky { position: sticky; left: calc(var(--roadmap-epic-width) + 10px); width: min(100%, calc(var(--roadmap-sprint-width) - 38px)); display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; }
+[data-theme="dark"] .roadmap-span-columns i + i { border-color: #38414a; }
+[data-theme="dark"] .roadmap-span-columns i.is-current { background: #1c3b5c; }
 .roadmap-create-sprints-dialog { width: min(440px, calc(100vw - 32px)); }
 .roadmap-create-sprints-dialog .issue-breadcrumb { margin-bottom: 6px; }
 .roadmap-create-sprints-dialog button:disabled { cursor: not-allowed; opacity: .6; }

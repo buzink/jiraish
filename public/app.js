@@ -151,6 +151,7 @@ const state = {
   backlogPositionGroupKey: "",
   roadmapYear: null,
   roadmapQuarter: null,
+  roadmapForecastMode: false,
   roadmapData: null,
   roadmapCacheKey: "",
   roadmapError: "",
@@ -376,6 +377,7 @@ const els = {
   roadmapStatus: document.querySelector("#roadmapStatus"),
   roadmapContent: document.querySelector("#roadmapContent"),
   roadmapCurrentQuarter: document.querySelector("#roadmapCurrentQuarter"),
+  roadmapForecastToggle: document.querySelector("#roadmapForecastToggle"),
   roadmapCreateSprints: document.querySelector("#roadmapCreateSprints"),
   roadmapCreateSprintsDialog: document.querySelector("#roadmapCreateSprintsDialog"),
   roadmapCreateSprintsForm: document.querySelector("#roadmapCreateSprintsForm"),
@@ -2289,7 +2291,7 @@ function createRoadmapFeatureCard(entry, iteration, lane) {
   copy.append(title, meta);
   open.append(icon, copy);
   card.append(open);
-  if (!committed) {
+  if (!committed && lane) {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "roadmap-feature-remove";
@@ -2300,6 +2302,82 @@ function createRoadmapFeatureCard(entry, iteration, lane) {
     card.append(remove);
   }
   return card;
+}
+
+// Forecast toggle off: one cell spanning all sprints of the Epic row. Each Feature shows once per run of
+// consecutive sprints, as one block across those sprint columns, whatever lanes it was tagged with.
+function createRoadmapSpanCell(epic, iterations) {
+  const bySprint = new Map();
+  iterations.forEach((iteration, index) => {
+    ["frontend", "backend", "unassigned"].forEach(lane => {
+      state.roadmapData?.cells.get(roadmapCellKey(epic.id, iteration.id, lane))?.forEach((entry, featureId) => {
+        if (!bySprint.has(featureId)) bySprint.set(featureId, { feature: entry.feature, sprints: new Map() });
+        const sprints = bySprint.get(featureId).sprints;
+        if (!sprints.has(index)) sprints.set(index, { stories: new Map(), forecast: false });
+        const target = sprints.get(index);
+        entry.stories.forEach(story => target.stories.set(story.id, story));
+        target.forecast ||= entry.forecast;
+      });
+    });
+  });
+  const segments = [];
+  bySprint.forEach(({ feature, sprints }) => {
+    let current = null;
+    [...sprints.keys()].sort((left, right) => left - right).forEach(index => {
+      if (!current || index !== current.last + 1) {
+        current = { feature, first: index, last: index, stories: new Map(), forecast: false };
+        segments.push(current);
+      }
+      current.last = index;
+      sprints.get(index).stories.forEach((story, id) => current.stories.set(id, story));
+      current.forecast ||= sprints.get(index).forecast;
+    });
+  });
+  segments.sort((left, right) => left.first - right.first
+    || right.last - left.last
+    || left.feature.title.localeCompare(right.feature.title, "en", { numeric: true, sensitivity: "base" }));
+
+  const cell = document.createElement("td");
+  cell.className = "roadmap-cell roadmap-span-cell";
+  cell.colSpan = iterations.length;
+  cell.style.setProperty("--roadmap-span-columns", String(iterations.length));
+  const columns = document.createElement("div");
+  columns.className = "roadmap-span-columns";
+  columns.setAttribute("aria-hidden", "true");
+  columns.append(...iterations.map(iteration => {
+    const column = document.createElement("i");
+    if (iteration.id === state.currentIterationId) column.className = "is-current";
+    return column;
+  }));
+  const grid = document.createElement("div");
+  grid.className = "roadmap-span-grid";
+  const occupied = new Set(segments.flatMap(segment => (
+    Array.from({ length: segment.last - segment.first + 1 }, (_, offset) => segment.first + offset)
+  )));
+  iterations.forEach((_, index) => {
+    if (occupied.has(index)) return;
+    const empty = document.createElement("span");
+    empty.className = "roadmap-lane-empty";
+    empty.textContent = "No features";
+    empty.style.gridArea = `1 / ${index + 1}`;
+    grid.append(empty);
+  });
+  segments.forEach(segment => {
+    const card = createRoadmapFeatureCard({ ...segment, stories: [...segment.stories.values()] }, iterations[segment.first], null);
+    card.style.gridColumn = `${segment.first + 1} / ${segment.last + 2}`;
+    if (segment.last > segment.first) {
+      card.classList.add("is-spanning");
+      card.title = `${iterations[segment.first].name} – ${iterations[segment.last].name}`;
+      const open = card.querySelector(".roadmap-feature-open");
+      const sticky = document.createElement("span");
+      sticky.className = "roadmap-feature-sticky";
+      sticky.append(...open.childNodes);
+      open.append(sticky);
+    }
+    grid.append(card);
+  });
+  cell.append(columns, grid);
+  return cell;
 }
 
 function createRoadmapLane(epic, iteration, lane, label) {
@@ -2652,6 +2730,7 @@ function renderRoadmap() {
   const currentPeriod = roadmapPeriodForIteration(state.iterations.find(iteration => iteration.id === state.currentIterationId) || state.iteration);
   els.roadmapCurrentQuarter.disabled = state.roadmapYear === currentPeriod.year && state.roadmapQuarter === currentPeriod.quarter;
   els.roadmapCreateSprints.disabled = !team || state.roadmapSprintsCreating;
+  els.roadmapForecastToggle.checked = state.roadmapForecastMode;
   els.roadmapMeta.textContent = team
     ? `${team.name} · Q${state.roadmapQuarter} ${state.roadmapYear} · ${iterations.length} ${iterations.length === 1 ? "sprint" : "sprints"}${data ? ` · ${data.featureCount} committed · ${data.forecastCount} forecasted` : ""}`
     : "Connect Azure DevOps to load the roadmap.";
@@ -2734,7 +2813,8 @@ function renderRoadmap() {
   addEpic.textContent = "+ Add Epic";
   addEpic.disabled = !data || state.roadmapEpicUpdating;
   addEpic.addEventListener("click", openRoadmapEpicDialog);
-  epicCorner.append(epicCornerLabel, addEpic);
+  epicCorner.append(epicCornerLabel);
+  if (state.roadmapForecastMode) epicCorner.append(addEpic);
   sprintRow.append(epicCorner);
   iterations.forEach(iteration => {
     const heading = document.createElement("th");
@@ -2787,6 +2867,11 @@ function renderRoadmap() {
         label.append(remove);
       }
       row.append(label);
+      if (!state.roadmapForecastMode) {
+        row.append(createRoadmapSpanCell(epic, iterations));
+        body.append(row);
+        return;
+      }
       iterations.forEach(iteration => {
         const cell = document.createElement("td");
         cell.className = "roadmap-cell";
@@ -16059,6 +16144,10 @@ els.sprintBoardNav.addEventListener("click", () => showMainView("board"));
 els.backlogNav.addEventListener("click", () => showMainView("backlog"));
 els.roadmapNav.addEventListener("click", () => showMainView("roadmap"));
 els.roadmapCurrentQuarter.addEventListener("click", selectCurrentRoadmapQuarter);
+els.roadmapForecastToggle.addEventListener("change", () => {
+  state.roadmapForecastMode = els.roadmapForecastToggle.checked;
+  renderRoadmap();
+});
 els.wikiNav.addEventListener("click", () => showMainView("wiki"));
 els.releasesNav.addEventListener("click", () => showMainView("releases"));
 els.releasesRefresh.addEventListener("click", () => loadReleaseDebugPage(true));
