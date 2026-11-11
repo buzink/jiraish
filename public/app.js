@@ -6711,7 +6711,10 @@ function createBacklogSection(title, items, label) {
   badge.textContent = label;
   const count = document.createElement("span");
   count.className = "count";
-  count.textContent = String(items.length);
+  const points = items.reduce((sum, item) => sum + (Number(item.points) || 0), 0);
+  const roundedPoints = Math.round(points * 10) / 10;
+  count.textContent = `${items.length} ${items.length === 1 ? "item" : "items"} · ${roundedPoints} ${roundedPoints === 1 ? "pt" : "pts"}`;
+  count.title = `${items.length} work ${items.length === 1 ? "item" : "items"}, ${roundedPoints} story ${roundedPoints === 1 ? "point" : "points"}`;
   header.append(heading, badge, count);
   const wrapper = document.createElement("div");
   wrapper.className = "backlog-table-wrap";
