@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261111-roadmap-span2" />
+    <link rel="stylesheet" href="styles.css?v=20261113-comment-editor" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -1071,6 +1071,7 @@
                   <button type="button" data-description-command="italic" aria-label="Italic" title="Italic"><em>I</em></button>
                   <button type="button" data-description-command="insertUnorderedList" aria-label="Bulleted list" title="Bulleted list">• List</button>
                   <button type="button" data-description-command="insertOrderedList" aria-label="Numbered list" title="Numbered list">1. List</button>
+                  <button type="button" data-description-command="insertChecklist" aria-label="Checklist" title="Checklist">☑ List</button>
                 </div>
                 <div id="descriptionEditorWrap" class="mention-editor-wrap">
                   <div id="descriptionEditor" class="description-editor-content rich-content" contenteditable="true" role="textbox" aria-label="Description" aria-multiline="true" aria-expanded="false" data-placeholder="Add a description…"></div>
@@ -1165,16 +1166,29 @@
                     <span class="comment-composer-avatar" aria-hidden="true">+</span>
                     <span>Add a comment…</span>
                   </button>
-                  <form id="commentComposerForm" class="comment-composer-form" hidden>
-                    <div class="mention-editor-wrap">
+                  <form id="commentComposerForm" class="comment-composer-form description-editor" hidden>
+                    <div class="description-view-tabs" role="tablist" aria-label="Comment editor view">
+                      <button class="is-active" type="button" role="tab" aria-selected="true" data-comment-view="preview">Preview</button>
+                      <button type="button" role="tab" aria-selected="false" data-comment-view="html">HTML</button>
+                      <button type="button" role="tab" aria-selected="false" data-comment-view="markdown">Markdown</button>
+                    </div>
+                    <div id="commentToolbar" class="description-toolbar" role="toolbar" aria-label="Comment formatting">
+                      <button type="button" data-comment-command="bold" aria-label="Bold" title="Bold"><strong>B</strong></button>
+                      <button type="button" data-comment-command="italic" aria-label="Italic" title="Italic"><em>I</em></button>
+                      <button type="button" data-comment-command="insertUnorderedList" aria-label="Bulleted list" title="Bulleted list">• List</button>
+                      <button type="button" data-comment-command="insertOrderedList" aria-label="Numbered list" title="Numbered list">1. List</button>
+                      <button type="button" data-comment-command="insertChecklist" aria-label="Checklist" title="Checklist">☑ List</button>
+                    </div>
+                    <div id="commentEditorWrap" class="mention-editor-wrap">
                       <div id="commentComposerInput" class="comment-composer-input rich-content" contenteditable="true" role="textbox" aria-label="Comment" aria-multiline="true" aria-expanded="false" data-placeholder="Write a comment…"></div>
                       <div id="commentMentionMenu" class="mention-menu" role="listbox" aria-label="Insert a reference" popover="manual" hidden>
                         <div id="commentMentionLabel" class="mention-menu-label">Mention someone</div>
                         <div id="commentMentionOptions" class="mention-options"></div>
                       </div>
                     </div>
+                    <textarea id="commentSourceEditor" class="description-source-editor" aria-label="HTML source" spellcheck="false" hidden></textarea>
                     <div class="comment-composer-footer">
-                      <span class="comment-composer-hint">@ mention · # link · Ctrl + Enter to save</span>
+                      <span id="commentComposerHint" class="comment-composer-hint">@ mention · # link · Ctrl + Enter to save</span>
                       <button id="commentComposerCancel" class="text-button" type="button">Cancel</button>
                       <button id="commentComposerSubmit" class="primary-button" type="submit">Save</button>
                     </div>
@@ -1285,6 +1299,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261111-roadmap-span2" defer></script>
+    <script src="app.js?v=20261113-comment-editor" defer></script>
   </body>
 </html>

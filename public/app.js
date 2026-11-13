@@ -761,12 +761,17 @@ const els = {
   workItemComments: document.querySelector("#workItemComments"),
   commentComposerPrompt: document.querySelector("#commentComposerPrompt"),
   commentComposerForm: document.querySelector("#commentComposerForm"),
+  commentViewTabs: [...document.querySelectorAll("[data-comment-view]")],
+  commentToolbar: document.querySelector("#commentToolbar"),
+  commentEditorWrap: document.querySelector("#commentEditorWrap"),
   commentComposerInput: document.querySelector("#commentComposerInput"),
+  commentSourceEditor: document.querySelector("#commentSourceEditor"),
   commentMentionMenu: document.querySelector("#commentMentionMenu"),
   commentMentionLabel: document.querySelector("#commentMentionLabel"),
   commentMentionOptions: document.querySelector("#commentMentionOptions"),
   commentComposerCancel: document.querySelector("#commentComposerCancel"),
   commentComposerSubmit: document.querySelector("#commentComposerSubmit"),
+  commentComposerHint: document.querySelector("#commentComposerHint"),
   commentComposerStatus: document.querySelector("#commentComposerStatus"),
   workItemHistoryStatus: document.querySelector("#workItemHistoryStatus"),
   workItemHistory: document.querySelector("#workItemHistory"),
@@ -9024,11 +9029,9 @@ function descriptionHasUnsavedChanges() {
 
 function commentHasUnsavedChanges() {
   if (els.commentComposerForm.hidden) return false;
-  const html = richEditorHtml(els.commentComposerInput);
+  const html = currentCommentEditorHtml();
   if (state.editingCommentId !== null) {
-    const item = selectedWorkItem();
-    const comment = (state.commentsCache.get(item?.id) || []).find(entry => entry.id === state.editingCommentId);
-    return sanitizedRichHtmlString(html) !== sanitizedRichHtmlString(comment?.html || "");
+    return sanitizedRichHtmlString(html) !== commentEditorInitialHtml;
   }
   return Boolean(htmlToText(html).trim() || /<img\b/i.test(html));
 }
@@ -13567,7 +13570,7 @@ function openDescriptionEditor(editorMode = "content") {
   els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
   hydrateRichTextImages(els.descriptionEditor);
   highlightCodeBlocks(els.descriptionEditor);
-  activateEditorCheckboxes(els.descriptionEditor);
+  activateEditorCheckboxes(els.descriptionEditor, () => { descriptionEditorRevision++; });
   if (systemInfo) {
     els.workItemSystemInfo.hidden = true;
     els.workItemSystemInfo.after(els.descriptionEditorForm);
@@ -13620,9 +13623,79 @@ function setDescriptionEditorBusy(busy) {
   els.descriptionEditorSubmit.textContent = busy ? "Saving…" : "Save";
 }
 
-function applyDescriptionCommand(command) {
-  els.descriptionEditor.focus();
+function applyRichTextCommand(editor, command, onCheckboxChange) {
+  editor.focus();
+  if (command === "insertChecklist") {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const selectedText = range && editor.contains(range.commonAncestorContainer)
+      ? selection.toString().replace(/\r\n?/g, "\n").replace(/\n+$/, "")
+      : "";
+    const lines = selectedText ? selectedText.split("\n") : [""];
+    const items = lines.map(line => `<li><input type="checkbox">&nbsp;${escapeHtml(line)}</li>`).join("");
+    document.execCommand("insertHTML", false, `<ul data-new-checklist="true">${items}</ul>`);
+    const checklist = editor.querySelector('ul[data-new-checklist="true"]');
+    checklist?.removeAttribute("data-new-checklist");
+    activateEditorCheckboxes(editor, onCheckboxChange);
+    const lastItem = checklist?.lastElementChild;
+    if (lastItem) placeCaretAtEnd(lastItem);
+    return;
+  }
   document.execCommand(command, false);
+}
+
+function placeCaretAtEnd(element) {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function handleChecklistEnter(editor, event, onCheckboxChange) {
+  if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !selection.isCollapsed) return false;
+  const range = selection.getRangeAt(0);
+  const anchor = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer
+    : range.startContainer.parentElement;
+  const item = anchor?.closest?.("li");
+  const list = item?.parentElement;
+  if (!item || !editor.contains(item) || !["UL", "OL"].includes(list?.tagName)
+    || !item.querySelector(':scope > input[type="checkbox"]')) return false;
+
+  event.preventDefault();
+  const content = item.cloneNode(true);
+  content.querySelectorAll('input[type="checkbox"], ul, ol').forEach(node => node.remove());
+  const empty = !content.textContent.replace(/\u00a0/g, " ").trim();
+  if (empty) {
+    const paragraph = document.createElement("p");
+    paragraph.append(document.createElement("br"));
+    item.remove();
+    if (list.children.length) list.after(paragraph);
+    else list.replaceWith(paragraph);
+    const nextRange = document.createRange();
+    nextRange.setStart(paragraph, 0);
+    nextRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(nextRange);
+  } else {
+    const nextItem = document.createElement("li");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    nextItem.append(checkbox, document.createTextNode("\u00a0"));
+    item.after(nextItem);
+    activateEditorCheckboxes(nextItem, onCheckboxChange);
+    placeCaretAtEnd(nextItem);
+  }
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function applyDescriptionCommand(command) {
+  applyRichTextCommand(els.descriptionEditor, command, () => { descriptionEditorRevision++; });
 }
 
 function descriptionEditorHtml() {
@@ -13923,7 +13996,7 @@ function setDescriptionEditorView(nextView) {
     els.descriptionEditor.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
     hydrateRichTextImages(els.descriptionEditor);
     highlightCodeBlocks(els.descriptionEditor);
-    activateEditorCheckboxes(els.descriptionEditor);
+    activateEditorCheckboxes(els.descriptionEditor, () => { descriptionEditorRevision++; });
   } else {
     if (nextView === "markdown") {
       const reuseDraft = descriptionMarkdownDraft !== null && descriptionMarkdownRevision === descriptionEditorRevision;
@@ -14080,17 +14153,98 @@ function renderComments(comments, loading = false, error = "") {
   els.workItemComments.replaceChildren(...comments.map(createComment));
 }
 
+let commentEditorView = "preview";
+let commentEditorInitialHtml = "";
+let commentEditorRevision = 0;
+let commentMarkdownDraft = null;
+let commentMarkdownRevision = -1;
+
+function renderCommentEditorView(focus = false) {
+  const preview = commentEditorView === "preview";
+  els.commentToolbar.hidden = !preview;
+  els.commentEditorWrap.hidden = !preview;
+  els.commentSourceEditor.hidden = preview;
+  els.commentSourceEditor.setAttribute("aria-label", commentEditorView === "markdown" ? "Markdown source" : "HTML source");
+  els.commentComposerHint.textContent = preview
+    ? "@ mention · # link · Ctrl + Enter to save"
+    : `${commentEditorView === "markdown" ? "Markdown" : "HTML source"} · Ctrl + Enter to save`;
+  els.commentViewTabs.forEach(tab => {
+    const selected = tab.dataset.commentView === commentEditorView;
+    tab.classList.toggle("is-active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+  });
+  if (focus) requestAnimationFrame(() => {
+    const target = preview ? els.commentComposerInput : els.commentSourceEditor;
+    target.focus();
+    if (!preview) {
+      target.setSelectionRange(0, 0);
+      target.scrollTop = 0;
+      target.scrollLeft = 0;
+    }
+  });
+}
+
+function currentCommentEditorHtml() {
+  if (commentEditorView === "preview") return richEditorHtml(els.commentComposerInput);
+  if (commentEditorView === "markdown") return markdownToHtml(els.commentSourceEditor.value);
+  return sanitizedRichHtmlString(els.commentSourceEditor.value);
+}
+
+function setCommentEditorView(nextView) {
+  if (!["preview", "html", "markdown"].includes(nextView) || nextView === commentEditorView) return;
+  const previousView = commentEditorView;
+  const html = currentCommentEditorHtml();
+  if (previousView === "markdown") {
+    commentMarkdownDraft = els.commentSourceEditor.value;
+    commentMarkdownRevision = commentEditorRevision;
+  }
+  commentEditorView = nextView;
+  closeMentionMenu("comment");
+  if (nextView === "preview") {
+    els.commentComposerInput.replaceChildren(sanitizeRichHtml(html));
+    els.commentComposerInput.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
+    hydrateRichTextImages(els.commentComposerInput);
+    highlightCodeBlocks(els.commentComposerInput);
+    activateEditorCheckboxes(els.commentComposerInput, () => { commentEditorRevision++; });
+  } else if (nextView === "markdown") {
+    const reuseDraft = commentMarkdownDraft !== null && commentMarkdownRevision === commentEditorRevision;
+    els.commentSourceEditor.value = reuseDraft ? commentMarkdownDraft : htmlToMarkdown(html);
+    commentMarkdownDraft = els.commentSourceEditor.value;
+    commentMarkdownRevision = commentEditorRevision;
+  } else {
+    els.commentSourceEditor.value = formatRichHtml(html);
+  }
+  renderCommentEditorView(true);
+}
+
+async function preparedCommentEditorHtml() {
+  const html = currentCommentEditorHtml();
+  els.commentComposerInput.replaceChildren(sanitizeRichHtml(html));
+  els.commentComposerInput.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
+  hydrateRichTextImages(els.commentComposerInput);
+  await persistEmbeddedRichTextImages(els.commentComposerInput);
+  const prepared = richEditorHtml(els.commentComposerInput);
+  if (commentEditorView === "html") els.commentSourceEditor.value = formatRichHtml(prepared);
+  if (commentEditorView === "markdown") {
+    els.commentSourceEditor.value = htmlToMarkdown(prepared);
+    commentMarkdownDraft = els.commentSourceEditor.value;
+    commentMarkdownRevision = commentEditorRevision;
+  }
+  return prepared;
+}
+
 function setCommentComposerExpanded(expanded) {
   if (expanded) closeMentionMenu("description");
   els.commentComposerPrompt.hidden = expanded;
   els.commentComposerForm.hidden = !expanded;
   if (!expanded) closeMentionMenu("comment");
-  if (expanded) requestAnimationFrame(() => els.commentComposerInput.focus());
+  if (expanded) renderCommentEditorView(true);
 }
 
 function resetCommentComposer() {
   state.editingCommentId = null;
   els.commentComposerInput.replaceChildren();
+  els.commentSourceEditor.value = "";
   els.commentComposerInput.setAttribute("aria-label", "Comment");
   els.commentComposerInput.dataset.placeholder = "Write a comment…";
   els.commentComposerStatus.textContent = "";
@@ -14099,11 +14253,20 @@ function resetCommentComposer() {
   els.commentComposerCancel.disabled = false;
   els.commentComposerSubmit.disabled = false;
   els.commentComposerSubmit.textContent = "Save";
+  commentEditorView = "preview";
+  commentEditorInitialHtml = "";
+  commentEditorRevision = 0;
+  commentMarkdownDraft = null;
+  commentMarkdownRevision = -1;
+  renderCommentEditorView();
   setCommentComposerExpanded(false);
 }
 
 function setCommentComposerBusy(busy) {
   els.commentComposerInput.contentEditable = String(!busy);
+  els.commentSourceEditor.readOnly = busy;
+  els.commentViewTabs.forEach(tab => { tab.disabled = busy; });
+  document.querySelectorAll("[data-comment-command]").forEach(button => { button.disabled = busy; });
   els.commentComposerCancel.disabled = busy;
   els.commentComposerSubmit.disabled = busy;
   els.commentComposerSubmit.textContent = busy ? "Saving…" : state.editingCommentId !== null ? "Update" : "Save";
@@ -14115,11 +14278,17 @@ function editComment(comment) {
   setActivityTab("comments");
   closeMentionMenu("description");
   state.editingCommentId = comment.id;
+  commentEditorInitialHtml = sanitizedRichHtmlString(comment.html || "");
+  commentEditorView = "preview";
+  commentEditorRevision = 0;
+  commentMarkdownDraft = null;
+  commentMarkdownRevision = -1;
+  els.commentSourceEditor.value = "";
   els.commentComposerInput.replaceChildren(sanitizeRichHtml(comment.html || ""));
   els.commentComposerInput.querySelectorAll("a.user-mention, a.internal-work-item-link").forEach(link => { link.contentEditable = "false"; });
   hydrateRichTextImages(els.commentComposerInput);
   highlightCodeBlocks(els.commentComposerInput);
-  activateEditorCheckboxes(els.commentComposerInput);
+  activateEditorCheckboxes(els.commentComposerInput, () => { commentEditorRevision++; });
   els.commentComposerInput.setAttribute("aria-label", "Edit comment");
   els.commentComposerInput.dataset.placeholder = "Edit your comment…";
   els.commentComposerStatus.textContent = "Editing your comment.";
@@ -14132,7 +14301,7 @@ function editComment(comment) {
 async function submitWorkItemComment(event) {
   event.preventDefault();
   const item = selectedWorkItem();
-  let text = richEditorHtml(els.commentComposerInput);
+  let text = currentCommentEditorHtml();
   if (!item || (!htmlToText(text).trim() && !/<img\b/i.test(text))) return;
   const editingCommentId = state.editingCommentId;
   const editingComment = editingCommentId === null
@@ -14146,12 +14315,11 @@ async function submitWorkItemComment(event) {
   setCommentComposerBusy(true);
   els.commentComposerStatus.classList.remove("is-error");
   try {
-    const embeddedImageCount = embeddedRichTextImages(els.commentComposerInput).length;
+    const embeddedImageCount = commentEditorView === "preview" ? embeddedRichTextImages(els.commentComposerInput).length : 0;
     els.commentComposerStatus.textContent = embeddedImageCount
       ? `Uploading ${embeddedImageCount === 1 ? "image" : `${embeddedImageCount} images`}…`
       : editingCommentId !== null ? "Updating comment…" : "Posting comment…";
-    await persistEmbeddedRichTextImages(els.commentComposerInput);
-    text = richEditorHtml(els.commentComposerInput);
+    text = await preparedCommentEditorHtml();
     els.commentComposerStatus.textContent = editingCommentId !== null ? "Updating comment…" : "Posting comment…";
     const commentPath = editingCommentId !== null
       ? `/_apis/wit/workItems/${item.id}/comments/${editingCommentId}?format=html&api-version=7.1-preview.4`
@@ -14621,12 +14789,14 @@ function stripSyntaxHighlighting(container) {
   container.querySelectorAll("[data-syntax-token]").forEach(token => token.replaceWith(document.createTextNode(token.textContent || "")));
 }
 
-function activateEditorCheckboxes(container) {
+function activateEditorCheckboxes(container, onChange = () => {}) {
   container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+    if (checkbox.dataset.editorCheckboxActive === "true") return;
+    checkbox.dataset.editorCheckboxActive = "true";
     checkbox.disabled = false;
     checkbox.addEventListener("change", () => {
       checkbox.toggleAttribute("checked", checkbox.checked);
-      descriptionEditorRevision++;
+      onChange();
     });
   });
 }
@@ -15702,6 +15872,7 @@ document.querySelectorAll("[data-description-command]").forEach(button => {
 });
 els.descriptionEditor.addEventListener("keydown", event => {
   if (handleMentionKeydown("description", event)) return;
+  if (handleChecklistEnter(els.descriptionEditor, event, () => { descriptionEditorRevision++; })) return;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
@@ -15775,8 +15946,18 @@ els.workItemAttachmentInput.addEventListener("cancel", () => releaseAttachmentPi
 els.commentComposerPrompt.addEventListener("click", () => setCommentComposerExpanded(true));
 els.commentComposerCancel.addEventListener("click", discardCommentComposer);
 els.commentComposerForm.addEventListener("submit", submitWorkItemComment);
+els.commentViewTabs.forEach(tab => tab.addEventListener("click", () => setCommentEditorView(tab.dataset.commentView)));
+document.querySelectorAll("[data-comment-command]").forEach(button => {
+  button.addEventListener("mousedown", event => event.preventDefault());
+  button.addEventListener("click", () => applyRichTextCommand(
+    els.commentComposerInput,
+    button.dataset.commentCommand,
+    () => { commentEditorRevision++; }
+  ));
+});
 els.commentComposerInput.addEventListener("keydown", event => {
   if (handleMentionKeydown("comment", event)) return;
+  if (handleChecklistEnter(els.commentComposerInput, event, () => { commentEditorRevision++; })) return;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
@@ -15786,7 +15967,22 @@ els.commentComposerInput.addEventListener("keydown", event => {
     els.commentComposerForm.requestSubmit();
   }
 });
-els.commentComposerInput.addEventListener("input", () => updateMentionSuggestions("comment"));
+els.commentComposerInput.addEventListener("input", () => {
+  commentEditorRevision++;
+  updateMentionSuggestions("comment");
+});
+els.commentComposerInput.addEventListener("change", () => { commentEditorRevision++; });
+els.commentSourceEditor.addEventListener("input", () => { commentEditorRevision++; });
+els.commentSourceEditor.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    discardCommentComposer();
+  } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    els.commentComposerForm.requestSubmit();
+  }
+});
 els.workItemDialog.addEventListener("cancel", event => {
   if (event.target !== els.workItemDialog) return;
   if (state.attachmentPickerOpen) {

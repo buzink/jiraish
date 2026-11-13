@@ -38,7 +38,7 @@ The Epic and Feature sidebar shows child counts, completion, unestimated work, a
 
 Jiraish uses the fields appropriate to each Azure DevOps work-item type. User Stories include editable Description and Acceptance Criteria fields. Bugs use editable Repro Steps and System Info instead of showing an empty Description field.
 
-Rich-text fields open in Preview mode, which retains the original visual editor. Switch to HTML for formatted source or Markdown for Markdown source; Jiraish converts the content when switching modes. Preview supports fenced and indented code blocks, inline code, basic syntax highlighting, and task-list checkboxes.
+Rich-text fields and comments open in Preview mode, which retains the visual editor. Switch to HTML for formatted source or Markdown for Markdown source; Jiraish converts the content when switching modes. Preview supports fenced and indented code blocks, inline code, basic syntax highlighting, and task-list checkboxes. Use the checklist toolbar button to insert a task list directly in Preview.
 
 Closing a work item or refreshing the page while an editor contains unsaved changes triggers a warning. The work-item menu also supports confirmed deletion.
 
