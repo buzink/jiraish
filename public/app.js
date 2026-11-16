@@ -6895,15 +6895,22 @@ function createBacklogRow(item) {
   );
   const sprintMenu = createBacklogRowSubmenu(
     "Move to sprint",
-    () => newestIterations().map(iteration => ({
-      label: iteration.name,
-      detail: iterationLabel(iteration),
-      selected: actionTargets().every(target => (
-        String(iteration.path || iteration.name).toLocaleLowerCase("en") === String(target.iterationPath).toLocaleLowerCase("en")
-      )),
-      value: iteration
-    })),
-    iteration => updateBacklogItemsToSprint(item, iteration.path || iteration.name)
+    () => [
+      { label: "No sprint", selected: actionTargets().every(target => isNoSprintPath(target.iterationPath)), value: null },
+      ...newestIterations().map(iteration => {
+        const current = iteration.id === state.currentIterationId;
+        return {
+          label: iteration.name,
+          detail: current ? iterationDateRangeForPath(iteration.path || iteration.name) : iterationLabel(iteration),
+          badge: current ? "current" : "",
+          selected: actionTargets().every(target => (
+            String(iteration.path || iteration.name).toLocaleLowerCase("en") === String(target.iterationPath).toLocaleLowerCase("en")
+          )),
+          value: iteration
+        };
+      })
+    ],
+    iteration => updateBacklogItemsToSprint(item, iteration ? iteration.path || iteration.name : noSprintIterationPath())
   );
   const featureMenu = createBacklogRowSubmenu(
     "Move to feature",
@@ -7111,6 +7118,11 @@ function createBacklogRowSubmenu(label, getChoices, onSelect, emptyText = "", tr
       content.className = "backlog-row-submenu-option-text";
       const primary = document.createElement("span");
       primary.textContent = choice.label;
+      if (choice.badge === "current") {
+        primary.className = "backlog-row-submenu-option-primary";
+        primary.append(" ", createCurrentSprintBadge());
+        button.dataset.currentSprint = "true";
+      }
       content.append(primary);
       if (choice.detail) {
         const secondary = document.createElement("small");
@@ -7138,6 +7150,7 @@ function createBacklogRowSubmenu(label, getChoices, onSelect, emptyText = "", tr
       const nested = Boolean(container.closest(".backlog-row-submenu"));
       if (pane.parentElement !== document.body) document.body.append(pane);
       positionPane();
+      scrollCurrentSprintIntoView(pane);
       window.addEventListener("resize", positionPane);
       if (!nested) window.addEventListener("scroll", positionPane, true);
     } else {
@@ -7490,14 +7503,17 @@ async function updateBacklogItemParent(item, feature) {
 
 async function updateBacklogItemsToSprint(item, iterationPath) {
   if (state.backlogUpdating || state.backlogDeleting) return;
+  const toNoSprint = isNoSprintPath(iterationPath);
   const targets = backlogActionTargets(item).filter(target => (
-    String(target.iterationPath || "").toLocaleLowerCase("en") !== String(iterationPath || "").toLocaleLowerCase("en")
+    toNoSprint
+      ? !isNoSprintPath(target.iterationPath)
+      : String(target.iterationPath || "").toLocaleLowerCase("en") !== String(iterationPath || "").toLocaleLowerCase("en")
   ));
   if (!targets.length) return;
 
   const remainingById = new Map();
   for (const target of targets) {
-    if (!workItemNeedsSprintSplit(target)) continue;
+    if (toNoSprint || !workItemNeedsSprintSplit(target)) continue;
     const remaining = await requestRemainingPoints(target, iterationPath);
     if (remaining === null) return;
     remainingById.set(Number(target.id), remaining);
@@ -7540,8 +7556,8 @@ async function updateBacklogItemsToSprint(item, iterationPath) {
       showNotice(`${updated ? `${updated} updated. ` : ""}${failed.length} ${failed.length === 1 ? "work item" : "work items"} could not be moved.${auth ? " The PAT requires ‘Work Items: Read & write’." : ""}`, "error");
     } else {
       showNotice(targets.length === 1
-        ? `${workItemKey(targets[0].id)} moved to the sprint.`
-        : `${targets.length} work items moved to the sprint.`, "info");
+        ? `${workItemKey(targets[0].id)} ${toNoSprint ? "removed from its sprint" : "moved to the sprint"}.`
+        : `${targets.length} work items ${toNoSprint ? "removed from their sprint" : "moved to the sprint"}.`, "info");
     }
   } finally {
     state.backlogUpdating = false;
@@ -12949,17 +12965,67 @@ function renderIterationOptions(item, paths) {
 
 function renderSearchableDetailOptions({ item, paths, query, current, container, field, label }) {
   const queryKey = query.trim().toLocaleLowerCase("en");
-  const filtered = paths.filter(path => !queryKey || path.toLocaleLowerCase("en").includes(queryKey));
-  if (!filtered.length) return renderDetailFieldError(container, `No ${label.toLocaleLowerCase("en")} found.`);
-  container.replaceChildren(...filtered.map(path => {
-    const button = createDetailFieldOption(path, path === current, field === "System.IterationPath" ? iterationDateRangeForPath(path) : "");
+  const sprintField = field === "System.IterationPath";
+  const filtered = paths.filter(path => (
+    (!sprintField || !isNoSprintPath(path))
+    && (!queryKey || path.toLocaleLowerCase("en").includes(queryKey))
+  ));
+  const showNoSprint = sprintField && (!queryKey || "no sprint".includes(queryKey));
+  if (!filtered.length && !showNoSprint) return renderDetailFieldError(container, `No ${label.toLocaleLowerCase("en")} found.`);
+  const buttons = filtered.map(path => {
+    const currentSprint = sprintField && isCurrentIterationPath(path);
+    const button = createDetailFieldOption(path, iterationPathKey(path) === iterationPathKey(current), sprintField ? iterationDateRangeForPath(path) : "", currentSprint);
+    if (currentSprint) button.dataset.currentSprint = "true";
     if (!button.disabled) button.addEventListener("click", () => updateWorkItemField(item, field, path, label));
     return button;
-  }));
+  });
+  if (showNoSprint) {
+    const noSprint = createDetailFieldOption("No sprint", isNoSprintPath(current));
+    if (!noSprint.disabled) noSprint.addEventListener("click", () => updateWorkItemField(item, field, noSprintIterationPath(), label));
+    buttons.unshift(noSprint);
+  }
+  container.replaceChildren(...buttons);
+  if (sprintField && !queryKey) scrollCurrentSprintIntoView(container);
 }
 
 function iterationPathKey(value) {
   return String(value || "").replace(/^\\+|\\+$/g, "").toLocaleLowerCase("en");
+}
+
+// "No sprint" in Azure DevOps is the project's root iteration path.
+function noSprintIterationPath() {
+  return activeAzureContext().project || state.projectName || "";
+}
+
+function isNoSprintPath(path) {
+  const key = iterationPathKey(path);
+  return !key || key === iterationPathKey(noSprintIterationPath());
+}
+
+function currentIterationPath() {
+  const iteration = state.iterations.find(value => value.id === state.currentIterationId);
+  return iteration ? iteration.path || iteration.name || "" : "";
+}
+
+function isCurrentIterationPath(path) {
+  const key = iterationPathKey(currentIterationPath());
+  return Boolean(key) && iterationPathKey(path) === key;
+}
+
+function createCurrentSprintBadge() {
+  const badge = document.createElement("span");
+  badge.className = "sprint-current-badge";
+  badge.textContent = "Current";
+  return badge;
+}
+
+// Scrolls a dropdown list so the current sprint is in view, with one option above it still visible.
+function scrollCurrentSprintIntoView(container) {
+  const current = container.querySelector("[data-current-sprint]");
+  if (!current) return;
+  const offset = current.getBoundingClientRect().top - container.getBoundingClientRect().top;
+  const previous = current.previousElementSibling;
+  container.scrollTop = Math.max(0, container.scrollTop + offset - (previous ? previous.offsetHeight : 0) - 4);
 }
 
 function iterationForPath(path) {
@@ -12983,6 +13049,10 @@ function renderWorkItemIterationValue(path) {
     els.workItemIteration.textContent = "—";
     return;
   }
+  if (isNoSprintPath(path)) {
+    els.workItemIteration.textContent = "No sprint";
+    return;
+  }
   if (!dates) {
     els.workItemIteration.textContent = path;
     return;
@@ -12995,21 +13065,25 @@ function renderWorkItemIterationValue(path) {
   els.workItemIteration.replaceChildren(name, " ", range);
 }
 
-function createDetailFieldOption(label, selected = false, meta = "") {
+function createDetailFieldOption(label, selected = false, meta = "", currentSprint = false) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "issue-detail-field-option";
   button.disabled = selected;
   button.setAttribute("aria-selected", String(selected));
   const text = document.createElement("span");
-  if (meta) {
+  if (meta || currentSprint) {
     text.className = "issue-detail-field-option-label";
     const name = document.createElement("span");
     name.textContent = label;
-    const dates = document.createElement("span");
-    dates.className = "issue-detail-field-dates";
-    dates.textContent = meta;
-    text.append(name, dates);
+    text.append(name);
+    if (currentSprint) text.append(createCurrentSprintBadge());
+    if (meta) {
+      const dates = document.createElement("span");
+      dates.className = "issue-detail-field-dates";
+      dates.textContent = meta;
+      text.append(dates);
+    }
   } else {
     text.textContent = label;
   }
@@ -13055,7 +13129,7 @@ async function resolvePointsField(item) {
 async function updateWorkItemField(item, field, value, label) {
   closeWorkItemDetailFieldMenus();
   let remainingPoints = null;
-  if (field === "System.IterationPath" && workItemNeedsSprintSplit(item)) {
+  if (field === "System.IterationPath" && !isNoSprintPath(value) && workItemNeedsSprintSplit(item)) {
     remainingPoints = await requestRemainingPoints(item, value);
     if (remainingPoints === null) return;
   }

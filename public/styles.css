@@ -2168,3 +2168,7 @@ body.is-sprint-review main:not(.work-item-main) { padding: 0; }
   .roadmap-slide-panel > header { flex-direction: column; }
   .sprint-review-roadmap-slide { --gantt-label: 110px; }
 }
+
+.sprint-current-badge { display: inline-block; flex: none; margin-left: 6px; padding: 1px 6px; border-radius: 3px; color: var(--blue-700); background: var(--blue-100); font-size: 10px; font-weight: 700; line-height: 14px; letter-spacing: .02em; text-transform: uppercase; vertical-align: 1px; }
+.issue-detail-field-option-label > .sprint-current-badge { margin-left: 0; }
+[data-theme="dark"] .sprint-current-badge { color: #cce0ff; background: #1c3b5c; }
