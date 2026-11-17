@@ -3046,7 +3046,8 @@ function toggleSprintMenu() {
   els.sprintTitle.setAttribute("aria-expanded", "true");
   els.sprintMenuSearch.value = "";
   renderSprintMenuOptions();
-  requestAnimationFrame(() => els.sprintMenuSearch.focus());
+  scrollCurrentSprintIntoView(els.sprintMenuOptions);
+  requestAnimationFrame(() => els.sprintMenuSearch.focus({ preventScroll: true }));
 }
 
 function closeSprintMenu() {
@@ -3075,6 +3076,7 @@ function renderSprintMenuOptions() {
     const selected = iteration.id === state.iteration?.id;
     button.setAttribute("aria-selected", String(selected));
     button.disabled = selected;
+    if (iteration.id === state.currentIterationId) button.dataset.currentSprint = "true";
     const content = document.createElement("span");
     content.className = "sprint-menu-option-content";
     const name = document.createElement("strong");
@@ -8465,15 +8467,34 @@ function createFilterMenu(definition) {
             setLoading(false);
           }
         }
+        const scrollTop = dropdown.scrollTop;
         renderCurrentView();
         const reopened = [...els.filterControls.querySelectorAll(".filter-menu")][FILTER_DEFINITIONS.indexOf(definition)];
-        if (reopened) reopened.open = true;
+        if (reopened) {
+          reopened.dataset.keepScroll = String(scrollTop);
+          reopened.open = true;
+        }
       });
       const text = document.createElement("span");
       text.textContent = option;
       label.append(input, text);
+      if (definition.key === "sprint" && option === currentIterationName()) {
+        label.dataset.currentSprint = "true";
+        text.append(" ", createCurrentSprintBadge());
+      }
       dropdown.append(label);
     }
+  }
+  if (definition.key === "sprint") {
+    details.addEventListener("toggle", () => {
+      if (!details.open) return;
+      if (details.dataset.keepScroll !== undefined) {
+        dropdown.scrollTop = Number(details.dataset.keepScroll);
+        delete details.dataset.keepScroll;
+      } else {
+        scrollCurrentSprintIntoView(dropdown);
+      }
+    });
   }
   details.append(summary, dropdown);
   return details;
@@ -13025,6 +13046,11 @@ function isNoSprintPath(path) {
 function currentIterationPath() {
   const iteration = state.iterations.find(value => value.id === state.currentIterationId);
   return iteration ? iteration.path || iteration.name || "" : "";
+}
+
+function currentIterationName() {
+  const iteration = state.iterations.find(value => value.id === state.currentIterationId);
+  return iteration ? iteration.name || "" : "";
 }
 
 function isCurrentIterationPath(path) {
