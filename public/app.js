@@ -2389,7 +2389,6 @@ function createRoadmapSpanCell(epic, iterations) {
     if (occupied.has(index)) return;
     const empty = document.createElement("span");
     empty.className = "roadmap-lane-empty";
-    empty.textContent = "No features";
     empty.style.gridArea = `1 / ${index + 1}`;
     grid.append(empty);
   });
@@ -2443,7 +2442,6 @@ function createRoadmapLane(epic, iteration, lane, label) {
   else {
     const empty = document.createElement("span");
     empty.className = "roadmap-lane-empty";
-    empty.textContent = "No features";
     cards.append(empty);
   }
   section.append(heading, cards);
