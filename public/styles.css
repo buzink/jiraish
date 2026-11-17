@@ -1848,6 +1848,12 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 .issue-detail-field-option-label > .issue-detail-field-dates { margin-left: auto; flex: none; }
 
 /* Sprint review slides */
+.sprint-stepper { display: inline-flex; gap: 2px; margin-left: 10px; vertical-align: middle; }
+.sprint-stepper[hidden] { display: none; }
+.sprint-step-button { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 3px; color: var(--muted); background: transparent; font: inherit; font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer; }
+.sprint-step-button:hover:not(:disabled), .sprint-step-button:focus-visible { border-color: var(--line); color: var(--blue-600); background: rgba(9, 30, 66, .06); }
+.sprint-step-button:disabled { opacity: .35; cursor: default; }
+[data-theme="dark"] .sprint-step-button:hover:not(:disabled), [data-theme="dark"] .sprint-step-button:focus-visible { border-color: #454f59; color: #579dff; background: rgba(255, 255, 255, .06); }
 .sprint-review-link { margin-left: 12px; color: var(--blue-600); font-weight: 600; text-decoration: none; }
 .sprint-review-link:hover, .sprint-review-link:focus-visible { text-decoration: underline; }
 .sprint-review-view { display: flex; flex-direction: column; gap: 16px; padding: 24px; min-height: calc(100vh - 56px); background: var(--board-bg); }

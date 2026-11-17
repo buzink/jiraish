@@ -366,6 +366,9 @@ const els = {
   searchViews: [...document.querySelectorAll("[data-search-view]")],
   reviewViews: [...document.querySelectorAll("[data-review-view]")],
   sprintReviewLink: document.querySelector("#sprintReviewLink"),
+  sprintStepper: document.querySelector("#sprintStepper"),
+  sprintPrevious: document.querySelector("#sprintPrevious"),
+  sprintNext: document.querySelector("#sprintNext"),
   sprintReviewStage: document.querySelector("#sprintReviewStage"),
   sprintReviewBack: document.querySelector("#sprintReviewBack"),
   sprintReviewPrev: document.querySelector("#sprintReviewPrev"),
@@ -1903,6 +1906,7 @@ function render() {
   const reviewable = Boolean(state.iteration) && !filteredIterations.length;
   els.sprintReviewLink.hidden = !reviewable;
   if (reviewable) els.sprintReviewLink.href = appRouteHash({ view: "review", sprint: sprintRouteValue() });
+  renderSprintStepper(reviewable);
 
   const query = state.search.trim().toLowerCase();
   const visibleStories = state.stories.filter(item => matchesFilters(item, query));
@@ -1930,6 +1934,28 @@ function chronologicalIterations() {
     const bDate = new Date(b.attributes?.startDate || b.attributes?.finishDate || 0).getTime();
     return aDate - bDate || a.name.localeCompare(b.name, "en", { numeric: true });
   });
+}
+
+function adjacentIteration(step) {
+  const ordered = chronologicalIterations();
+  const index = ordered.findIndex(iteration => iteration.id === state.iteration?.id);
+  return index === -1 ? null : ordered[index + step] || null;
+}
+
+function renderSprintStepper(visible) {
+  els.sprintStepper.hidden = !visible;
+  if (!visible) return;
+  const previous = adjacentIteration(-1);
+  const next = adjacentIteration(1);
+  els.sprintPrevious.disabled = !previous;
+  els.sprintNext.disabled = !next;
+  els.sprintPrevious.title = previous ? `Previous sprint: ${previous.name}` : "No previous sprint";
+  els.sprintNext.title = next ? `Next sprint: ${next.name}` : "No next sprint";
+}
+
+function stepSprint(step) {
+  const iteration = adjacentIteration(step);
+  if (iteration && !state.loading) selectOverviewIteration(iteration);
 }
 
 function newestIterations() {
@@ -16039,6 +16065,8 @@ els.workItemTitleInput.addEventListener("keydown", event => {
   if (discardWorkItemTitleEditor()) els.workItemTitle.focus();
 });
 els.sprintTitle.addEventListener("click", event => { event.stopPropagation(); toggleSprintMenu(); });
+els.sprintPrevious.addEventListener("click", () => stepSprint(-1));
+els.sprintNext.addEventListener("click", () => stepSprint(1));
 els.sprintMenu.addEventListener("click", event => event.stopPropagation());
 els.sprintMenuSearch.addEventListener("input", renderSprintMenuOptions);
 els.sprintMenuSearch.addEventListener("keydown", event => {

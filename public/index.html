@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261117-sprint-menu-scroll" />
+    <link rel="stylesheet" href="styles.css?v=20261117-sprint-stepper" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -82,7 +82,7 @@
             </div>
             <span id="sprintBadge" class="sprint-badge">Current sprint</span>
           </div>
-          <p class="sprint-meta"><span id="sprintMeta">Connect Azure DevOps to load the sprint board.</span><a id="sprintReviewLink" class="sprint-review-link" href="#/sprint-review" hidden>Review</a></p>
+          <p class="sprint-meta"><span id="sprintMeta">Connect Azure DevOps to load the sprint board.</span><span id="sprintStepper" class="sprint-stepper" hidden><button id="sprintPrevious" class="sprint-step-button" type="button" aria-label="Previous sprint" title="Previous sprint">&lt;</button><button id="sprintNext" class="sprint-step-button" type="button" aria-label="Next sprint" title="Next sprint">&gt;</button></span><a id="sprintReviewLink" class="sprint-review-link" href="#/sprint-review" hidden>Review</a></p>
         </div>
         <div class="heading-actions">
           <details id="boardGroupControl" class="board-group-control">
@@ -1299,6 +1299,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261117-sprint-menu-scroll" defer></script>
+    <script src="app.js?v=20261117-sprint-stepper" defer></script>
   </body>
 </html>
