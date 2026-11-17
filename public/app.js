@@ -7530,8 +7530,9 @@ async function updateBacklogItemsToSprint(item, iterationPath) {
   ));
   if (!targets.length) return;
 
+  // Only offer the split for a single item; bulk moves just change the sprint.
   const remainingById = new Map();
-  for (const target of targets) {
+  for (const target of targets.length === 1 ? targets : []) {
     if (toNoSprint || !workItemNeedsSprintSplit(target)) continue;
     const remaining = await requestRemainingPoints(target, iterationPath);
     if (remaining === null) return;
