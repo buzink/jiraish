@@ -10490,7 +10490,7 @@ async function githubWorkItemsBetweenBuilds(fromSnapshot, targetSnapshot, config
           kind: "commit",
           repository,
           sha: commit.sha,
-          title: String(commit.commit?.message || "").split("\n")[0] || commit.sha.slice(0, 7),
+          title: String(commit.commit?.message || "").split("\n")[0] || commit.sha.slice(0, 8),
           author: commit.author?.login || commit.commit?.author?.name || "",
           state: "",
           url: commit.html_url || `https://github.com/${repository}/commit/${commit.sha}`
@@ -10764,7 +10764,7 @@ function createLatestCommitRow(commit, safeSha, repository, entry) {
   shaLink.href = commit.url;
   shaLink.target = "_blank";
   shaLink.rel = "noopener noreferrer";
-  shaLink.textContent = commit.sha.slice(0, 7);
+  shaLink.textContent = commit.sha.slice(0, 8);
   shaLink.title = commit.sha;
   commitCell.append(shaLink);
   if (safe) {
@@ -10835,7 +10835,7 @@ function createLatestCommitRow(commit, safeSha, repository, entry) {
   menuButton.className = "latest-commits-menu-button";
   menuButton.textContent = "⋮";
   menuButton.title = "Commit actions";
-  menuButton.setAttribute("aria-label", `Actions for commit ${commit.sha.slice(0, 7)}`);
+  menuButton.setAttribute("aria-label", `Actions for commit ${commit.sha.slice(0, 8)}`);
   menuButton.setAttribute("aria-haspopup", "menu");
   menuButton.setAttribute("aria-expanded", "false");
   menuButton.addEventListener("click", event => {
@@ -10880,7 +10880,7 @@ async function copyLatestCommitId(commit) {
   try {
     await navigator.clipboard.writeText(commit.sha);
     els.latestCommitsStatus.classList.remove("is-error");
-    els.latestCommitsStatus.textContent = `Copied ${commit.sha.slice(0, 7)} to the clipboard.`;
+    els.latestCommitsStatus.textContent = `Copied ${commit.sha.slice(0, 8)} to the clipboard.`;
   } catch {
     els.latestCommitsStatus.classList.add("is-error");
     els.latestCommitsStatus.textContent = "The commit id could not be copied.";
@@ -10923,7 +10923,7 @@ function buildCommitBranch(definition) {
 async function openBuildCommitDialog(repository, commit) {
   state.buildCommit = { repository, commit, definitions: [] };
   els.buildCommitRepository.textContent = repository;
-  els.buildCommitSha.textContent = commit.sha.slice(0, 7);
+  els.buildCommitSha.textContent = commit.sha.slice(0, 8);
   els.buildCommitMessage.textContent = commit.message;
   els.buildCommitError.textContent = "";
   els.buildCommitPipeline.replaceChildren(new Option("Loading pipelines…", ""));
@@ -10999,7 +10999,7 @@ async function submitBuildCommit(event) {
     closeBuildCommitDialog();
     els.latestCommitsStatus.classList.remove("is-error");
     els.latestCommitsStatus.replaceChildren(
-      `Started ${definition.name} ${build?.buildNumber || ""} for ${current.commit.sha.slice(0, 7)}. `
+      `Started ${definition.name} ${build?.buildNumber || ""} for ${current.commit.sha.slice(0, 8)}. `
     );
     const url = build?._links?.web?.href;
     if (url) {
@@ -11034,7 +11034,7 @@ function createLatestCommitsRepository(entry) {
   title.textContent = entry.repository;
   const summary = document.createElement("small");
   summary.textContent = safeCommit
-    ? `Latest safe commit: ${safeCommit.sha.slice(0, 7)} · ${safeCommit.date ? formatDateTime(safeCommit.date) : ""}`
+    ? `Latest safe commit: ${safeCommit.sha.slice(0, 8)} · ${safeCommit.date ? formatDateTime(safeCommit.date) : ""}`
     : entry.commits.length ? `No safe commit in the latest ${entry.commits.length} commits.` : "";
   heading.append(title, summary);
   section.append(heading);
@@ -11165,7 +11165,7 @@ function createReadinessUnlinkedChange(change) {
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   link.dataset.itemType = change.kind === "pull" ? "pull-request" : "commit";
-  const label = change.kind === "pull" ? `#${change.number}` : change.sha.slice(0, 7);
+  const label = change.kind === "pull" ? `#${change.number}` : change.sha.slice(0, 8);
   const kind = change.kind === "pull" ? "Pull request" : "Commit";
   const metadata = [
     kind,
