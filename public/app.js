@@ -4025,15 +4025,28 @@ function sprintReviewArea(item) {
   return String(item.area || "").split("\\").filter(Boolean).pop() || "—";
 }
 
+// Stories and bugs without a Feature parent are grouped under a grey "Other" pill.
+const SPRINT_REVIEW_OTHER_FEATURE = "other";
+
+function sprintReviewFeatureKey(item) {
+  return item.parentId && String(item.parentType || "").toLocaleLowerCase("en") === "feature"
+    ? Number(item.parentId)
+    : SPRINT_REVIEW_OTHER_FEATURE;
+}
+
 function sprintReviewFeatures(items) {
   const features = new Map();
+  let other = 0;
   for (const item of items) {
-    if (!item.parentId || String(item.parentType || "").toLocaleLowerCase("en") !== "feature") continue;
-    const feature = features.get(item.parentId) || { id: item.parentId, title: item.parentTitle || workItemKey(item.parentId), count: 0 };
+    const key = sprintReviewFeatureKey(item);
+    if (key === SPRINT_REVIEW_OTHER_FEATURE) { other++; continue; }
+    const feature = features.get(key) || { id: key, title: item.parentTitle || workItemKey(key), count: 0 };
     feature.count++;
-    features.set(item.parentId, feature);
+    features.set(key, feature);
   }
-  return [...features.values()].sort((a, b) => b.count - a.count || a.title.localeCompare(b.title, "en", { numeric: true, sensitivity: "base" }));
+  const sorted = [...features.values()].sort((a, b) => b.count - a.count || a.title.localeCompare(b.title, "en", { numeric: true, sensitivity: "base" }));
+  if (sorted.length && other) sorted.push({ id: SPRINT_REVIEW_OTHER_FEATURE, title: "Other", count: other, other: true });
+  return sorted;
 }
 
 function sprintReviewFeaturesHtml(features, { activeId = null, expanded = false } = {}) {
@@ -4041,10 +4054,16 @@ function sprintReviewFeaturesHtml(features, { activeId = null, expanded = false 
   if (state.reviewExport) expanded = true;
   const limit = 8;
   const collapsed = !expanded && features.length > limit;
-  let shown = collapsed ? features.slice(0, limit - 1) : features;
+  const otherFeature = features.find(feature => feature.other) || null;
+  const named = features.filter(feature => !feature.other);
+  // "Other" always stays visible as the last pill.
+  let shown = collapsed ? [...named.slice(0, limit - 1 - (otherFeature ? 1 : 0)), ...(otherFeature ? [otherFeature] : [])] : features;
   // Keep the selected feature visible even when it falls in the collapsed part.
   if (collapsed && activeId && !shown.some(feature => feature.id === activeId)) {
-    shown = [...shown.slice(0, -1), features.find(feature => feature.id === activeId)];
+    const active = features.find(feature => feature.id === activeId);
+    shown = otherFeature
+      ? [...shown.slice(0, -2), active, otherFeature]
+      : [...shown.slice(0, -1), active];
   }
   const hidden = features.length - shown.length;
   return `<aside class="sprint-review-features${activeId ? " is-filtered" : ""}" aria-label="Features">
@@ -4053,7 +4072,7 @@ function sprintReviewFeaturesHtml(features, { activeId = null, expanded = false 
       <span>Features</span>
     </div>
     <ul>
-      ${shown.map(feature => `<li style="--feature-hue: ${(features.indexOf(feature) * 47 + 200) % 360}">
+      ${shown.map(feature => `<li${feature.other ? ` class="is-other"` : ` style="--feature-hue: ${(features.indexOf(feature) * 47 + 200) % 360}"`}>
         <button class="sprint-review-feature${feature.id === activeId ? " is-active" : ""}" type="button" data-review-feature="${feature.id}" data-feature-title="${escapeHtml(feature.title)}" aria-pressed="${feature.id === activeId}" title="${escapeHtml(feature.title)}">
           <span class="sprint-review-feature-title">${escapeHtml(feature.title)}</span>
           <span class="sprint-review-feature-count" aria-label="${feature.count} ${feature.count === 1 ? "item" : "items"}">${feature.count}</span>
@@ -4070,14 +4089,14 @@ function sprintReviewTableSlide(title, subtitle, allItems, emptyText, { showPers
   return slideIndex => {
     const filter = state.reviewFeatureFilters.get(slideIndex) || {};
     const active = features.find(feature => feature.id === filter.featureId) || null;
-    const items = active ? allItems.filter(item => item.parentId === active.id) : allItems;
+    const items = active ? allItems.filter(item => sprintReviewFeatureKey(item) === active.id) : allItems;
     const shownSubtitle = active
       ? `${items.length} of ${allItems.length} ${allItems.length === 1 ? "story or bug" : "stories and bugs"} · ${active.title}`
       : subtitle;
     return sprintReviewTableHtml(title, shownSubtitle, items, emptyText, {
       showPerson,
       showDemo,
-      featuresHtml: sprintReviewFeaturesHtml(features, { activeId: active?.id || null, expanded: filter.expanded })
+      featuresHtml: sprintReviewFeaturesHtml(features, { activeId: active?.id ?? null, expanded: filter.expanded })
     });
   };
 }
@@ -4091,7 +4110,7 @@ function sprintReviewTableHtml(title, subtitle, items, emptyText, { showPerson =
     const link = state.reviewExport
       ? `<a class="sprint-review-item-link" href="${escapeHtml(workItemWebUrl(item.id))}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(workItemKey(item.id))} in Azure DevOps">${label}</a>`
       : `<button class="sprint-review-item-link" type="button" data-review-item="${Number(item.id)}" title="Open ${escapeHtml(workItemKey(item.id))}">${label}</button>`;
-    return `<tr class="sprint-review-item-row" data-review-item="${Number(item.id)}" data-feature="${item.parentId ? Number(item.parentId) : ""}">
+    return `<tr class="sprint-review-item-row" data-review-item="${Number(item.id)}" data-feature="${sprintReviewFeatureKey(item)}">
       <td>${link}</td>
       <td><span class="work-type"><span class="type-icon ${isBug ? "bug" : ""}">${isBug ? "!" : "◆"}</span>${escapeHtml(isBug ? "Bug" : "Story")}</span></td>
       <td>${escapeHtml(sprintReviewArea(item))}</td>
@@ -16612,7 +16631,8 @@ els.sprintReviewStage.addEventListener("click", event => {
   const feature = event.target.closest("[data-review-feature]");
   const filter = state.reviewFeatureFilters.get(state.reviewSlide) || {};
   if (feature) {
-    const featureId = Number(feature.dataset.reviewFeature);
+    const rawFeature = feature.dataset.reviewFeature;
+    const featureId = rawFeature === SPRINT_REVIEW_OTHER_FEATURE ? rawFeature : Number(rawFeature);
     setSprintReviewFeatureFilter({ ...filter, featureId: filter.featureId === featureId ? null : featureId });
   } else if (event.target.closest("[data-review-feature-reset]")) {
     setSprintReviewFeatureFilter({ ...filter, featureId: null });

@@ -1910,6 +1910,10 @@ body.is-sprint-review main:not(.work-item-main) { padding: 0; }
 .sprint-review-features li.is-more .sprint-review-feature { padding-right: .8em; background: transparent; border-style: dashed; border-color: var(--line); color: var(--muted); }
 [data-theme="dark"] .sprint-review-features li:not(.is-more) .sprint-review-feature { background: hsl(var(--feature-hue) 45% 20%); border-color: hsl(var(--feature-hue) 45% 32%); color: hsl(var(--feature-hue) 80% 88%); }
 [data-theme="dark"] .sprint-review-feature-count { background: hsl(var(--feature-hue) 65% 55%); color: #101214; }
+.sprint-review-features li.is-other { --feature-color: #6b778c; }
+.sprint-review-features li.is-other .sprint-review-feature { background: #f1f2f4; border-color: #dcdfe4; color: #44546f; }
+[data-theme="dark"] .sprint-review-features li.is-other .sprint-review-feature { background: #2c333a; border-color: #454f59; color: #c7d1db; }
+[data-theme="dark"] .sprint-review-features li.is-other .sprint-review-feature-count { background: #8c9bab; color: #101214; }
 @media (max-width: 700px) {
   .sprint-review-table-slide header { flex-direction: column; }
   .sprint-review-features { flex-basis: auto; }
