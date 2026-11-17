@@ -366,7 +366,6 @@ const els = {
   searchViews: [...document.querySelectorAll("[data-search-view]")],
   reviewViews: [...document.querySelectorAll("[data-review-view]")],
   sprintReviewLink: document.querySelector("#sprintReviewLink"),
-  sprintStepper: document.querySelector("#sprintStepper"),
   sprintPrevious: document.querySelector("#sprintPrevious"),
   sprintNext: document.querySelector("#sprintNext"),
   sprintReviewStage: document.querySelector("#sprintReviewStage"),
@@ -1943,7 +1942,8 @@ function adjacentIteration(step) {
 }
 
 function renderSprintStepper(visible) {
-  els.sprintStepper.hidden = !visible;
+  els.sprintPrevious.hidden = !visible;
+  els.sprintNext.hidden = !visible;
   if (!visible) return;
   const previous = adjacentIteration(-1);
   const next = adjacentIteration(1);
