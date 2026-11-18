@@ -10670,9 +10670,51 @@ function latestCommitEnvironments(entry, commit) {
   });
 }
 
+// Azure DevOps builds of the repository queued since the oldest loaded commit, keyed by commit
+// sha. queryOrder makes minTime filter on queue time; by default it filters on finish time and
+// would drop builds that are still running.
+// Per commit a branch build (not a pull-request merge build) of the pipeline named after the
+// repository wins over side pipelines such as Cypress or Storybook, then the newest build.
+async function loadLatestCommitBuilds(entry) {
+  const oldest = entry.commits.reduce((min, commit) => Math.min(min, new Date(commit.date || 0).getTime() || min), Date.now());
+  const minTime = new Date(oldest - 24 * 60 * 60 * 1000).toISOString();
+  const result = await azure(`/_apis/build/builds?repositoryId=${encodeURIComponent(entry.repository)}&repositoryType=GitHub&queryOrder=queueTimeDescending&minTime=${encodeURIComponent(minTime)}&$top=1000&api-version=7.1`);
+  const owner = entry.repository.split("/")[0].toLocaleLowerCase("en");
+  const name = entry.repository.split("/").pop().toLocaleLowerCase("en");
+  const rank = build => {
+    const definition = String(build.definition?.name || "").toLocaleLowerCase("en");
+    const branch = /^refs\/heads\//i.test(build.sourceBranch || "") ? 0 : 1;
+    const pipeline = definition === `${owner}.${name}` ? 0 : definition.endsWith(name) ? 1 : 2;
+    return branch * 10 + pipeline;
+  };
+  const builds = new Map();
+  (result?.value || []).forEach(build => {
+    const sha = String(build.sourceVersion || "").toLocaleLowerCase("en");
+    if (!sha) return;
+    const existing = builds.get(sha);
+    if (!existing || rank(build) < rank(existing) || (rank(build) === rank(existing) && Number(build.id) > Number(existing.id))) builds.set(sha, build);
+  });
+  return builds;
+}
+
+async function refreshLatestCommitBuilds(entry, requestToken) {
+  try {
+    const builds = await loadLatestCommitBuilds(entry);
+    if (requestToken !== state.latestCommits.requestToken) return;
+    entry.builds = builds;
+    entry.buildsError = "";
+  } catch (error) {
+    if (requestToken !== state.latestCommits.requestToken) return;
+    console.error(error);
+    entry.builds = new Map();
+    entry.buildsError = error.auth ? "Builds could not be loaded. The PAT requires ‘Build: Read’." : error.message || "Builds could not be loaded.";
+  }
+  renderLatestCommits();
+}
+
 async function loadLatestCommitsRepository(repository) {
   const requestToken = state.latestCommits.requestToken;
-  const entry = { repository, commits: [], hasMore: false, page: 1, visible: LATEST_COMMITS_VISIBLE_STEP, loading: true, loadingMore: false, error: "", environments: null, environmentsError: "" };
+  const entry = { repository, commits: [], hasMore: false, page: 1, visible: LATEST_COMMITS_VISIBLE_STEP, loading: true, loadingMore: false, error: "", environments: null, environmentsError: "", builds: null, buildsError: "" };
   state.latestCommits.entries.set(repository, entry);
   renderLatestCommits();
   try {
@@ -10687,6 +10729,7 @@ async function loadLatestCommitsRepository(repository) {
   entry.loading = false;
   renderLatestCommits();
   if (!entry.commits.length) return;
+  const buildsPromise = refreshLatestCommitBuilds(entry, requestToken);
   try {
     const environments = await loadLatestCommitEnvironments(entry);
     if (requestToken !== state.latestCommits.requestToken) return;
@@ -10698,6 +10741,7 @@ async function loadLatestCommitsRepository(repository) {
     entry.environmentsError = error.message || "Deployments could not be loaded.";
   }
   renderLatestCommits();
+  await buildsPromise;
 }
 
 // Only the selected repositories are loaded, because every commit needs a GitHub
@@ -10748,6 +10792,7 @@ async function showMoreLatestCommits(repository) {
       entry.page += 1;
       entry.hasMore = page.hasMore;
       entry.commits.push(...page.commits);
+      refreshLatestCommitBuilds(entry, requestToken);
     } catch (error) {
       entry.error = error.message || "More commits could not be loaded.";
     }
@@ -10804,6 +10849,22 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
       : "Newest commit that can go from Acceptance to Production: its work item and those of all older commits are Resolved, Closed, Done or Completed. A commit without a work item counts when it is already on Production.";
     commitCell.append(badge);
   });
+  const buildCell = document.createElement("td");
+  buildCell.className = "latest-commits-build";
+  const build = entry.builds?.get(commit.sha.toLocaleLowerCase("en"));
+  if (build) {
+    const buildLink = document.createElement("a");
+    buildLink.href = `${activeAzureContext().webBase}/_build/results?buildId=${Number(build.id)}&view=results`;
+    buildLink.target = "_blank";
+    buildLink.rel = "noopener noreferrer";
+    buildLink.textContent = `#${build.buildNumber || build.id}`;
+    buildLink.title = `${build.definition?.name || "Build"} · ${String(build.sourceBranch || "").replace(/^refs\/heads\//, "")}${build.result ? ` · ${build.result}` : build.status ? ` · ${build.status}` : ""}`;
+    buildCell.append(buildLink);
+  } else {
+    buildCell.textContent = entry.builds ? "—" : "…";
+    buildCell.classList.add("latest-commits-muted");
+    buildCell.title = entry.builds ? entry.buildsError || "No Azure DevOps build found for this commit." : "Loading builds…";
+  }
   const storyCell = document.createElement("td");
   const statusCell = document.createElement("td");
   const sprintCell = document.createElement("td");
@@ -10873,7 +10934,7 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
     openLatestCommitMenu(menuButton, repository, commit);
   });
   actionsCell.append(menuButton);
-  row.append(dateCell, commitCell, storyCell, statusCell, sprintCell, environmentsCell, userCell, messageCell, actionsCell);
+  row.append(dateCell, commitCell, buildCell, storyCell, statusCell, sprintCell, environmentsCell, userCell, messageCell, actionsCell);
   return row;
 }
 
@@ -11088,7 +11149,7 @@ function createLatestCommitsRepository(entry) {
     wrapper.className = "latest-commits-table-wrap";
     const table = document.createElement("table");
     table.className = "latest-commits-table";
-    table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Story</th><th>Status</th><th>Sprint</th><th>Environments</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Build</th><th>Story</th><th>Status</th><th>Sprint</th><th>Environments</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
     const body = document.createElement("tbody");
     body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeShas, entry.repository, entry)));
     table.append(body);
