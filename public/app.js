@@ -570,8 +570,6 @@ const els = {
   sprintWorkingDays: document.querySelector("#sprintWorkingDays"),
   sprintProgressBar: document.querySelector("#sprintProgressBar"),
   sprintProgressLegend: document.querySelector("#sprintProgressLegend"),
-  connectionDialog: document.querySelector("#connectionDialog"),
-  connectionForm: document.querySelector("#connectionForm"),
   orgUrl: document.querySelector("#orgUrlInput"),
   pat: document.querySelector("#patInput"),
   githubToken: document.querySelector("#githubTokenInput"),
@@ -584,8 +582,18 @@ const els = {
   litellmCustomModel: document.querySelector("#litellmCustomModelInput"),
   loadLitellmModels: document.querySelector("#loadLitellmModels"),
   litellmStatus: document.querySelector("#litellmStatus"),
-  connectionError: document.querySelector("#connectionError"),
-  cancelConnection: document.querySelector("#cancelConnection"),
+  azureSettingsSection: document.querySelector("#azureSettingsSection"),
+  azureBoardSettings: document.querySelector("#azureBoardSettings"),
+  azureBoardHint: document.querySelector("#azureBoardHint"),
+  testAzureConnection: document.querySelector("#testAzureConnection"),
+  azureConnectionStatus: document.querySelector("#azureConnectionStatus"),
+  testGithubConnection: document.querySelector("#testGithubConnection"),
+  githubConnectionStatus: document.querySelector("#githubConnectionStatus"),
+  githubSettingsHint: document.querySelector("#githubSettingsHint"),
+  testAnalyticsConnection: document.querySelector("#testAnalyticsConnection"),
+  analyticsConnectionStatus: document.querySelector("#analyticsConnectionStatus"),
+  testExtraSourceConnection: document.querySelector("#testExtraSourceConnection"),
+  extraSourceConnectionStatus: document.querySelector("#extraSourceConnectionStatus"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
   teamSelect: document.querySelector("#teamSelect"),
@@ -597,7 +605,6 @@ const els = {
   githubAllRepos: document.querySelector("#githubAllRepos"),
   githubRepoOptions: document.querySelector("#githubRepoOptions"),
   githubRepoStatus: document.querySelector("#githubRepoStatus"),
-  changeConnection: document.querySelector("#changeConnection"),
   createWorkItemDialog: document.querySelector("#createWorkItemDialog"),
   createWorkItemForm: document.querySelector("#createWorkItemForm"),
   createWorkItemTypeLabel: document.querySelector("#createWorkItemTypeLabel"),
@@ -5137,7 +5144,7 @@ async function github(path) {
   try { result = await response.json(); } catch {}
   if (!response.ok) {
     const message = response.status === 401
-      ? "GitHub rejected the API key. Update it under Change connection."
+      ? "GitHub rejected the API key. Update it under Settings › GitHub."
       : result?.message || `GitHub request failed (${response.status}).`;
     const error = new Error(message);
     error.status = response.status;
@@ -14624,7 +14631,7 @@ function renderWorkItemPullRequests(pullRequests, loading = false, error = "") {
   els.workItemPullRequestCount.textContent = String(pullRequests.length);
   els.workItemPullRequestsStatus.classList.toggle("is-error", Boolean(error));
   if (!state.githubToken) {
-    els.workItemPullRequestsStatus.textContent = "Add a GitHub API key under Change connection to load pull requests.";
+    els.workItemPullRequestsStatus.textContent = "Add a GitHub API key under Settings › GitHub to load pull requests.";
     els.workItemPullRequests.replaceChildren();
     return;
   }
@@ -15314,8 +15321,16 @@ function renderEmptyBoard() {
   }
 }
 
-function showSettings() {
-  if (!state.pat) return showConnection();
+function showSettings({ connectionError = "" } = {}) {
+  els.orgUrl.value = state.orgUrl;
+  els.pat.value = state.pat;
+  els.githubToken.value = state.githubToken;
+  [els.azureConnectionStatus, els.githubConnectionStatus, els.analyticsConnectionStatus, els.extraSourceConnectionStatus]
+    .forEach(status => setConnectionStatus(status, ""));
+  if (connectionError) setConnectionStatus(els.azureConnectionStatus, connectionError, "error");
+  const boardReady = Boolean(state.pat && state.teams.length);
+  els.azureBoardSettings.hidden = !boardReady;
+  els.azureBoardHint.hidden = boardReady;
   els.teamSelect.replaceChildren(...state.teams.map(team => {
     const option = document.createElement("option");
     option.value = team.id;
@@ -15323,8 +15338,9 @@ function showSettings() {
     option.selected = team.id === state.teamId;
     return option;
   }));
-  renderStateMappings({ keepDraft: false });
-  els.githubRepoSettings.hidden = !state.githubToken;
+  if (boardReady) renderStateMappings({ keepDraft: false });
+  else els.stateMappings.replaceChildren();
+  updateGithubSettingsVisibility();
   els.githubAllOwners.checked = state.githubAllOwners;
   els.githubOwnerOptions.replaceChildren();
   els.githubOwnerStatus.textContent = "";
@@ -15342,12 +15358,156 @@ function showSettings() {
   els.analyticsExtraSource.value = state.analyticsExtraSource;
   renderLitellmModelOptions([], state.litellmModel);
   els.litellmStatus.textContent = "";
-  els.litellmStatus.classList.remove("is-error");
+  els.litellmStatus.classList.remove("is-error", "is-success");
   updateGithubOwnerSettings();
   updateGithubRepositorySettings();
-  els.settingsDialog.showModal();
+  if (!els.settingsDialog.open) els.settingsDialog.showModal();
+  if (state.gaClientId) loadGoogleIdentity().catch(() => {});
   if (state.githubToken) loadGithubOwnerChoices();
-  loadSettingsWorkItemStates();
+  if (boardReady) loadSettingsWorkItemStates();
+  if (!state.pat || connectionError) {
+    els.settingsDialog.scrollTop = 0;
+    (state.orgUrl ? els.pat : els.orgUrl).focus();
+  }
+}
+
+function updateGithubSettingsVisibility() {
+  const token = els.githubToken.value.trim();
+  const savedToken = Boolean(state.githubToken) && token === state.githubToken;
+  els.githubRepoSettings.hidden = !savedToken;
+  els.githubSettingsHint.hidden = savedToken || !token;
+}
+
+function setConnectionStatus(element, message, status = "") {
+  element.textContent = message;
+  element.classList.toggle("is-error", status === "error");
+  element.classList.toggle("is-success", status === "success");
+}
+
+async function runConnectionTest(button, status, test) {
+  button.disabled = true;
+  setConnectionStatus(status, "Testing…");
+  try {
+    setConnectionStatus(status, await test(), "success");
+  } catch (error) {
+    console.warn(error);
+    setConnectionStatus(status, error.message || "The connection test failed.", "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function testAzureConnection() {
+  let parsed;
+  try { parsed = parseAzureUrl(els.orgUrl.value); }
+  catch { throw new Error("Enter a valid Azure DevOps URL."); }
+  const pat = els.pat.value.trim();
+  if (!pat) throw new Error("Enter a PAT.");
+  const request = async url => {
+    let response;
+    try {
+      response = await fetch(url, { headers: { Accept: "application/json", Authorization: `Basic ${btoa(`:${pat}`)}` } });
+    } catch {
+      throw new Error(`Azure DevOps organization "${parsed.organization}" could not be reached.`);
+    }
+    if (response.status === 401 || response.status === 403 || response.status === 203) {
+      throw new Error("The PAT is invalid, expired, or does not have the required permissions.");
+    }
+    const result = await response.json().catch(() => null);
+    if (response.status === 404) throw new Error(result?.message || "Azure DevOps could not find this organization or project.");
+    if (!response.ok || !result) throw new Error(result?.message || `Azure DevOps returned error ${response.status}.`);
+    return result;
+  };
+  const connection = await request(`${parsed.orgBase}/_apis/connectionData?connectOptions=0&lastChangeId=-1&lastChangeId64=-1`);
+  const identity = connection.authenticatedUser || connection.authorizedUser || {};
+  const user = identity.customDisplayName || identity.providerDisplayName || identity.displayName || "";
+  let target = parsed.organization;
+  if (parsed.project) {
+    const project = await request(`${parsed.orgBase}/_apis/projects/${encodeURIComponent(parsed.project)}?api-version=7.1`);
+    target = `${parsed.organization} / ${project.name || parsed.project}`;
+  }
+  return `Connected to ${target}${user ? ` as ${user}` : ""}.`;
+}
+
+async function testGithubConnection() {
+  const token = els.githubToken.value.trim();
+  if (!token) throw new Error("Enter a GitHub API key.");
+  let response;
+  try {
+    response = await fetch("https://api.github.com/user", {
+      headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28" }
+    });
+  } catch {
+    throw new Error("GitHub could not be reached.");
+  }
+  const result = await response.json().catch(() => null);
+  if (response.status === 401) throw new Error("GitHub rejected the API key.");
+  if (!response.ok) throw new Error(result?.message || `GitHub returned error ${response.status}.`);
+  return `Connected as ${result?.login || "an unknown user"}.`;
+}
+
+function requestAnalyticsTestToken(clientId) {
+  return new Promise((resolve, reject) => {
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: ANALYTICS_SCOPE,
+      callback: response => {
+        if (response.error) reject(new Error(`Google sign-in failed: ${response.error_description || response.error}`));
+        else resolve(response);
+      },
+      error_callback: error => reject(new Error(error?.type === "popup_closed"
+        ? "Sign-in was cancelled."
+        : `Google sign-in failed: ${error?.message || error?.type || "unknown error"}`))
+    });
+    client.requestAccessToken(readStoredAnalyticsToken()?.clientId === clientId ? { prompt: "" } : {});
+  });
+}
+
+async function testAnalyticsConnection() {
+  const clientId = els.gaClientId.value.trim();
+  const propertyId = els.gaPropertyId.value.trim().replace(/^properties\//, "");
+  if (!clientId || !propertyId) throw new Error("Enter both the OAuth client ID and the GA4 property ID.");
+  if (!/^\d+$/.test(propertyId)) throw new Error("The GA4 property ID is a number, for example 379071837.");
+  let token = clientId === state.gaClientId && analyticsTokenValid() ? state.analytics.token : "";
+  if (!token) {
+    if (!window.google?.accounts?.oauth2) await loadGoogleIdentity();
+    const response = await requestAnalyticsTestToken(clientId);
+    token = response.access_token;
+    if (clientId === state.gaClientId) {
+      state.analytics.token = token;
+      state.analytics.tokenExpires = Date.now() + (Number(response.expires_in || 3600) - 60) * 1000;
+      storeAnalyticsToken(state.analytics.token, state.analytics.tokenExpires);
+    }
+  }
+  const response = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ dateRanges: [{ startDate: "7daysAgo", endDate: "yesterday" }], metrics: [{ name: "activeUsers" }] })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`No access to GA4 property ${propertyId}: ${data.error?.message || `Google Analytics returned ${response.status}.`}`);
+  const users = Number(data.rows?.[0]?.metricValues?.[0]?.value || 0);
+  return `Connected to GA4 property ${propertyId}: ${users.toLocaleString("en")} active users in the last 7 days.`;
+}
+
+async function testExtraSourceConnection() {
+  const base = els.analyticsExtraSource.value.trim();
+  if (!base) throw new Error("Enter the base URL of the sprint data files.");
+  try { new URL(base); } catch { throw new Error("Enter a valid URL."); }
+  const number = sprintRouteValue(state.iteration);
+  const url = /^\d+$/.test(number) ? `${base.endsWith("/") ? base : `${base}/`}sprint-${number}.json` : base;
+  let response;
+  try { response = await fetch(url, { cache: "no-cache" }); }
+  catch { throw new Error(`${url} could not be reached.`); }
+  if (url === base) {
+    if (!response.ok) throw new Error(`The source returned error ${response.status}.`);
+    return "The source can be reached. Open a sprint to check its data file.";
+  }
+  if (response.status === 404) throw new Error(`The source has no sprint-${number}.json for the current sprint.`);
+  if (!response.ok) throw new Error(`The source returned error ${response.status} for sprint-${number}.json.`);
+  const data = await response.json().catch(() => null);
+  if (!data || typeof data !== "object") throw new Error(`sprint-${number}.json is not valid JSON.`);
+  return `Found sprint-${number}.json for the current sprint.`;
 }
 
 const SETTINGS_STATE_TYPES = ["Epic", "Feature", "User Story", "Product Backlog Item", "Requirement", "Bug", "Issue", "Task"];
@@ -15425,7 +15585,7 @@ function renderLitellmModelOptions(models, selectedModel = "") {
   const options = [];
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = choices.length ? "Choose a model…" : "Load models to choose…";
+  placeholder.textContent = choices.length ? "Choose a model…" : "Test the connection to load models…";
   options.push(placeholder);
   choices.forEach(model => {
     const option = document.createElement("option");
@@ -15455,14 +15615,14 @@ async function loadLitellmModels() {
   const baseUrl = els.litellmUrl.value.trim();
   const apiKey = els.litellmApiKey.value.trim();
   const selectedModel = selectedLitellmModelInSettings();
-  els.litellmStatus.classList.remove("is-error");
+  els.litellmStatus.classList.remove("is-error", "is-success");
   if (!apiKey) {
     els.litellmStatus.textContent = "Enter an API key before loading models.";
     els.litellmStatus.classList.add("is-error");
     return;
   }
   els.loadLitellmModels.disabled = true;
-  els.litellmStatus.textContent = "Loading models…";
+  els.litellmStatus.textContent = "Testing…";
   try {
     const response = await fetch(litellmApiUrl(baseUrl, "models"), {
       headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` }
@@ -15474,8 +15634,9 @@ async function loadLitellmModels() {
       .sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base", numeric: true }));
     renderLitellmModelOptions(models, selectedModel || (models.length === 1 ? models[0] : ""));
     els.litellmStatus.textContent = models.length
-      ? `${models.length} model${models.length === 1 ? "" : "s"} available. Choose or type a model name.`
-      : "No models were returned. You can still type a model name manually.";
+      ? `Connected. ${models.length} model${models.length === 1 ? "" : "s"} available; choose one below.`
+      : "Connected, but no models were returned. You can still type a model name manually.";
+    els.litellmStatus.classList.add("is-success");
   } catch (error) {
     console.error(error);
     els.litellmStatus.textContent = error.message || "Models could not be loaded.";
@@ -15486,12 +15647,7 @@ async function loadLitellmModels() {
 }
 
 function showConnection(error = "") {
-  els.orgUrl.value = state.orgUrl;
-  els.pat.value = state.pat;
-  els.githubToken.value = state.githubToken;
-  els.connectionError.textContent = error;
-  if (els.settingsDialog.open) els.settingsDialog.close();
-  if (!els.connectionDialog.open) els.connectionDialog.showModal();
+  showSettings({ connectionError: typeof error === "string" ? error : "" });
 }
 
 function setLoading(value) {
@@ -15665,105 +15821,124 @@ function renderGithubRepositoryChoices() {
   }
 }
 
-els.connectionForm.addEventListener("submit", event => {
-  event.preventDefault();
-  try {
-    const previousAzureConnection = `${state.orgUrl}\n${state.pat}`;
-    parseAzureUrl(els.orgUrl.value);
-    state.orgUrl = els.orgUrl.value.trim();
-    state.workItemTypes = [];
-    state.workItemTypesProject = "";
-    state.authenticatedUser = null;
-    state.azureProjectAliases = new Set();
-    state.forYouProjectName = "";
-    state.forYouSelectedUser = null;
-    state.forYouUserKey = "";
-    updateBranding();
-    state.pat = els.pat.value.trim();
-    if (!state.pat) throw new Error("Enter a PAT.");
-    if (`${state.orgUrl}\n${state.pat}` !== previousAzureConnection) {
-      state.workItemDeploymentsCache.clear();
-      state.workItemDeploymentsErrors.clear();
-      state.workItemDeploymentsRequestTokens.clear();
-      state.workItemDeploymentSourceKeys.clear();
-      state.workItemYamlReferencesCache.clear();
-      state.workItemYamlDiscoveryErrors.clear();
-      state.workItemYamlDiscoveryRequestTokens.clear();
-      state.yamlBuildWorkItemsCache.clear();
-      state.githubCommitBuildIdsCache.clear();
-      state.azureGithubPullRequestBuildIdsCache.clear();
-      state.githubCommitAncestryCache.clear();
-      state.recentYamlBuildsProject = "";
-      state.recentYamlBuilds = [];
-      state.recentYamlBuildsLoaded = false;
-      state.recentYamlBuildsPromise = null;
-      state.releaseDebug.classic = [];
-      state.releaseDebug.yamlRuns = [];
-      state.releaseDebug.yamlDeployments = [];
-      state.releaseDebug.errors = {};
-      state.releaseDebug.loaded = false;
-      state.releaseDebug.requestToken++;
-      state.releaseDebug.environmentsPromise = null;
-      state.releaseDebug.classicReleaseDetailsPromise = null;
-      state.releaseReadiness.development = [];
-      state.releaseReadiness.acceptance = [];
-      state.releaseReadiness.warnings = [];
-      state.releaseReadiness.error = "";
-      state.releaseReadiness.loaded = false;
-      state.releaseReadiness.requestToken++;
-      state.releaseReadiness.githubComparisons.clear();
-      state.releaseReadiness.githubRepositoryMatches.clear();
-    }
-    const githubToken = els.githubToken.value.trim();
-    if (githubToken !== state.githubToken) {
-      state.githubPullRequests = [];
-      state.githubPullRequestsKey = "";
-      state.githubPullRequestsError = "";
-      state.githubAccessibleRepositories = [];
-      state.githubAccessibleRepositoriesToken = "";
-      state.githubOwnerChoices = [];
-      state.githubOwnerRepositoriesCache.clear();
-      state.githubSettingsRepositories = [];
-      state.githubWorkItemPullRequestsCache.clear();
-      state.githubWorkItemPullRequestsErrors.clear();
-      state.githubWorkItemPullRequestsRequestTokens.clear();
-      state.releaseReadiness.loaded = false;
-      state.releaseReadiness.githubComparisons.clear();
-      state.releaseReadiness.githubRepositoryMatches.clear();
-      state.githubCommitBuildIdsCache.clear();
-      state.azureGithubPullRequestBuildIdsCache.clear();
-      state.githubCommitAncestryCache.clear();
-      state.workItemDeploymentsCache.clear();
-      state.workItemDeploymentsErrors.clear();
-      state.workItemDeploymentsRequestTokens.clear();
-      state.workItemDeploymentSourceKeys.clear();
-      state.githubPullRequestFilters = { repositories: [], authors: [] };
-      localStorage.removeItem(STORAGE.githubPrFilters);
-    }
-    state.githubToken = githubToken;
-    localStorage.setItem(STORAGE.url, state.orgUrl);
-    localStorage.setItem(STORAGE.pat, state.pat);
-    if (state.githubToken) localStorage.setItem(STORAGE.githubToken, state.githubToken);
-    else localStorage.removeItem(STORAGE.githubToken);
-    els.connectionDialog.close();
-    loadBoard({ openSettings: !state.teamId });
-  } catch (error) { els.connectionError.textContent = error.message; }
-});
+// Applies the Azure DevOps and GitHub connection fields of the settings dialog. Throws when the
+// Azure fields are invalid; returns whether the Azure DevOps connection changed.
+function applyConnectionSettings() {
+  const previousAzureConnection = `${state.orgUrl}\n${state.pat}`;
+  const orgUrl = els.orgUrl.value.trim();
+  const pat = els.pat.value.trim();
+  if (!orgUrl) throw new Error("Enter the Azure DevOps URL.");
+  try { parseAzureUrl(orgUrl); } catch { throw new Error("Enter a valid Azure DevOps URL."); }
+  if (!pat) throw new Error("Enter a PAT.");
+  const azureChanged = `${orgUrl}\n${pat}` !== previousAzureConnection;
+  if (!azureChanged) {
+    applyGithubConnectionSettings();
+    return false;
+  }
+  state.orgUrl = orgUrl;
+  state.workItemTypes = [];
+  state.workItemTypesProject = "";
+  state.authenticatedUser = null;
+  state.azureProjectAliases = new Set();
+  state.forYouProjectName = "";
+  state.forYouSelectedUser = null;
+  state.forYouUserKey = "";
+  updateBranding();
+  state.pat = pat;
+  state.workItemDeploymentsCache.clear();
+  state.workItemDeploymentsErrors.clear();
+  state.workItemDeploymentsRequestTokens.clear();
+  state.workItemDeploymentSourceKeys.clear();
+  state.workItemYamlReferencesCache.clear();
+  state.workItemYamlDiscoveryErrors.clear();
+  state.workItemYamlDiscoveryRequestTokens.clear();
+  state.yamlBuildWorkItemsCache.clear();
+  state.githubCommitBuildIdsCache.clear();
+  state.azureGithubPullRequestBuildIdsCache.clear();
+  state.githubCommitAncestryCache.clear();
+  state.recentYamlBuildsProject = "";
+  state.recentYamlBuilds = [];
+  state.recentYamlBuildsLoaded = false;
+  state.recentYamlBuildsPromise = null;
+  state.releaseDebug.classic = [];
+  state.releaseDebug.yamlRuns = [];
+  state.releaseDebug.yamlDeployments = [];
+  state.releaseDebug.errors = {};
+  state.releaseDebug.loaded = false;
+  state.releaseDebug.requestToken++;
+  state.releaseDebug.environmentsPromise = null;
+  state.releaseDebug.classicReleaseDetailsPromise = null;
+  state.releaseReadiness.development = [];
+  state.releaseReadiness.acceptance = [];
+  state.releaseReadiness.warnings = [];
+  state.releaseReadiness.error = "";
+  state.releaseReadiness.loaded = false;
+  state.releaseReadiness.requestToken++;
+  state.releaseReadiness.githubComparisons.clear();
+  state.releaseReadiness.githubRepositoryMatches.clear();
+  localStorage.setItem(STORAGE.url, state.orgUrl);
+  localStorage.setItem(STORAGE.pat, state.pat);
+  applyGithubConnectionSettings();
+  return true;
+}
+
+function applyGithubConnectionSettings() {
+  const githubToken = els.githubToken.value.trim();
+  if (githubToken !== state.githubToken) {
+    state.githubPullRequests = [];
+    state.githubPullRequestsKey = "";
+    state.githubPullRequestsError = "";
+    state.githubAccessibleRepositories = [];
+    state.githubAccessibleRepositoriesToken = "";
+    state.githubOwnerChoices = [];
+    state.githubOwnerRepositoriesCache.clear();
+    state.githubSettingsRepositories = [];
+    state.githubWorkItemPullRequestsCache.clear();
+    state.githubWorkItemPullRequestsErrors.clear();
+    state.githubWorkItemPullRequestsRequestTokens.clear();
+    state.releaseReadiness.loaded = false;
+    state.releaseReadiness.githubComparisons.clear();
+    state.releaseReadiness.githubRepositoryMatches.clear();
+    state.githubCommitBuildIdsCache.clear();
+    state.azureGithubPullRequestBuildIdsCache.clear();
+    state.githubCommitAncestryCache.clear();
+    state.workItemDeploymentsCache.clear();
+    state.workItemDeploymentsErrors.clear();
+    state.workItemDeploymentsRequestTokens.clear();
+    state.workItemDeploymentSourceKeys.clear();
+    state.githubPullRequestFilters = { repositories: [], authors: [] };
+    localStorage.removeItem(STORAGE.githubPrFilters);
+  }
+  state.githubToken = githubToken;
+  if (state.githubToken) localStorage.setItem(STORAGE.githubToken, state.githubToken);
+  else localStorage.removeItem(STORAGE.githubToken);
+}
 
 els.settingsForm.addEventListener("submit", async event => {
   event.preventDefault();
   const previousTeam = state.teamId;
   const previousGithubKey = githubPullRequestsCacheKey();
+  try {
+    const orgUrl = els.orgUrl.value.trim();
+    if (!orgUrl) throw new Error("Enter the Azure DevOps URL.");
+    try { parseAzureUrl(orgUrl); } catch { throw new Error("Enter a valid Azure DevOps URL."); }
+    if (!els.pat.value.trim()) throw new Error("Enter a PAT.");
+  } catch (error) {
+    setConnectionStatus(els.azureConnectionStatus, error.message, "error");
+    els.settingsDialog.scrollTop = 0;
+    return;
+  }
+  const githubSettingsShown = !els.githubRepoSettings.hidden;
   const githubAllOwners = els.githubAllOwners.checked;
   const githubOwners = [...els.githubOwnerOptions.querySelectorAll("input[type=checkbox]:checked")].map(input => input.value);
-  if (state.githubToken && !githubAllOwners && !githubOwners.length) {
+  if (githubSettingsShown && !githubAllOwners && !githubOwners.length) {
     els.githubOwnerStatus.textContent = "Select at least one GitHub user or organization.";
     els.githubOwnerStatus.classList.add("is-error");
     return;
   }
   const githubAllRepos = els.githubAllRepos.checked;
   const githubRepos = [...els.githubRepoOptions.querySelectorAll("input[type=checkbox]:checked")].map(input => input.value);
-  if (state.githubToken && !githubAllRepos && !githubRepos.length) {
+  if (githubSettingsShown && !githubAllRepos && !githubRepos.length) {
     els.githubRepoStatus.textContent = "Select at least one GitHub repository.";
     els.githubRepoStatus.classList.add("is-error");
     return;
@@ -15779,7 +15954,11 @@ els.settingsForm.addEventListener("submit", async event => {
       return;
     }
   }
-  state.teamId = els.teamSelect.value;
+  const azureChanged = applyConnectionSettings();
+  if (!azureChanged && !els.azureBoardSettings.hidden) {
+    state.teamId = els.teamSelect.value;
+    els.stateMappings.querySelectorAll("select[data-state]").forEach(select => { state.mapping[select.dataset.state] = select.value; });
+  }
   state.githubAllOwners = githubAllOwners;
   state.githubOwners = githubOwners;
   state.githubAllRepos = githubAllRepos;
@@ -15796,8 +15975,7 @@ els.settingsForm.addEventListener("submit", async event => {
   state.litellmUrl = litellmUrl;
   state.litellmApiKey = litellmApiKey;
   state.litellmModel = litellmModel;
-  els.stateMappings.querySelectorAll("select[data-state]").forEach(select => { state.mapping[select.dataset.state] = select.value; });
-  localStorage.setItem(STORAGE.team, state.teamId);
+  if (state.teamId) localStorage.setItem(STORAGE.team, state.teamId);
   localStorage.setItem(STORAGE.mapping, JSON.stringify(state.mapping));
   localStorage.setItem(STORAGE.githubAllOwners, String(state.githubAllOwners));
   localStorage.setItem(STORAGE.githubOwners, JSON.stringify(state.githubOwners));
@@ -15831,6 +16009,12 @@ els.settingsForm.addEventListener("submit", async event => {
     state.releaseReadiness.githubRepositoryMatches.clear();
   }
   els.settingsDialog.close();
+  if (azureChanged) {
+    state.analytics.data = null;
+    state.analytics.dataKey = "";
+    loadBoard({ openSettings: !state.teamId });
+    return;
+  }
   if (extraSourceChanged && !analyticsChanged && state.currentView === "review") await loadSprintReview();
   if (analyticsChanged) {
     state.analytics.data = null;
@@ -16238,7 +16422,15 @@ window.addEventListener("focus", () => {
 });
 window.addEventListener("resize", scheduleMentionMenuPosition);
 document.addEventListener("scroll", scheduleMentionMenuPosition, true);
-els.cancelConnection.addEventListener("click", () => els.connectionDialog.close());
+els.testAzureConnection.addEventListener("click", () => runConnectionTest(els.testAzureConnection, els.azureConnectionStatus, testAzureConnection));
+els.testGithubConnection.addEventListener("click", () => runConnectionTest(els.testGithubConnection, els.githubConnectionStatus, testGithubConnection));
+els.testAnalyticsConnection.addEventListener("click", () => runConnectionTest(els.testAnalyticsConnection, els.analyticsConnectionStatus, testAnalyticsConnection));
+els.testExtraSourceConnection.addEventListener("click", () => runConnectionTest(els.testExtraSourceConnection, els.extraSourceConnectionStatus, testExtraSourceConnection));
+els.githubToken.addEventListener("input", () => {
+  setConnectionStatus(els.githubConnectionStatus, "");
+  updateGithubSettingsVisibility();
+});
+els.gaClientId.addEventListener("change", () => { if (els.gaClientId.value.trim()) loadGoogleIdentity().catch(() => {}); });
 els.githubAllOwners.addEventListener("change", updateGithubOwnerSettings);
 els.githubOwnerOptions.addEventListener("change", event => {
   if (!event.target.matches("input[type=checkbox]")) return;
@@ -16256,7 +16448,6 @@ els.githubRepoOptions.addEventListener("change", event => {
   els.githubRepoStatus.textContent = "";
   els.githubRepoStatus.classList.remove("is-error");
 });
-els.changeConnection.addEventListener("click", () => showConnection());
 
 const SETTINGS_EXPORT_FORMAT = "jiraish-settings";
 const SETTINGS_STORAGE_PREFIXES = ["wish-board.", "jiraish."];

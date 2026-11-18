@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261117-roadmap-lane-empty" />
+    <link rel="stylesheet" href="styles.css?v=20261118-settings-per-app" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -576,115 +576,153 @@
       </section>
     </main>
 
-    <dialog id="connectionDialog" class="dialog connection-dialog">
-      <form id="connectionForm" method="dialog">
-        <div class="dialog-heading">
-          <div class="dialog-icon">AZ</div>
-          <div><h2>Connect to Azure DevOps</h2><p>The PAT is stored only in this browser's local storage.</p></div>
-        </div>
-        <label>
-          Azure DevOps URL
-          <input id="orgUrlInput" name="orgUrl" type="url" placeholder="https://dev.azure.com/organization/project/team/" required />
-          <span class="field-help">Organization, project, or team URL; for example https://dev.azure.com/organization/project/team/</span>
-        </label>
-        <label>
-          Personal Access Token
-          <input id="patInput" name="pat" type="password" placeholder="Paste your PAT here" required autocomplete="off" />
-          <span class="field-help">Required: read and write access for Work Items, plus read access for Project &amp; Team.</span>
-        </label>
-        <label>
-          <span>GitHub API key <span class="optional-label">Optional</span></span>
-          <input id="githubTokenInput" name="githubToken" type="password" placeholder="Paste a GitHub token here" autocomplete="off" />
-          <span class="field-help">Used only to show open pull requests on the For you page.</span>
-        </label>
-        <div class="privacy-note"><strong>Private on this device.</strong> Your credentials are stored in local storage and sent only to Azure DevOps and GitHub respectively.</div>
-        <p id="connectionError" class="form-error" role="alert"></p>
-        <div class="dialog-actions">
-          <button class="text-button" type="button" data-import-settings title="Load settings from an exported JSON file">Import settings</button>
-          <button id="cancelConnection" class="text-button" type="button">Cancel</button>
-          <button class="primary-button" value="connect" type="submit">Connect</button>
-        </div>
-      </form>
-    </dialog>
     <input id="importSettingsFile" type="file" accept="application/json,.json" hidden />
 
     <dialog id="settingsDialog" class="dialog settings-dialog">
-      <form id="settingsForm" method="dialog">
+      <form id="settingsForm" method="dialog" novalidate>
         <div class="dialog-heading compact">
-          <div><h2>Configure board</h2><p>Choose a team and select which column each Azure DevOps state appears in.</p></div>
+          <div><h2>Settings</h2><p>Connections and preferences per app. Credentials are stored only in this browser's local storage and sent only to the app they belong to.</p></div>
           <button class="close-button" type="button" data-close-settings aria-label="Close">×</button>
         </div>
-        <label>
-          Azure DevOps team
-          <select id="teamSelect" name="team"></select>
-        </label>
-        <fieldset id="githubRepoSettings" class="github-repo-settings" hidden>
-          <legend>GitHub pull requests</legend>
-          <div class="github-settings-group">
-            <strong>Users and organizations</strong>
-            <label class="checkbox-label">
-              <input id="githubAllOwners" type="checkbox" checked>
-              Show pull requests from all accessible owners
+
+        <fieldset class="settings-section" id="azureSettingsSection">
+          <legend>Azure DevOps</legend>
+          <div class="settings-group">
+            <strong>Connection</strong>
+            <label for="orgUrlInput">
+              Azure DevOps URL
+              <input id="orgUrlInput" name="orgUrl" type="url" placeholder="https://dev.azure.com/organization/project/team/" autocomplete="off" />
+              <span class="field-help">Organization, project, or team URL; for example https://dev.azure.com/organization/project/team/</span>
             </label>
-            <div id="githubOwnerOptions" class="github-owner-options" hidden></div>
-            <p id="githubOwnerStatus" class="github-owner-status" aria-live="polite"></p>
+            <label for="patInput">
+              Personal Access Token
+              <input id="patInput" name="pat" type="password" placeholder="Paste your PAT here" autocomplete="off" />
+              <span class="field-help">Required: read and write access for Work Items, plus read access for Project &amp; Team.</span>
+            </label>
+            <div class="connection-test">
+              <button id="testAzureConnection" class="secondary-button" type="button">Test connection</button>
+              <p id="azureConnectionStatus" class="github-owner-status" role="status" aria-live="polite"></p>
+            </div>
           </div>
-          <div class="github-settings-group">
-            <strong>Repositories</strong>
-            <label class="checkbox-label">
-              <input id="githubAllRepos" type="checkbox" checked>
-              Show pull requests from all repositories for the selected owners
-            </label>
-            <div id="githubRepoOptions" class="github-repository-options" hidden></div>
-            <p id="githubRepoStatus" class="github-owner-status" aria-live="polite"></p>
+          <div class="settings-group">
+            <strong>Board</strong>
+            <p id="azureBoardHint" class="field-help" hidden>Save the connection to choose a team and map the states to columns.</p>
+            <div id="azureBoardSettings">
+              <label for="teamSelect">
+                Team
+                <select id="teamSelect" name="team"></select>
+              </label>
+              <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
+              <div id="stateMappings" class="state-mappings"></div>
+            </div>
           </div>
         </fieldset>
-        <fieldset class="ai-settings">
-          <legend>AI-assisted work items</legend>
-          <label for="litellmUrlInput">
-            LiteLLM base URL
-            <input id="litellmUrlInput" name="litellmUrl" type="url" placeholder="https://litellm.example.com" autocomplete="url" />
-          </label>
-          <label for="litellmApiKeyInput">
-            API key
-            <input id="litellmApiKeyInput" name="litellmApiKey" type="password" placeholder="Paste your LiteLLM API key" autocomplete="off" />
-          </label>
-          <label for="litellmModelInput">
-            Model
-            <span class="ai-model-control">
+
+        <fieldset class="settings-section">
+          <legend>GitHub <span class="optional-label">Optional</span></legend>
+          <div class="settings-group">
+            <strong>Connection</strong>
+            <label for="githubTokenInput">
+              API key
+              <input id="githubTokenInput" name="githubToken" type="password" placeholder="Paste a GitHub token here" autocomplete="off" />
+              <span class="field-help">Used to show pull requests on the For you, Releases and work item pages.</span>
+            </label>
+            <div class="connection-test">
+              <button id="testGithubConnection" class="secondary-button" type="button">Test connection</button>
+              <p id="githubConnectionStatus" class="github-owner-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+          <p id="githubSettingsHint" class="field-help settings-hint" hidden>Save the API key to choose users, organizations and repositories.</p>
+          <div id="githubRepoSettings" hidden>
+            <div class="settings-group">
+              <strong>Users and organizations</strong>
+              <label class="checkbox-label">
+                <input id="githubAllOwners" type="checkbox" checked>
+                Show pull requests from all accessible owners
+              </label>
+              <div id="githubOwnerOptions" class="github-owner-options" hidden></div>
+              <p id="githubOwnerStatus" class="github-owner-status" aria-live="polite"></p>
+            </div>
+            <div class="settings-group">
+              <strong>Repositories</strong>
+              <label class="checkbox-label">
+                <input id="githubAllRepos" type="checkbox" checked>
+                Show pull requests from all repositories for the selected owners
+              </label>
+              <div id="githubRepoOptions" class="github-repository-options" hidden></div>
+              <p id="githubRepoStatus" class="github-owner-status" aria-live="polite"></p>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="settings-section">
+          <legend>AI <span class="optional-label">Optional</span></legend>
+          <div class="settings-group">
+            <strong>Connection</strong>
+            <label for="litellmUrlInput">
+              LiteLLM base URL
+              <input id="litellmUrlInput" name="litellmUrl" type="url" placeholder="https://litellm.example.com" autocomplete="url" />
+            </label>
+            <label for="litellmApiKeyInput">
+              API key
+              <input id="litellmApiKeyInput" name="litellmApiKey" type="password" placeholder="Paste your LiteLLM API key" autocomplete="off" />
+            </label>
+            <div class="connection-test">
+              <button id="loadLitellmModels" class="secondary-button" type="button">Test connection</button>
+              <p id="litellmStatus" class="github-owner-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+          <div class="settings-group">
+            <strong>AI-assisted work items</strong>
+            <label for="litellmModelInput">
+              Model
               <select id="litellmModelInput" name="litellmModel">
-                <option value="">Load models to choose…</option>
+                <option value="">Test the connection to load models…</option>
                 <option value="__custom__">Enter a model manually…</option>
               </select>
-              <button id="loadLitellmModels" class="secondary-button" type="button">Load models</button>
-            </span>
-            <input id="litellmCustomModelInput" name="litellmCustomModel" type="text" placeholder="e.g. gpt-4.1-mini" autocomplete="off" hidden />
-            <span class="field-help">The URL, key and selected model are stored only in this browser.</span>
-          </label>
-          <p id="litellmStatus" class="github-owner-status" aria-live="polite"></p>
+              <input id="litellmCustomModelInput" name="litellmCustomModel" type="text" placeholder="e.g. gpt-4.1-mini" autocomplete="off" hidden />
+            </label>
+          </div>
         </fieldset>
-        <fieldset class="ai-settings analytics-settings">
-          <legend>Google Analytics</legend>
-          <label for="gaClientIdInput">
-            OAuth client ID (type: Web application)
-            <input id="gaClientIdInput" name="gaClientId" type="text" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off" />
-          </label>
-          <label for="gaPropertyIdInput">
-            GA4 property ID
-            <input id="gaPropertyIdInput" name="gaPropertyId" type="text" inputmode="numeric" placeholder="379071837" autocomplete="off" />
-            <span class="field-help">The Analytics slide in the sprint review appears when both fields are filled. Add this site's address as an authorized JavaScript origin of the OAuth client.</span>
-          </label>
-          <label for="analyticsExtraSourceInput">
-            Analytics additional source
-            <input id="analyticsExtraSourceInput" name="analyticsExtraSource" type="url" placeholder="https://buzink.github.io/sndata/" autocomplete="off" />
-            <span class="field-help">Base URL of the sprint data files. When sprint-&lt;number&gt;.json exists there, the sprint review gets an extra slide with its live chat and CSAT numbers.</span>
-          </label>
+
+        <fieldset class="settings-section">
+          <legend>Google Analytics <span class="optional-label">Optional</span></legend>
+          <div class="settings-group">
+            <strong>Connection</strong>
+            <label for="gaClientIdInput">
+              OAuth client ID (type: Web application)
+              <input id="gaClientIdInput" name="gaClientId" type="text" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off" />
+            </label>
+            <label for="gaPropertyIdInput">
+              GA4 property ID
+              <input id="gaPropertyIdInput" name="gaPropertyId" type="text" inputmode="numeric" placeholder="379071837" autocomplete="off" />
+              <span class="field-help">The Analytics slide in the sprint review appears when both fields are filled. Add this site's address as an authorized JavaScript origin of the OAuth client.</span>
+            </label>
+            <div class="connection-test">
+              <button id="testAnalyticsConnection" class="secondary-button" type="button">Test connection</button>
+              <p id="analyticsConnectionStatus" class="github-owner-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
         </fieldset>
-        <div class="mapping-heading"><span>Azure DevOps state</span><span>Column</span></div>
-        <div id="stateMappings" class="state-mappings"></div>
+
+        <fieldset class="settings-section">
+          <legend>Live chat data <span class="optional-label">Optional</span></legend>
+          <div class="settings-group">
+            <strong>Connection</strong>
+            <label for="analyticsExtraSourceInput">
+              Additional source URL
+              <input id="analyticsExtraSourceInput" name="analyticsExtraSource" type="url" placeholder="https://buzink.github.io/sndata/" autocomplete="off" />
+              <span class="field-help">Base URL of the sprint data files. When sprint-&lt;number&gt;.json exists there, the sprint review gets an extra slide with its live chat and CSAT numbers.</span>
+            </label>
+            <div class="connection-test">
+              <button id="testExtraSourceConnection" class="secondary-button" type="button">Test connection</button>
+              <p id="extraSourceConnectionStatus" class="github-owner-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+        </fieldset>
+
         <div class="settings-footer">
           <div class="settings-transfer">
-            <button id="changeConnection" class="text-button danger" type="button">Change connection</button>
             <button class="text-button" type="button" data-export-settings title="Download all settings, including API keys, as a JSON file">Export settings</button>
             <button class="text-button" type="button" data-import-settings title="Load settings from an exported JSON file">Import settings</button>
           </div>
@@ -1300,6 +1338,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261117-roadmap-lane-empty" defer></script>
+    <script src="app.js?v=20261118-settings-per-app" defer></script>
   </body>
 </html>
