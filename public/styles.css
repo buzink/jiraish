@@ -1179,6 +1179,7 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 .latest-commits-date { color: var(--muted) !important; font-variant-numeric: tabular-nums; }
 .latest-commits-sha a { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .latest-commits-build { white-space: nowrap; }
+.latest-commits-pr a + a { margin-left: 6px; }
 .latest-commits-story { margin-right: 6px; font-weight: 700; }
 .latest-commits-sprint + .latest-commits-sprint { margin-left: 6px; }
 .latest-commits-muted { color: var(--muted) !important; }
@@ -1187,7 +1188,8 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 .latest-commits-table tr.is-safe td { background: #dcfff1; }
 .latest-commits-table tr.is-safe td:first-child { box-shadow: inset 3px 0 0 #22a06b; }
 .latest-commits-safe-badges { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-left: 8px; vertical-align: middle; }
-.latest-commits-safe-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; color: #216e4e; background: #baf3db; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.latest-commits-safe-badge { display: inline-block; padding: 0 5px; border: 1px solid #baf3db; border-radius: 3px; color: #216e4e; background: #baf3db; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.latest-commits-safe-badge.is-on-target { border-color: #7ee2b8; color: #216e4e; background: transparent; font-weight: 700; }
 .latest-commits-actions { width: 34px; padding: 2px 4px !important; text-align: right; }
 .latest-commits-menu-button { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 3px; color: var(--muted); background: transparent; font-size: 16px; font-weight: 800; line-height: 1; cursor: pointer; }
 .latest-commits-menu-button:hover, .latest-commits-menu-button[aria-expanded="true"] { color: var(--navy); background: var(--board-bg); }
@@ -1201,7 +1203,8 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .release-readiness-status a { color: #579dff; }
 .latest-commits-more { justify-self: start; }
 [data-theme="dark"] .latest-commits-table tr.is-safe td { background: #1c3329; }
-[data-theme="dark"] .latest-commits-safe-badge { color: #7ee2b8; background: #164b35; }
+[data-theme="dark"] .latest-commits-safe-badge { border-color: #164b35; color: #7ee2b8; background: #164b35; }
+[data-theme="dark"] .latest-commits-safe-badge.is-on-target { border-color: #2a7a57; color: #7ee2b8; background: transparent; }
 [data-theme="dark"] .latest-commits-table a { color: #579dff; }
 .release-readiness-empty { padding: 20px 12px; color: var(--muted); font-size: 11px; line-height: 1.5; text-align: center; }
 .release-readiness-pipeline { display: grid; gap: 7px; }

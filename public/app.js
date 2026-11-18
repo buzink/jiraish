@@ -227,7 +227,8 @@ const state = {
     requestToken: 0,
     githubComparisons: new Map(),
     githubRepositoryMatches: new Map(),
-    githubCommitPulls: new Map()
+    githubCommitPulls: new Map(),
+    githubPullCommentIds: new Map()
   },
   latestCommits: {
     available: [],
@@ -10567,6 +10568,14 @@ function latestSafeCommitSha(entry, target) {
   for (let index = commits.length - 1; index >= 0; index--) {
     const commit = commits[index];
     const onTarget = (latestCommitEnvironments(entry, commit) || []).includes(environment);
+    // safeToDeploy (PR label, only for commits without a work item) allows one step: to ACC from
+    // Development, and to PRD only once the commit is on Acceptance.
+    const safeByLabel = commit.safeToDeploy && !commit.workItems.length
+      && (target === "acceptance" || (latestCommitEnvironments(entry, commit) || []).includes("Acceptance"));
+    if (safeByLabel) {
+      safeSha = commit.sha;
+      continue;
+    }
     if (!onTarget && !commit.workItems.length) break;
     if (!onTarget && !commit.workItems.every(item => latestCommitWorkItemTested(item, target))) break;
     safeSha = commit.sha;
@@ -10574,29 +10583,79 @@ function latestSafeCommitSha(entry, target) {
   return safeSha;
 }
 
+// Whether the latest safe commit still has to be deployed to the target, and if so how many
+// loaded commits (it included) are not there yet. ahead is null while deployments load or when
+// no loaded commit is on the target.
+function latestSafeCommitStatus(entry, commit, target) {
+  const environment = LATEST_SAFE_TARGETS.find(candidate => candidate.key === target)?.environment;
+  const onTarget = commit => (latestCommitEnvironments(entry, commit) || []).includes(environment);
+  if (onTarget(commit)) return { onTarget: true, ahead: 0 };
+  const start = entry.commits.indexOf(commit);
+  const deployed = entry.commits.findIndex((candidate, index) => index > start && onTarget(candidate));
+  return { onTarget: false, ahead: start >= 0 && deployed > start ? deployed - start : null };
+}
+
 function latestSafeCommits(entry) {
   return Object.fromEntries(LATEST_SAFE_TARGETS.map(target => [target.key, latestSafeCommitSha(entry, target.key)]));
+}
+
+function githubPullHasLabel(pull, label) {
+  const wanted = label.toLocaleLowerCase("en");
+  return (pull.labels || []).some(candidate => String(candidate?.name || candidate || "").trim().toLocaleLowerCase("en") === wanted);
+}
+
+// The conversation comments of a pull request (GitHub treats them as issue comments), cached per PR.
+async function githubPullCommentWorkItemIds(repository, pull) {
+  const cacheKey = `${repository}#${pull.number}`.toLocaleLowerCase("en");
+  const cache = state.releaseReadiness.githubPullCommentIds;
+  if (!cache.has(cacheKey)) {
+    const [owner, name] = repository.split("/");
+    cache.set(cacheKey, githubPages(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${pull.number}/comments`)
+      .then(comments => [...new Set(comments.flatMap(comment => azureBoardIdsFromText(comment.body)))])
+      .catch(() => {
+        cache.delete(cacheKey);
+        return [];
+      }));
+  }
+  return cache.get(cacheKey);
+}
+
+// A commit without a matching work item can still be released when its pull request says so:
+// the label safeToDeploy makes it safe for the next environment, and the label storyOverride
+// links it to the story named as AB#1234 in the PR comments.
+async function latestCommitPullOverrides(repository, ids, pulls) {
+  if (ids.length || !pulls.length) return { ids, safeToDeploy: false, overridePulls: [] };
+  const overridePulls = pulls.filter(pull => githubPullHasLabel(pull, "storyOverride"));
+  const overrideIds = (await Promise.all(overridePulls.map(pull => githubPullCommentWorkItemIds(repository, pull)))).flat();
+  return {
+    ids: [...new Set(overrideIds)],
+    safeToDeploy: pulls.some(pull => githubPullHasLabel(pull, "safeToDeploy")),
+    overridePulls: overrideIds.length ? overridePulls : []
+  };
 }
 
 async function loadLatestCommitsPage(repository, page) {
   const [owner, name] = repository.split("/");
   const commits = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits?per_page=${LATEST_COMMITS_PAGE_SIZE}&page=${page}`) || [];
-  const linked = await mapWithConcurrency(commits, 4, async commit => ({
-    commit,
-    ids: (await githubCommitWorkItemIds(repository, commit)).ids
-  }));
+  const linked = await mapWithConcurrency(commits, 4, async commit => {
+    const { ids, pulls } = await githubCommitWorkItemIds(repository, commit);
+    return { commit, pulls, ...(await latestCommitPullOverrides(repository, ids, pulls)) };
+  });
   const items = await fetchWorkItems(linked.flatMap(entry => entry.ids));
   const itemsById = new Map(items.map(item => [Number(item.id), item]));
   return {
     hasMore: commits.length === LATEST_COMMITS_PAGE_SIZE,
-    commits: linked.map(({ commit, ids }) => ({
+    commits: linked.map(({ commit, ids, pulls, safeToDeploy, overridePulls }) => ({
       sha: commit.sha,
       url: commit.html_url || `https://github.com/${repository}/commit/${commit.sha}`,
       date: commit.commit?.author?.date || commit.commit?.committer?.date || "",
       author: commit.commit?.author?.name || commit.author?.login || "",
       message: String(commit.commit?.message || "").split("\n")[0],
       ids,
-      workItems: ids.map(id => itemsById.get(Number(id))).filter(Boolean)
+      workItems: ids.map(id => itemsById.get(Number(id))).filter(Boolean),
+      pulls: pulls.map(pull => ({ number: pull.number, title: pull.title || "", url: pull.html_url || `https://github.com/${repository}/pull/${pull.number}` })),
+      safeToDeploy,
+      storyOverride: overridePulls.map(pull => pull.number)
     }))
   };
 }
@@ -10837,10 +10896,15 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
     const badge = document.createElement("span");
     badge.className = "latest-commits-safe-badge";
     badge.dataset.target = target.key;
-    badge.textContent = `Latest safe ${target.short}`;
-    badge.title = target.key === "acceptance"
-      ? "Newest commit that can go from Development to Acceptance: it and all older commits are already on Acceptance, or their work items are Ready for release to accept, Test on acc or finished."
-      : "Newest commit that can go from Acceptance to Production: it and all older commits are already on Production, or their work items are Resolved, Closed, Done or Completed.";
+    const { onTarget } = latestSafeCommitStatus(entry, commit, target.key);
+    badge.classList.toggle("is-on-target", onTarget);
+    badge.textContent = `${onTarget ? "✓" : "→"} ${target.short}`;
+    const rule = target.key === "acceptance"
+      ? "Latest safe ACC: the newest commit that can go from Development to Acceptance. It and all older commits are already on Acceptance, their work items are Ready for release to accept, Test on acc or finished, or their pull request has the label safeToDeploy."
+      : "Latest safe PRD: the newest commit that can go from Acceptance to Production. It and all older commits are already on Production, their work items are Resolved, Closed, Done or Completed, or they are on Acceptance and their pull request has the label safeToDeploy.";
+    badge.title = `${onTarget
+      ? `Already on ${target.environment}, nothing to do.`
+      : `Not yet on ${target.environment}: deploy this commit to release it.`}\n\n${rule}`;
     badges.append(badge);
   });
   if (safeTargets.length) commitCell.append(badges);
@@ -10860,6 +10924,22 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
     buildCell.classList.add("latest-commits-muted");
     buildCell.title = entry.builds ? entry.buildsError || "No Azure DevOps build found for this commit." : "Loading builds…";
   }
+  const pullCell = document.createElement("td");
+  pullCell.className = "latest-commits-pr";
+  if (commit.pulls?.length) {
+    commit.pulls.forEach(pull => {
+      const pullLink = document.createElement("a");
+      pullLink.href = pull.url;
+      pullLink.target = "_blank";
+      pullLink.rel = "noopener noreferrer";
+      pullLink.textContent = `#${pull.number}`;
+      pullLink.title = pull.title;
+      pullCell.append(pullLink);
+    });
+  } else {
+    pullCell.textContent = "—";
+    pullCell.classList.add("latest-commits-muted");
+  }
   const storyCell = document.createElement("td");
   const statusCell = document.createElement("td");
   const sprintCell = document.createElement("td");
@@ -10869,7 +10949,7 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
       link.className = "latest-commits-story";
       link.href = workItemWebUrl(item.id);
       link.textContent = String(item.id);
-      link.title = `${item.type}: ${item.title}`;
+      link.title = `${item.type}: ${item.title}${commit.storyOverride?.length ? ` · linked via storyOverride in PR #${commit.storyOverride.join(", #")}` : ""}`;
       link.addEventListener("click", event => {
         event.preventDefault();
         showWorkItem(item);
@@ -10890,8 +10970,9 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
   } else {
     storyCell.textContent = "—";
     storyCell.className = "latest-commits-muted";
-    statusCell.textContent = "No work item";
+    statusCell.textContent = commit.safeToDeploy ? "safeToDeploy" : "No work item";
     statusCell.className = "latest-commits-muted";
+    if (commit.safeToDeploy) statusCell.title = "The pull request has the label safeToDeploy: safe to deploy to the next environment.";
     sprintCell.textContent = "—";
   }
   const environmentsCell = document.createElement("td");
@@ -10929,7 +11010,7 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
     openLatestCommitMenu(menuButton, repository, commit);
   });
   actionsCell.append(menuButton);
-  row.append(dateCell, commitCell, buildCell, storyCell, statusCell, sprintCell, environmentsCell, userCell, messageCell, actionsCell);
+  row.append(dateCell, commitCell, buildCell, pullCell, storyCell, statusCell, sprintCell, environmentsCell, userCell, messageCell, actionsCell);
   return row;
 }
 
@@ -10991,9 +11072,10 @@ function createLatestCommitsRepository(entry) {
   const summary = document.createElement("small");
   summary.textContent = entry.commits.length ? LATEST_SAFE_TARGETS.map(target => {
     const safeCommit = entry.commits.find(commit => commit.sha === safeShas[target.key]);
-    return safeCommit
-      ? `Latest safe ${target.short}: ${safeCommit.sha.slice(0, 8)}${safeCommit.date ? ` · ${formatDateTime(safeCommit.date)}` : ""}`
-      : `No safe ${target.short} commit in the latest ${entry.commits.length} commits`;
+    if (!safeCommit) return `No safe ${target.short} commit in the latest ${entry.commits.length} commits`;
+    const { onTarget, ahead } = latestSafeCommitStatus(entry, safeCommit, target.key);
+    if (onTarget) return `${target.short}: up to date (${safeCommit.sha.slice(0, 8)})`;
+    return `${target.short}: release ${safeCommit.sha.slice(0, 8)}${ahead ? ` (${ahead} commit${ahead === 1 ? "" : "s"} ahead)` : ""}`;
   }).join(" — ") : "";
   heading.append(title, summary);
   section.append(heading);
@@ -11015,7 +11097,7 @@ function createLatestCommitsRepository(entry) {
     wrapper.className = "latest-commits-table-wrap";
     const table = document.createElement("table");
     table.className = "latest-commits-table";
-    table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Build</th><th>Story</th><th>Status</th><th>Sprint</th><th>Environments</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Build</th><th>PR</th><th>Story</th><th>Status</th><th>Sprint</th><th>Environments</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
     const body = document.createElement("tbody");
     body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeShas, entry.repository, entry)));
     table.append(body);
@@ -11263,6 +11345,7 @@ async function loadReleaseDebugPage(force = false) {
     state.releaseReadiness.githubComparisons.clear();
     state.releaseReadiness.githubRepositoryMatches.clear();
     state.releaseReadiness.githubCommitPulls.clear();
+    state.releaseReadiness.githubPullCommentIds.clear();
   }
   const latestCommitsPromise = loadLatestCommits();
   const sources = [

@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261118-stacked-safe-badges" />
+    <link rel="stylesheet" href="styles.css?v=20261118-safe-on-target" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -328,7 +328,7 @@
             <div>
               <span class="release-readiness-kicker">Latest commits</span>
               <h2 id="latestCommitsTitle">Which commit is safe to release?</h2>
-              <p>The latest commits per repository. "Latest safe ACC" is the newest commit that can go from Development to Acceptance, "Latest safe PRD" the newest that can go from Acceptance to Production. A commit counts as safe when it is already on the target environment, whatever its work item says. Otherwise its work items must be Closed, Resolved, Done or Completed, and for ACC also Ready for release to accept or Test on acc; a commit without a work item that is not yet on the target blocks.</p>
+              <p>The latest commits per repository. "Latest safe ACC" is the newest commit that can go from Development to Acceptance, "Latest safe PRD" the newest that can go from Acceptance to Production. Their badge reads "→ ACC" when the commit still has to be deployed there and "✓ ACC" when it is already there, so nothing needs to be done. A commit counts as safe when it is already on the target environment, whatever its work item says. Otherwise its work items must be Closed, Resolved, Done or Completed, and for ACC also Ready for release to accept or Test on acc; a commit without a work item that is not yet on the target blocks, unless its pull request has the label safeToDeploy (safe for the next environment: ACC from Development, PRD once on Acceptance) or storyOverride (then the story named as AB#1234 in the PR comments counts as its work item).</p>
             </div>
             <span id="latestCommitsStatus" class="release-readiness-status" aria-live="polite"></span>
           </header>
@@ -1314,6 +1314,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261118-stacked-safe-badges" defer></script>
+    <script src="app.js?v=20261118-safe-on-target" defer></script>
   </body>
 </html>
