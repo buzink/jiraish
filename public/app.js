@@ -10543,21 +10543,43 @@ async function compareReadinessLane(snapshots, fromTier, targetTier, configuredR
 const LATEST_COMMITS_PAGE_SIZE = 30;
 const LATEST_COMMITS_VISIBLE_STEP = 10;
 
-function latestCommitWorkItemTested(item) {
-  return /^(closed|resolved|done|completed)$/i.test(String(item.state || "").trim());
+// Development → Acceptance and Acceptance → Production each have their own latest safe commit.
+const LATEST_SAFE_TARGETS = [
+  { key: "acceptance", short: "ACC", environment: "Acceptance" },
+  { key: "production", short: "PRD", environment: "Production" }
+];
+
+// To Production only finished (tested and accepted) work may go; to Acceptance also work that
+// is explicitly signed off with "Ready for release to accept".
+function latestCommitWorkItemTested(item, target) {
+  const value = String(item.state || "").trim().toLocaleLowerCase("en");
+  return /^(closed|resolved|done|completed)$/.test(value)
+    || (target === "acceptance" && /^ready for release to accept(ance)?$/.test(value));
 }
 
 // Newest commit with a work item for which it and every older commit with a work item are
-// tested. Commits without a (found) work item neither block nor qualify.
-function latestSafeCommitSha(commits) {
+// tested for the target. A commit without a (found) work item never qualifies; it is ignored
+// when it is already on the target environment (it is already there, so it does not hold the
+// release back) and blocks otherwise, since nothing records that it was tested. While the
+// deployments are still loading, it blocks too.
+function latestSafeCommitSha(entry, target) {
+  const { commits } = entry;
+  const environment = LATEST_SAFE_TARGETS.find(candidate => candidate.key === target)?.environment;
   let safeSha = "";
   for (let index = commits.length - 1; index >= 0; index--) {
     const commit = commits[index];
-    if (!commit.workItems.length) continue;
-    if (!commit.workItems.every(latestCommitWorkItemTested)) break;
+    if (!commit.workItems.length) {
+      if ((latestCommitEnvironments(entry, commit) || []).includes(environment)) continue;
+      break;
+    }
+    if (!commit.workItems.every(item => latestCommitWorkItemTested(item, target))) break;
     safeSha = commit.sha;
   }
   return safeSha;
+}
+
+function latestSafeCommits(entry) {
+  return Object.fromEntries(LATEST_SAFE_TARGETS.map(target => [target.key, latestSafeCommitSha(entry, target.key)]));
 }
 
 async function loadLatestCommitsPage(repository, page) {
@@ -10751,10 +10773,10 @@ function createLatestCommitSprintLink(item) {
   return link;
 }
 
-function createLatestCommitRow(commit, safeSha, repository, entry) {
+function createLatestCommitRow(commit, safeShas, repository, entry) {
   const row = document.createElement("tr");
-  const safe = commit.sha === safeSha;
-  row.classList.toggle("is-safe", safe);
+  const safeTargets = LATEST_SAFE_TARGETS.filter(target => commit.sha === safeShas[target.key]);
+  row.classList.toggle("is-safe", safeTargets.length > 0);
   const dateCell = document.createElement("td");
   dateCell.className = "latest-commits-date";
   dateCell.textContent = commit.date ? formatDateTime(commit.date) : "—";
@@ -10767,13 +10789,16 @@ function createLatestCommitRow(commit, safeSha, repository, entry) {
   shaLink.textContent = commit.sha.slice(0, 8);
   shaLink.title = commit.sha;
   commitCell.append(shaLink);
-  if (safe) {
+  safeTargets.forEach(target => {
     const badge = document.createElement("span");
     badge.className = "latest-commits-safe-badge";
-    badge.textContent = "Latest safe";
-    badge.title = "Newest commit for which it and all older commits with a work item are tested.";
+    badge.dataset.target = target.key;
+    badge.textContent = `Latest safe ${target.short}`;
+    badge.title = target.key === "acceptance"
+      ? "Newest commit that can go from Development to Acceptance: its work item and those of all older commits are Ready for release to accept or finished. Commits without a work item that are already on Acceptance are ignored."
+      : "Newest commit that can go from Acceptance to Production: its work item and those of all older commits are Resolved, Closed, Done or Completed. Commits without a work item that are already on Production are ignored.";
     commitCell.append(badge);
-  }
+  });
   const storyCell = document.createElement("td");
   const statusCell = document.createElement("td");
   const sprintCell = document.createElement("td");
@@ -11023,8 +11048,7 @@ async function submitBuildCommit(event) {
 function createLatestCommitsRepository(entry) {
   const section = document.createElement("section");
   section.className = "latest-commits-repository";
-  const safeSha = latestSafeCommitSha(entry.commits);
-  const safeCommit = entry.commits.find(commit => commit.sha === safeSha);
+  const safeShas = latestSafeCommits(entry);
   const heading = document.createElement("div");
   heading.className = "latest-commits-repository-heading";
   const title = document.createElement("a");
@@ -11033,9 +11057,12 @@ function createLatestCommitsRepository(entry) {
   title.rel = "noopener noreferrer";
   title.textContent = entry.repository;
   const summary = document.createElement("small");
-  summary.textContent = safeCommit
-    ? `Latest safe commit: ${safeCommit.sha.slice(0, 8)} · ${safeCommit.date ? formatDateTime(safeCommit.date) : ""}`
-    : entry.commits.length ? `No safe commit in the latest ${entry.commits.length} commits.` : "";
+  summary.textContent = entry.commits.length ? LATEST_SAFE_TARGETS.map(target => {
+    const safeCommit = entry.commits.find(commit => commit.sha === safeShas[target.key]);
+    return safeCommit
+      ? `Latest safe ${target.short}: ${safeCommit.sha.slice(0, 8)}${safeCommit.date ? ` · ${formatDateTime(safeCommit.date)}` : ""}`
+      : `No safe ${target.short} commit in the latest ${entry.commits.length} commits`;
+  }).join(" — ") : "";
   heading.append(title, summary);
   section.append(heading);
   if (entry.loading) {
@@ -11058,7 +11085,7 @@ function createLatestCommitsRepository(entry) {
     table.className = "latest-commits-table";
     table.innerHTML = '<thead><tr><th>Date</th><th>Commit</th><th>Story</th><th>Status</th><th>Sprint</th><th>Environments</th><th>User</th><th>Message</th><th><span class="sr-only">Actions</span></th></tr></thead>';
     const body = document.createElement("tbody");
-    body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeSha, entry.repository, entry)));
+    body.append(...entry.commits.slice(0, entry.visible).map(commit => createLatestCommitRow(commit, safeShas, entry.repository, entry)));
     table.append(body);
     wrapper.append(table);
     section.append(wrapper);
