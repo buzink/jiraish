@@ -10564,11 +10564,11 @@ function latestCommitWorkItemTested(item, target) {
     || (target === "acceptance" && /^ready for release to accept(ance)?$/.test(value));
 }
 
-// Newest commit with a work item for which it and every older commit with a work item are
-// tested for the target. A commit without a (found) work item never qualifies; it is ignored
-// when it is already on the target environment (it is already there, so it does not hold the
-// release back) and blocks otherwise, since nothing records that it was tested. While the
-// deployments are still loading, it blocks too.
+// Newest commit for which it and every older commit are safe for the target: a commit with a
+// work item is safe when all its work items are tested for the target. A commit without a
+// (found) work item is safe when it is already on the target environment (it is already there,
+// so it does not hold the release back) and blocks otherwise, since nothing records that it was
+// tested. While the deployments are still loading, it blocks too.
 function latestSafeCommitSha(entry, target) {
   const { commits } = entry;
   const environment = LATEST_SAFE_TARGETS.find(candidate => candidate.key === target)?.environment;
@@ -10576,10 +10576,8 @@ function latestSafeCommitSha(entry, target) {
   for (let index = commits.length - 1; index >= 0; index--) {
     const commit = commits[index];
     if (!commit.workItems.length) {
-      if ((latestCommitEnvironments(entry, commit) || []).includes(environment)) continue;
-      break;
-    }
-    if (!commit.workItems.every(item => latestCommitWorkItemTested(item, target))) break;
+      if (!(latestCommitEnvironments(entry, commit) || []).includes(environment)) break;
+    } else if (!commit.workItems.every(item => latestCommitWorkItemTested(item, target))) break;
     safeSha = commit.sha;
   }
   return safeSha;
@@ -10802,8 +10800,8 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
     badge.dataset.target = target.key;
     badge.textContent = `Latest safe ${target.short}`;
     badge.title = target.key === "acceptance"
-      ? "Newest commit that can go from Development to Acceptance: its work item and those of all older commits are Ready for release to accept or finished. Commits without a work item that are already on Acceptance are ignored."
-      : "Newest commit that can go from Acceptance to Production: its work item and those of all older commits are Resolved, Closed, Done or Completed. Commits without a work item that are already on Production are ignored.";
+      ? "Newest commit that can go from Development to Acceptance: its work item and those of all older commits are Ready for release to accept or finished. A commit without a work item counts when it is already on Acceptance."
+      : "Newest commit that can go from Acceptance to Production: its work item and those of all older commits are Resolved, Closed, Done or Completed. A commit without a work item counts when it is already on Production.";
     commitCell.append(badge);
   });
   const storyCell = document.createElement("td");
