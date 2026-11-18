@@ -10547,27 +10547,28 @@ const LATEST_SAFE_TARGETS = [
 ];
 
 // To Production only finished (tested and accepted) work may go; to Acceptance also work that
-// is explicitly signed off with "Ready for release to accept".
+// is explicitly signed off with "Ready for release to accept", or is already being tested there.
 function latestCommitWorkItemTested(item, target) {
   const value = String(item.state || "").trim().toLocaleLowerCase("en");
   return /^(closed|resolved|done|completed)$/.test(value)
-    || (target === "acceptance" && /^ready for release to accept(ance)?$/.test(value));
+    || (target === "acceptance" && /^(ready for release to accept(ance)?|test on acc(eptance)?)$/.test(value));
 }
 
-// Newest commit for which it and every older commit are safe for the target: a commit with a
-// work item is safe when all its work items are tested for the target. A commit without a
-// (found) work item is safe when it is already on the target environment (it is already there,
-// so it does not hold the release back) and blocks otherwise, since nothing records that it was
-// tested. While the deployments are still loading, it blocks too.
+// Newest commit for which it and every older commit are safe for the target. A commit that is
+// already on the target environment is always safe, whatever the state of its work items: it is
+// already there, so deploying it again changes nothing. Otherwise a commit with a work item is
+// safe when all its work items are tested for the target, and a commit without a (found) work
+// item blocks, since nothing records that it was tested. While the deployments are still
+// loading, no commit counts as on the target yet.
 function latestSafeCommitSha(entry, target) {
   const { commits } = entry;
   const environment = LATEST_SAFE_TARGETS.find(candidate => candidate.key === target)?.environment;
   let safeSha = "";
   for (let index = commits.length - 1; index >= 0; index--) {
     const commit = commits[index];
-    if (!commit.workItems.length) {
-      if (!(latestCommitEnvironments(entry, commit) || []).includes(environment)) break;
-    } else if (!commit.workItems.every(item => latestCommitWorkItemTested(item, target))) break;
+    const onTarget = (latestCommitEnvironments(entry, commit) || []).includes(environment);
+    if (!onTarget && !commit.workItems.length) break;
+    if (!onTarget && !commit.workItems.every(item => latestCommitWorkItemTested(item, target))) break;
     safeSha = commit.sha;
   }
   return safeSha;
@@ -10835,8 +10836,8 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
     badge.dataset.target = target.key;
     badge.textContent = `Latest safe ${target.short}`;
     badge.title = target.key === "acceptance"
-      ? "Newest commit that can go from Development to Acceptance: its work item and those of all older commits are Ready for release to accept or finished. A commit without a work item counts when it is already on Acceptance."
-      : "Newest commit that can go from Acceptance to Production: its work item and those of all older commits are Resolved, Closed, Done or Completed. A commit without a work item counts when it is already on Production.";
+      ? "Newest commit that can go from Development to Acceptance: it and all older commits are already on Acceptance, or their work items are Ready for release to accept, Test on acc or finished."
+      : "Newest commit that can go from Acceptance to Production: it and all older commits are already on Production, or their work items are Resolved, Closed, Done or Completed.";
     commitCell.append(badge);
   });
   const buildCell = document.createElement("td");

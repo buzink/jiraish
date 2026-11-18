@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261118-no-build-commit" />
+    <link rel="stylesheet" href="styles.css?v=20261118-safe-on-target-override" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -328,7 +328,7 @@
             <div>
               <span class="release-readiness-kicker">Latest commits</span>
               <h2 id="latestCommitsTitle">Which commit is safe to release?</h2>
-              <p>The latest commits per repository. "Latest safe ACC" is the newest commit that can go from Development to Acceptance: its work item and those of all older commits are Ready for release to accept, Closed, Resolved, Done or Completed. "Latest safe PRD" is the newest commit that can go from Acceptance to Production: the same, but only Closed, Resolved, Done or Completed. A commit without a work item counts as safe when it is already on the target environment, and blocks when it is not yet there.</p>
+              <p>The latest commits per repository. "Latest safe ACC" is the newest commit that can go from Development to Acceptance, "Latest safe PRD" the newest that can go from Acceptance to Production. A commit counts as safe when it is already on the target environment, whatever its work item says. Otherwise its work items must be Closed, Resolved, Done or Completed, and for ACC also Ready for release to accept or Test on acc; a commit without a work item that is not yet on the target blocks.</p>
             </div>
             <span id="latestCommitsStatus" class="release-readiness-status" aria-live="polite"></span>
           </header>
@@ -1314,6 +1314,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261118-no-build-commit" defer></script>
+    <script src="app.js?v=20261118-safe-on-target-override" defer></script>
   </body>
 </html>
