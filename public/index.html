@@ -597,7 +597,7 @@
             <label for="patInput">
               Personal Access Token
               <input id="patInput" name="pat" type="password" placeholder="Paste your PAT here" autocomplete="off" />
-              <span class="field-help">Required: read and write access for Work Items, plus read access for Project &amp; Team.</span>
+              <span class="field-help">Required scopes: Analytics (Read), Build (Read), Environment (Read &amp; manage), Pipeline Resources (Use), Release (Read), Wiki (Read &amp; write), Work Items (Read, write &amp; manage).</span>
             </label>
             <div class="connection-test">
               <button id="testAzureConnection" class="secondary-button" type="button">Test connection</button>
@@ -625,7 +625,7 @@
             <label for="githubTokenInput">
               API key
               <input id="githubTokenInput" name="githubToken" type="password" placeholder="Paste a GitHub token here" autocomplete="off" />
-              <span class="field-help">Used to show pull requests on the For you, Releases and work item pages.</span>
+              <span class="field-help">Used to show pull requests on the For you, Releases and work item pages. Required scopes: read access to Dependabot alerts, code, commit statuses, deployments, metadata, and pull requests.</span>
             </label>
             <div class="connection-test">
               <button id="testGithubConnection" class="secondary-button" type="button">Test connection</button>

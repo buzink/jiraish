@@ -68,7 +68,7 @@ https://dev.azure.com/organization/project/team/
 
 When a team URL is used, that team is selected by default on first launch. Without a team in the URL, Jiraish uses the previously selected team or the first available team. With an organization-only URL, Jiraish uses the previously selected project or the first available project.
 
-The PAT needs at least read access to projects, teams, iterations, and work items. The Releases page additionally needs read access to Builds, Releases, and Environments. Editing work items also requires write access to Work Items.
+The PAT needs these scopes: Analytics (Read), Build (Read), Environment (Read & manage), Pipeline Resources (Use), Release (Read), Wiki (Read & write), and Work Items (Read, write & manage).
 
 The URL and PAT are stored only in the browser's local storage. Never publish or commit a PAT.
 
@@ -76,7 +76,7 @@ The URL and PAT are stored only in the browser's local storage. Never publish or
 
 Change the connection and optionally add a GitHub API token to show open pull requests on the For you page. The pull-request widget stays hidden when no GitHub token is configured. Settings can include every accessible owner and repository or an exact selection of users, organizations, and repositories. The widget itself supports multi-select filters for repository and author and initially shows the five most recently updated results.
 
-The GitHub token is also stored only in the browser's local storage and sent directly to the GitHub API. Use a fine-grained token with read-only access to the repositories you want Jiraish to include.
+The GitHub token is also stored only in the browser's local storage and sent directly to the GitHub API. Use a fine-grained token for the repositories you want Jiraish to include, with read access to Dependabot alerts, code, commit statuses, deployments, metadata, and pull requests.
 
 ## Configure LiteLLM
 
