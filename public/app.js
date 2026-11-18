@@ -10830,6 +10830,9 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
   shaLink.textContent = commit.sha.slice(0, 8);
   shaLink.title = commit.sha;
   commitCell.append(shaLink);
+  // Both badges on one commit stack vertically, so the row grows taller instead of the column wider.
+  const badges = document.createElement("span");
+  badges.className = "latest-commits-safe-badges";
   safeTargets.forEach(target => {
     const badge = document.createElement("span");
     badge.className = "latest-commits-safe-badge";
@@ -10838,8 +10841,9 @@ function createLatestCommitRow(commit, safeShas, repository, entry) {
     badge.title = target.key === "acceptance"
       ? "Newest commit that can go from Development to Acceptance: it and all older commits are already on Acceptance, or their work items are Ready for release to accept, Test on acc or finished."
       : "Newest commit that can go from Acceptance to Production: it and all older commits are already on Production, or their work items are Resolved, Closed, Done or Completed.";
-    commitCell.append(badge);
+    badges.append(badge);
   });
+  if (safeTargets.length) commitCell.append(badges);
   const buildCell = document.createElement("td");
   buildCell.className = "latest-commits-build";
   const build = entry.builds?.get(commit.sha.toLocaleLowerCase("en"));
