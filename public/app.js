@@ -145,6 +145,7 @@ const state = {
   backlogSelectionAnchorId: null,
   backlogDeleting: false,
   backlogUpdating: false,
+  backlogDrag: null,
   backlogSprintOrdering: false,
   backlogPositionItemIds: [],
   backlogCopyItemIds: [],
@@ -6760,6 +6761,18 @@ function renderBacklog() {
   renderFilters();
   const ordered = backlogSprintOrder(visibleItems);
   els.backlogSprintOrderAction.disabled = state.backlogSprintOrdering || !backlogSprintOrder().sprintItems.length;
+  // Keep the current and next sprint visible even when empty, so issues can be dragged into them.
+  const chronological = chronologicalIterations();
+  const currentIndex = chronological.findIndex(iteration => iteration.id === state.currentIterationId);
+  const planned = currentIndex === -1 ? [] : chronological.slice(currentIndex, currentIndex + 2);
+  const groupIds = new Set(ordered.groups.map(group => group.iteration.id));
+  if (planned.some(iteration => !groupIds.has(iteration.id))) {
+    const groupsById = new Map(ordered.groups.map(group => [group.iteration.id, group]));
+    planned.forEach(iteration => {
+      if (!groupsById.has(iteration.id)) groupsById.set(iteration.id, { iteration, items: [] });
+    });
+    ordered.groups = chronological.filter(iteration => groupsById.has(iteration.id)).map(iteration => groupsById.get(iteration.id));
+  }
   const sections = ordered.groups.map(group => (
     createBacklogSection(group.iteration.name, group.items, iterationLabel(group.iteration), group.iteration)
   ));
@@ -6836,6 +6849,9 @@ async function moveSprintItemsToBacklogTop(event) {
 function createBacklogSection(title, items, label, iteration = null) {
   const section = document.createElement("section");
   section.className = "backlog-group";
+  section.dataset.groupKey = iteration ? `iteration:${iteration.id || String(iteration.path || "").toLocaleLowerCase("en")}` : "other";
+  section.dataset.groupLabel = iteration ? iteration.name : title;
+  section.dataset.iterationPath = iteration ? iteration.path || "" : "";
   const header = document.createElement("header");
   const heading = document.createElement("h2");
   const sprint = iteration ? sprintRouteValue(iteration) : "";
@@ -6869,11 +6885,15 @@ function createBacklogSection(title, items, label, iteration = null) {
     const empty = document.createElement("p");
     empty.className = "backlog-empty";
     empty.textContent = "No items.";
+    const dropHint = document.createElement("span");
+    dropHint.className = "backlog-empty-drop-hint";
+    dropHint.textContent = " Drag issues here to plan them.";
+    empty.append(dropHint);
     wrapper.append(empty);
   } else {
     const table = document.createElement("table");
     table.className = "backlog-table";
-    table.innerHTML = "<thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>State</th><th>Priority</th><th>Points</th><th>Assigned to</th><th><span class=\"sr-only\">Actions</span></th></tr></thead>";
+    table.innerHTML = "<thead><tr><th class=\"backlog-drag-cell\"><span class=\"sr-only\">Drag</span></th><th>Type</th><th>Key</th><th>Summary</th><th>State</th><th>Priority</th><th>Points</th><th>Assigned to</th><th><span class=\"sr-only\">Actions</span></th></tr></thead>";
     const body = document.createElement("tbody");
     items.forEach(item => body.append(createBacklogRow(item)));
     table.append(body);
@@ -6892,6 +6912,18 @@ function createBacklogRow(item) {
   row.classList.toggle("is-selected", selected);
   row.setAttribute("aria-selected", String(selected));
   row.setAttribute("aria-label", `${selected ? "Selected " : ""}${row.dataset.baseLabel}`);
+  const drag = document.createElement("td");
+  drag.className = "backlog-drag-cell";
+  const handle = document.createElement("span");
+  handle.className = "backlog-drag-handle";
+  const dragDisabled = state.backlogUpdating || state.backlogDeleting;
+  handle.draggable = !dragDisabled;
+  handle.classList.toggle("is-disabled", dragDisabled);
+  handle.title = selected && state.backlogSelectedIds.size > 1
+    ? `Drag to move the ${state.backlogSelectedIds.size} selected issues to another place, sprint or the backlog`
+    : "Drag to move to another place, sprint or the backlog";
+  handle.setAttribute("aria-hidden", "true");
+  drag.append(handle);
   const type = document.createElement("td");
   const typeBadge = document.createElement("span");
   typeBadge.className = `backlog-type ${item.type.toLowerCase() === "bug" ? "is-bug" : ""}`;
@@ -7074,7 +7106,7 @@ function createBacklogRow(item) {
   });
   menu.addEventListener("backlog-row-menu-close", closeOptions);
   actions.append(menu);
-  row.append(type, key, summary, itemState, priority, points, assignee, actions);
+  row.append(drag, type, key, summary, itemState, priority, points, assignee, actions);
   row.addEventListener("click", event => {
     if (event.target.closest("button, summary, details, a")) return;
     selectBacklogRow(item, event);
@@ -7558,6 +7590,306 @@ async function updateBacklogItemParent(item, feature) {
   }
 }
 
+// Asks for remaining points when one story moves to another sprint; bulk moves never split.
+// Returns null when the person cancels.
+async function requestBacklogSprintSplits(targets, iterationPath) {
+  const remainingById = new Map();
+  if (targets.length !== 1 || isNoSprintPath(iterationPath)) return remainingById;
+  const [target] = targets;
+  if (!workItemNeedsSprintSplit(target)) return remainingById;
+  const remaining = await requestRemainingPoints(target, iterationPath);
+  if (remaining === null) return null;
+  remainingById.set(Number(target.id), remaining);
+  return remainingById;
+}
+
+// Sets the sprint of each target (splitting where asked) and syncs the local state.
+// Returns the failures as [{ id, error }].
+async function patchBacklogItemsSprint(targets, iterationPath, remainingById = new Map()) {
+  const results = await Promise.allSettled(targets.map(target => {
+    if (remainingById.has(Number(target.id))) {
+      return splitWorkItemIntoSprint(target, iterationPath, remainingById.get(Number(target.id)));
+    }
+    return azure(`/_apis/wit/workitems/${target.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{ op: "add", path: "/fields/System.IterationPath", value: iterationPath }])
+    });
+  }));
+  const failed = [];
+  results.forEach((result, index) => {
+    const target = targets[index];
+    if (result.status === "rejected") {
+      console.error(result.reason);
+      failed.push({ id: Number(target.id), error: result.reason });
+      return;
+    }
+    if (remainingById.has(Number(target.id))) {
+      syncBacklogWorkItem(target.id, result.value.updated);
+      addSplitCopyToState(result.value.created);
+    } else {
+      syncBacklogWorkItem(target.id, result.value);
+    }
+  });
+  return failed;
+}
+
+// ---- Drag and drop on the backlog page ----
+// Rows are dragged by the handle in their first cell. A drop sets the sprint of the
+// section it lands in (Other = no sprint) and the backlog order between the rows around it.
+const backlogDragQuery = matchMedia("(max-width: 560px), (hover: none) and (pointer: coarse)");
+
+function backlogDragEnabled() {
+  return !backlogDragQuery.matches;
+}
+
+function backlogDropIndicator() {
+  let indicator = document.querySelector(".backlog-drop-indicator");
+  if (!indicator) {
+    indicator = document.createElement("div");
+    indicator.className = "backlog-drop-indicator";
+    indicator.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    indicator.append(label);
+    document.body.append(indicator);
+  }
+  return indicator;
+}
+
+function clearBacklogDrag() {
+  state.backlogDrag = null;
+  document.querySelectorAll(".backlog-table tbody tr.is-dragging").forEach(row => row.classList.remove("is-dragging"));
+  document.querySelectorAll(".backlog-group.is-drop-target").forEach(section => section.classList.remove("is-drop-target"));
+  document.querySelector(".backlog-drop-indicator")?.remove();
+  document.querySelector(".backlog-drag-ghost")?.remove();
+  document.body.classList.remove("is-backlog-dragging");
+}
+
+// Works out where a drop at clientY in this section lands: the section's sprint and the
+// rows (not being dragged) just above and below.
+function backlogDropTarget(section, clientY) {
+  const dragIds = new Set(state.backlogDrag?.ids || []);
+  const rows = [...section.querySelectorAll(".backlog-table tbody tr[data-work-item-id]")];
+  let insertIndex = rows.length;
+  const header = section.querySelector(":scope > header");
+  if (!header || clientY > header.getBoundingClientRect().bottom) {
+    insertIndex = rows.findIndex(row => {
+      const rect = row.getBoundingClientRect();
+      return clientY < rect.top + rect.height / 2;
+    });
+    if (insertIndex === -1) insertIndex = rows.length;
+  } else insertIndex = 0;
+  const others = rows.map(row => Number(row.dataset.workItemId)).filter(id => !dragIds.has(id));
+  const before = rows.slice(0, insertIndex).map(row => Number(row.dataset.workItemId)).filter(id => !dragIds.has(id));
+  const previousId = before.length ? before[before.length - 1] : 0;
+  const nextId = others[before.length] || 0;
+  return {
+    section,
+    rows,
+    insertIndex,
+    groupKey: section.dataset.groupKey,
+    groupLabel: section.dataset.groupLabel,
+    iterationPath: section.dataset.iterationPath || "",
+    previousId,
+    nextId
+  };
+}
+
+function showBacklogDropIndicator(drop) {
+  document.querySelectorAll(".backlog-group.is-drop-target").forEach(section => {
+    if (section !== drop.section) section.classList.remove("is-drop-target");
+  });
+  drop.section.classList.add("is-drop-target");
+  // An empty section lights up its dashed drop box instead of showing a line.
+  if (!drop.rows.length) {
+    document.querySelector(".backlog-drop-indicator")?.remove();
+    return;
+  }
+  const indicator = backlogDropIndicator();
+  const wrap = drop.section.querySelector(".backlog-table-wrap");
+  const wrapRect = wrap.getBoundingClientRect();
+  let top;
+  if (drop.insertIndex < drop.rows.length) {
+    top = drop.rows[drop.insertIndex].getBoundingClientRect().top;
+  } else {
+    top = drop.rows[drop.rows.length - 1].getBoundingClientRect().bottom;
+  }
+  const changesSprint = (state.backlogDrag?.groupKeys || []).some(key => key !== drop.groupKey);
+  indicator.style.left = `${wrapRect.left}px`;
+  indicator.style.width = `${wrapRect.width}px`;
+  indicator.style.top = `${Math.round(top)}px`;
+  indicator.firstElementChild.textContent = changesSprint
+    ? (drop.groupKey === "other" ? "Move to backlog (no sprint)" : `Move to ${drop.groupLabel}`)
+    : "Move here";
+}
+
+function backlogDragAutoScroll(clientY) {
+  const edge = 64;
+  const step = clientY < edge ? -(edge - clientY) : clientY > window.innerHeight - edge ? clientY - (window.innerHeight - edge) : 0;
+  if (step) window.scrollBy(0, Math.round(step / 2));
+}
+
+function startBacklogDrag(event) {
+  const handle = event.target.closest?.(".backlog-drag-handle");
+  if (!handle) return;
+  const row = handle.closest("tr[data-work-item-id]");
+  const item = state.backlogItems.find(candidate => Number(candidate.id) === Number(row?.dataset.workItemId));
+  if (!item || !backlogDragEnabled() || state.backlogUpdating || state.backlogDeleting) {
+    event.preventDefault();
+    return;
+  }
+  closeBacklogRowMenus();
+  const targets = backlogActionTargets(item);
+  const ids = targets.map(target => Number(target.id));
+  state.backlogDrag = {
+    ids,
+    groupKeys: [...new Set(targets.map(target => backlogPositionGroup(target).key))],
+    lastEventAt: Date.now()
+  };
+  const ghost = document.createElement("div");
+  ghost.className = "backlog-drag-ghost";
+  const ghostKey = document.createElement("strong");
+  ghostKey.textContent = targets.length === 1 ? workItemKey(item.id) : `${targets.length} work items`;
+  const ghostTitle = document.createElement("span");
+  ghostTitle.textContent = targets.length === 1 ? item.title : targets.map(target => workItemKey(target.id)).join(", ");
+  ghost.append(ghostKey, ghostTitle);
+  document.body.append(ghost);
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", targets.map(target => `${workItemKey(target.id)} ${target.title}`).join("\n"));
+  event.dataTransfer.setDragImage(ghost, 14, 16);
+  document.body.classList.add("is-backlog-dragging");
+  requestAnimationFrame(() => {
+    const idSet = new Set(ids);
+    document.querySelectorAll(".backlog-table tbody tr[data-work-item-id]").forEach(candidate => {
+      if (idSet.has(Number(candidate.dataset.workItemId))) candidate.classList.add("is-dragging");
+    });
+  });
+}
+
+function moveBacklogDrag(event) {
+  if (!state.backlogDrag) return;
+  state.backlogDrag.lastEventAt = Date.now();
+  backlogDragAutoScroll(event.clientY);
+  const section = event.target.closest?.(".backlog-group[data-group-key]");
+  if (!section) {
+    document.querySelector(".backlog-drop-indicator")?.remove();
+    document.querySelectorAll(".backlog-group.is-drop-target").forEach(candidate => candidate.classList.remove("is-drop-target"));
+    return;
+  }
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  showBacklogDropIndicator(backlogDropTarget(section, event.clientY));
+}
+
+function leaveBacklogDrag(event) {
+  if (!state.backlogDrag || els.backlogContent.contains(event.relatedTarget)) return;
+  document.querySelector(".backlog-drop-indicator")?.remove();
+  document.querySelectorAll(".backlog-group.is-drop-target").forEach(section => section.classList.remove("is-drop-target"));
+}
+
+function finishBacklogDrop(event) {
+  if (!state.backlogDrag) return;
+  const section = event.target.closest?.(".backlog-group[data-group-key]");
+  event.preventDefault();
+  const ids = state.backlogDrag.ids;
+  const drop = section ? backlogDropTarget(section, event.clientY) : null;
+  clearBacklogDrag();
+  if (drop) dropBacklogItems(ids, drop);
+}
+
+// The backlog order after moving targetIds between previousId and nextId, or null when
+// there is no row to anchor to (an empty section keeps the current order).
+function backlogOrderAfterDrop(targetIds, previousId, nextId) {
+  const ids = new Set(targetIds.map(Number));
+  const targets = state.backlogItems.filter(candidate => ids.has(Number(candidate.id)));
+  const rest = state.backlogItems.filter(candidate => !ids.has(Number(candidate.id)));
+  let index = nextId ? rest.findIndex(candidate => Number(candidate.id) === Number(nextId)) : -1;
+  if (index === -1 && previousId) {
+    const previousIndex = rest.findIndex(candidate => Number(candidate.id) === Number(previousId));
+    if (previousIndex !== -1) index = previousIndex + 1;
+  }
+  if (index === -1) return null;
+  rest.splice(index, 0, ...targets);
+  return rest;
+}
+
+async function dropBacklogItems(targetIds, drop) {
+  if (state.backlogUpdating || state.backlogDeleting) return;
+  const team = state.teams.find(candidate => candidate.id === state.teamId);
+  const idSet = new Set(targetIds.map(Number));
+  const targets = state.backlogItems.filter(candidate => idSet.has(Number(candidate.id)));
+  if (!team || !targets.length) return;
+  const toOther = drop.groupKey === "other";
+  const iterationPath = toOther ? noSprintIterationPath() : drop.iterationPath;
+  const sprintTargets = targets.filter(target => backlogPositionGroup(target).key !== drop.groupKey);
+  const orderBefore = state.backlogItems.map(candidate => Number(candidate.id));
+  const orderAfter = backlogOrderAfterDrop(targetIds, drop.previousId, drop.nextId);
+  // Within a section only what the person sees counts: rows of other sections can sit
+  // between these in the global order, so dropping a row back in its place is no change.
+  const sectionIds = (drop.rows || []).map(row => Number(row.dataset.workItemId));
+  const sectionRest = sectionIds.filter(id => !idSet.has(id));
+  const insertAt = drop.previousId ? sectionRest.indexOf(Number(drop.previousId)) + 1 : 0;
+  const sectionAfter = [...sectionRest.slice(0, insertAt), ...targets.map(target => Number(target.id)), ...sectionRest.slice(insertAt)];
+  const sectionChanges = sectionAfter.length !== sectionIds.length || sectionAfter.some((id, index) => id !== sectionIds[index]);
+  const orderChanges = Boolean(orderAfter) && sectionChanges
+    && orderAfter.some((candidate, index) => Number(candidate.id) !== orderBefore[index]);
+  if (!sprintTargets.length && !orderChanges) return;
+  if (sprintTargets.length && !iterationPath) {
+    showNotice("The sprint of this section is unknown, so the work items could not be moved.", "error");
+    return;
+  }
+
+  const remainingById = sprintTargets.length ? await requestBacklogSprintSplits(sprintTargets, iterationPath) : new Map();
+  if (!remainingById) return;
+
+  const label = targets.length === 1 ? workItemKey(targets[0].id) : `${targets.length} work items`;
+  state.backlogUpdating = true;
+  renderBacklog();
+  els.backlogMeta.textContent = `Moving ${label}…`;
+  const errors = [];
+  let failedIds = new Set();
+  let movedSome = false;
+  try {
+    if (sprintTargets.length) {
+      const failed = await patchBacklogItemsSprint(sprintTargets, iterationPath, remainingById);
+      failedIds = new Set(failed.map(entry => entry.id));
+      errors.push(...failed.map(entry => entry.error));
+      movedSome = failed.length < sprintTargets.length;
+    }
+    const orderIds = targets.map(target => Number(target.id)).filter(id => !failedIds.has(id));
+    if (orderChanges && orderIds.length) {
+      try {
+        await azure(`/${encodeURIComponent(team.name)}/_apis/work/workitemsorder?api-version=7.1`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: orderIds, previousId: Number(drop.previousId) || 0, nextId: Number(drop.nextId) || 0 })
+        });
+        const reordered = backlogOrderAfterDrop(orderIds, drop.previousId, drop.nextId);
+        if (reordered) state.backlogItems = reordered;
+        movedSome = true;
+      } catch (error) {
+        console.error(error);
+        errors.push(error);
+      }
+    }
+    const destination = toOther ? "the backlog (no sprint)" : drop.groupLabel;
+    if (errors.length) {
+      const auth = errors.some(error => error?.auth);
+      const pat = auth ? " The PAT requires ‘Work Items: Read & write’." : "";
+      showNotice(movedSome
+        ? `${label} could not be moved completely${failedIds.size ? `: ${failedIds.size} kept ${failedIds.size === 1 ? "its" : "their"} sprint` : ": the order was not saved"}.${pat} Refresh to see the current state.`
+        : `${label} could not be moved.${pat}`, "error");
+    } else {
+      showNotice(sprintTargets.length
+        ? `${label} moved to ${destination}.`
+        : `${label} moved within ${toOther ? "the backlog" : drop.groupLabel}.`, "info", "", null, 5000);
+    }
+  } finally {
+    state.backlogUpdating = false;
+    renderBacklog();
+  }
+}
+
 async function updateBacklogItemsToSprint(item, iterationPath) {
   if (state.backlogUpdating || state.backlogDeleting) return;
   const toNoSprint = isNoSprintPath(iterationPath);
@@ -7568,14 +7900,8 @@ async function updateBacklogItemsToSprint(item, iterationPath) {
   ));
   if (!targets.length) return;
 
-  // Only offer the split for a single item; bulk moves just change the sprint.
-  const remainingById = new Map();
-  for (const target of targets.length === 1 ? targets : []) {
-    if (toNoSprint || !workItemNeedsSprintSplit(target)) continue;
-    const remaining = await requestRemainingPoints(target, iterationPath);
-    if (remaining === null) return;
-    remainingById.set(Number(target.id), remaining);
-  }
+  const remainingById = await requestBacklogSprintSplits(targets, iterationPath);
+  if (!remainingById) return;
 
   state.backlogUpdating = true;
   renderBacklog();
@@ -7583,31 +7909,7 @@ async function updateBacklogItemsToSprint(item, iterationPath) {
     ? `Moving ${workItemKey(targets[0].id)}…`
     : `Moving ${targets.length} work items…`;
   try {
-    const results = await Promise.allSettled(targets.map(target => {
-      if (remainingById.has(Number(target.id))) {
-        return splitWorkItemIntoSprint(target, iterationPath, remainingById.get(Number(target.id)));
-      }
-      return azure(`/_apis/wit/workitems/${target.id}?api-version=7.1`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json-patch+json" },
-        body: JSON.stringify([{ op: "add", path: "/fields/System.IterationPath", value: iterationPath }])
-      });
-    }));
-    const failed = [];
-    results.forEach((result, index) => {
-      if (result.status === "rejected") {
-        console.error(result.reason);
-        failed.push(result.reason);
-        return;
-      }
-      const target = targets[index];
-      if (remainingById.has(Number(target.id))) {
-        syncBacklogWorkItem(target.id, result.value.updated);
-        addSplitCopyToState(result.value.created);
-      } else {
-        syncBacklogWorkItem(target.id, result.value);
-      }
-    });
+    const failed = (await patchBacklogItemsSprint(targets, iterationPath, remainingById)).map(entry => entry.error);
     const updated = targets.length - failed.length;
     if (failed.length) {
       const auth = failed.some(error => error?.auth);
@@ -16643,6 +16945,17 @@ els.backlogPositionDialog.addEventListener("close", () => {
   els.backlogPositionError.textContent = "";
 });
 els.backlogSprintOrderAction.addEventListener("click", openBacklogSprintOrderDialog);
+els.backlogContent.addEventListener("dragstart", startBacklogDrag);
+els.backlogContent.addEventListener("dragover", moveBacklogDrag);
+els.backlogContent.addEventListener("dragleave", leaveBacklogDrag);
+els.backlogContent.addEventListener("drop", finishBacklogDrop);
+document.addEventListener("dragend", () => { if (state.backlogDrag) clearBacklogDrag(); }, true);
+// Mouse moves don't fire during a native drag, so one after it means the drag ended
+// without a dragend (for example when the rows were re-rendered mid-drag).
+document.addEventListener("mousemove", () => {
+  if (state.backlogDrag && Date.now() - state.backlogDrag.lastEventAt > 400) clearBacklogDrag();
+});
+backlogDragQuery.addEventListener?.("change", () => { if (state.currentView === "backlog") renderBacklog(); });
 els.backlogSprintOrderForm.addEventListener("submit", moveSprintItemsToBacklogTop);
 document.querySelectorAll("[data-close-backlog-sprint-order]").forEach(button => {
   button.addEventListener("click", () => closeBacklogSprintOrderDialog());
