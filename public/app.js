@@ -6761,7 +6761,7 @@ function renderBacklog() {
   const ordered = backlogSprintOrder(visibleItems);
   els.backlogSprintOrderAction.disabled = state.backlogSprintOrdering || !backlogSprintOrder().sprintItems.length;
   const sections = ordered.groups.map(group => (
-    createBacklogSection(group.iteration.name, group.items, iterationLabel(group.iteration))
+    createBacklogSection(group.iteration.name, group.items, iterationLabel(group.iteration), group.iteration)
   ));
   sections.push(createBacklogSection("Other", ordered.remaining, "Backlog"));
   els.backlogContent.replaceChildren(...sections);
@@ -6833,12 +6833,24 @@ async function moveSprintItemsToBacklogTop(event) {
   }
 }
 
-function createBacklogSection(title, items, label) {
+function createBacklogSection(title, items, label, iteration = null) {
   const section = document.createElement("section");
   section.className = "backlog-group";
   const header = document.createElement("header");
   const heading = document.createElement("h2");
-  heading.textContent = title;
+  const sprint = iteration ? sprintRouteValue(iteration) : "";
+  if (sprint) {
+    const link = document.createElement("a");
+    link.className = "backlog-group-link";
+    link.href = appRouteHash({ view: "board", sprint });
+    link.textContent = title;
+    heading.append(link);
+  } else heading.textContent = title;
+  const start = formatDate(iteration?.attributes?.startDate);
+  const end = formatDate(iteration?.attributes?.finishDate);
+  const dates = document.createElement("span");
+  dates.className = "backlog-group-dates";
+  dates.textContent = start && end ? `${start} – ${end}` : "";
   const badge = document.createElement("span");
   badge.className = "backlog-group-label";
   badge.textContent = label;
@@ -6848,7 +6860,9 @@ function createBacklogSection(title, items, label) {
   const roundedPoints = Math.round(points * 10) / 10;
   count.textContent = `${items.length} ${items.length === 1 ? "item" : "items"} · ${roundedPoints} ${roundedPoints === 1 ? "pt" : "pts"}`;
   count.title = `${items.length} work ${items.length === 1 ? "item" : "items"}, ${roundedPoints} story ${roundedPoints === 1 ? "point" : "points"}`;
-  header.append(heading, badge, count);
+  header.append(heading, badge);
+  if (dates.textContent) header.append(dates);
+  header.append(count);
   const wrapper = document.createElement("div");
   wrapper.className = "backlog-table-wrap";
   if (!items.length) {

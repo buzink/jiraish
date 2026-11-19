@@ -464,6 +464,9 @@ body.is-dragging-board-card .board-card-ghost.is-forbidden, body.is-dragging-boa
 .backlog-group { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 1px 1px rgba(9, 30, 66, .08); }
 .backlog-group > header { min-height: 48px; display: flex; align-items: center; gap: 9px; padding: 9px 13px; border-bottom: 1px solid var(--line); background: #fafbfc; }
 .backlog-group h2 { min-width: 0; overflow: hidden; margin: 0; color: #42526e; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.backlog-group-link { color: inherit; text-decoration: none; }
+.backlog-group-link:hover, .backlog-group-link:focus-visible { color: var(--blue-600); text-decoration: underline; }
+.backlog-group-dates { flex: 0 0 auto; color: var(--muted, #6b778c); font-size: 12px; white-space: nowrap; }
 .backlog-group-label { flex: 0 0 auto; padding: 3px 6px; border-radius: 3px; color: #42526e; background: #ebecf0; font-size: 9px; font-weight: 700; text-transform: uppercase; }
 .backlog-group .count { margin-left: auto; flex: 0 0 auto; }
 .backlog-table-wrap { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
@@ -1622,6 +1625,9 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 [data-theme="dark"] .work-item-actions-menu .work-item-delete-action:hover, [data-theme="dark"] .work-item-actions-menu .work-item-delete-action:focus-visible { color: #ffd5d2; background: #5d1f1a; }
 [data-theme="dark"] .backlog-group { border-color: #38414a; background: #22272b; box-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
 [data-theme="dark"] .backlog-group > header, [data-theme="dark"] .backlog-table th { border-color: #38414a; background: #282e33; }
+[data-theme="dark"] .backlog-group h2 { color: #b6c2cf; }
+[data-theme="dark"] .backlog-group-link:hover, [data-theme="dark"] .backlog-group-link:focus-visible { color: #85b8ff; }
+[data-theme="dark"] .backlog-group-dates { color: #9fadbc; }
 [data-theme="dark"] .backlog-group-label { color: #b6c2cf; background: #38414a; }
 [data-theme="dark"] .backlog-sidebar { border-color: #38414a; background: #22272b; box-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
 [data-theme="dark"] .backlog-sidebar > header { border-color: #38414a; background: #282e33; }
