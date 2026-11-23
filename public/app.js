@@ -3603,7 +3603,12 @@ const ANALYTICS_PAGE_CATEGORIES = [
     "Study adviser", "Studieadviseur", "Student counsellors", "Studentendecanen", "UvA psychologists", "Studentenpsychologen",
     "Confidential advisers", "Vertrouwenspersonen", "Ombudsperson", "Service Desk ICT Services", "Servicedesk ICT Services",
     "UvA service points", "UvA servicepunten", "Student Services", "Studenten Services",
-    "Contact person in case of emergency", "Contactpersoon in geval van nood", "Reception desk"
+    "Contact person in case of emergency", "Contactpersoon in geval van nood", "Reception desk", "Receptie",
+    "International Office", "Office of International Student Mobility", "Bureau Internationale Studentenmobiliteit",
+    "Programme Committee", "Opleidingscommissie", "Board of Studies",
+    "Faculty Diversity Officers", "Facultaire Diversity Officers", "Central Diversity Office", "Centrale Diversity Office",
+    "Study advisers*", "Studieadviseurs*", "Vertrouwelijke adviseurs",
+    "Conditions for support by student counsellors", "Voorwaarden voor hulp van de studentendecaan"
   ] },
   // The overview pages and every single article or event.
   { key: "news", label: "News", paths: ["/artikelen", "/en/articles"] },
@@ -3613,8 +3618,8 @@ const ANALYTICS_OTHER_CATEGORY = { key: "other", label: "Other" };
 // The device segments of the pie chart filter, in display order.
 const ANALYTICS_SEGMENTS = [
   { key: "desktop", label: "Desktop" },
-  { key: "app", label: "Mobile app" },
-  { key: "mobileBrowser", label: "Mobile browser" }
+  { key: "app", label: "App" },
+  { key: "mobileBrowser", label: "Mobile" }
 ];
 // Enough page titles to find risers and fallers outside the top pages.
 const ANALYTICS_RISER_PAGES = 1000;
@@ -3801,12 +3806,12 @@ async function analyticsRunReport(request) {
 }
 
 // The most viewed page titles in a period, most views (app_page_load) first.
-async function runAnalyticsTopPages(startDate, endDate, limit = ANALYTICS_RISER_PAGES) {
+async function runAnalyticsTopPages(startDate, endDate, limit = ANALYTICS_RISER_PAGES, segmentFilter = null) {
   const data = await analyticsRunReport({
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "pageTitle" }],
     metrics: [{ name: "eventCount" }],
-    dimensionFilter: ANALYTICS_PAGE_LOAD_FILTER,
+    dimensionFilter: analyticsAndFilter(ANALYTICS_PAGE_LOAD_FILTER, segmentFilter),
     orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
     limit
   });
@@ -3826,6 +3831,25 @@ function analyticsTitleMatches(pattern, title) {
   const wanted = pattern.replace(/\*$/, "").toLocaleLowerCase("en");
   const actual = String(title).toLocaleLowerCase("en");
   return pattern.endsWith("*") ? actual.startsWith(wanted) : actual === wanted;
+}
+
+// Both filters, or only the one that is set.
+function analyticsAndFilter(...filters) {
+  const present = filters.filter(Boolean);
+  return present.length > 1 ? { andGroup: { expressions: present } } : present[0] || null;
+}
+
+// A GA filter for a set of device segments, the same split as analyticsSegment. Null for all segments:
+// that view is not filtered at all, so it also counts tablets.
+function analyticsSegmentFilter(segments) {
+  if (!segments || segments.length >= ANALYTICS_SEGMENTS.length) return null;
+  const app = { filter: { fieldName: "browser", inListFilter: { values: ANALYTICS_APP_BROWSERS } } };
+  const device = category => ({ andGroup: { expressions: [
+    { filter: { fieldName: "deviceCategory", stringFilter: { matchType: "EXACT", value: category } } },
+    { notExpression: app }
+  ] } });
+  const parts = segments.map(segment => segment === "app" ? app : device(segment === "mobileBrowser" ? "mobile" : "desktop"));
+  return parts.length === 1 ? parts[0] : { orGroup: { expressions: parts } };
 }
 
 // The device segment of a GA row: the app (by its webview browser), a mobile browser or desktop.
@@ -3865,18 +3889,36 @@ async function runAnalyticsPageCategories(startDate, endDate) {
   return counts;
 }
 
-// URL fragments that mark a page as an event or a news article.
+// URL fragments that mark a page as an event, a news article, a category page, an information page or a campaign page.
 const ANALYTICS_EVENT_PATHS = ["/events/"];
 const ANALYTICS_NEWS_PATHS = ["/artikelen/", "/articles/"];
+const ANALYTICS_CATEGORY_PATHS = ["/categorieen/", "/categories/"];
+const ANALYTICS_INFO_PATHS = ["/informatie/", "/information/"];
+const ANALYTICS_CAMPAIGN_PATHS = ["/campagnes/", "/campaigns/"];
 
 // The page whose URL contains one of the fragments with the most views in a period, or null.
-async function runAnalyticsTopPageMatching(startDate, endDate, pathFragments) {
+async function runAnalyticsTopPageMatching(startDate, endDate, pathFragments, segmentFilter = null, excludeFilter = null) {
   const filters = pathFragments.map(value => ({ filter: { fieldName: "pagePath", stringFilter: { matchType: "CONTAINS", value } } }));
+  const match = filters.length === 1 ? filters[0] : { orGroup: { expressions: filters } };
+  return runAnalyticsTopPage(startDate, endDate, excludeFilter ? analyticsAndFilter(match, { notExpression: excludeFilter }) : match, segmentFilter);
+}
+
+// The pages of a pie chart category, as a GA filter: one of its titles, and for a category without
+// paths not on a news or event path, because there the path wins (see runAnalyticsPageCategories).
+function analyticsCategoryFilter(key) {
+  const category = ANALYTICS_PAGE_CATEGORIES.find(candidate => candidate.key === key);
+  const titles = { orGroup: { expressions: (category.titles || []).map(pattern => ({ filter: { fieldName: "pageTitle", stringFilter: analyticsTitlePattern(pattern) } })) } };
+  const pathPrefixes = ANALYTICS_PAGE_CATEGORIES.flatMap(candidate => candidate.paths || []);
+  return analyticsAndFilter(titles, { notExpression: { orGroup: { expressions: pathPrefixes.map(value => ({ filter: { fieldName: "pagePath", stringFilter: { matchType: "BEGINS_WITH", value, caseSensitive: false } } })) } } });
+}
+
+// The page that matches a filter with the most views in a period, or null.
+async function runAnalyticsTopPage(startDate, endDate, matchFilter, segmentFilter = null) {
   const data = await analyticsRunReport({
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "pagePath" }, { name: "pageTitle" }],
     metrics: [{ name: "eventCount" }],
-    dimensionFilter: { andGroup: { expressions: [ANALYTICS_PAGE_LOAD_FILTER, filters.length === 1 ? filters[0] : { orGroup: { expressions: filters } }] } },
+    dimensionFilter: analyticsAndFilter(ANALYTICS_PAGE_LOAD_FILTER, matchFilter, segmentFilter),
     orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
     limit: 1
   });
@@ -3924,12 +3966,12 @@ async function runAnalyticsDeviceShare(startDate, endDate) {
 }
 
 // One request per metric, because only the views are filtered on the app_page_load event.
-async function runAnalyticsReport(startDate, endDate) {
+async function runAnalyticsReport(startDate, endDate, segmentFilter = null) {
   const reports = await Promise.all(ANALYTICS_METRICS.map(metric => analyticsRunReport({
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "date" }],
     metrics: [{ name: metric.gaMetric }],
-    ...(metric.filter ? { dimensionFilter: metric.filter } : {}),
+    ...(analyticsAndFilter(metric.filter, segmentFilter) ? { dimensionFilter: analyticsAndFilter(metric.filter, segmentFilter) } : {}),
     metricAggregations: ["TOTAL"],
     orderBys: [{ dimension: { dimensionName: "date" } }]
   })));
@@ -3964,36 +4006,17 @@ async function loadSprintReviewAnalytics(iteration, { force = false } = {}) {
   const requestToken = ++state.analytics.requestToken;
   setAnalyticsStatus("loading", "Loading Google Analytics data…");
   try {
-    const [current, previous, lastYear, topPages, pageCategories, deviceShare, topEvent, topNews] = await Promise.all([
-      runAnalyticsReport(period.start, period.end),
-      runAnalyticsReport(period.previousStart, period.previousEnd),
-      runAnalyticsReport(period.lastYearStart, period.lastYearEnd),
-      Promise.all([
-        runAnalyticsTopPages(period.start, period.end, ANALYTICS_RISER_PAGES),
-        runAnalyticsTopPages(period.previousStart, period.previousEnd, ANALYTICS_RISER_PAGES)
-      ]),
+    const [view, pageCategories, deviceShare] = await Promise.all([
+      runAnalyticsSegmentView(period, null),
       runAnalyticsPageCategories(period.start, period.end),
       Promise.all([
         runAnalyticsDeviceShare(period.start, period.end),
         runAnalyticsDeviceShare(period.previousStart, period.previousEnd)
-      ]),
-      runAnalyticsTopPageMatching(period.start, period.end, ANALYTICS_EVENT_PATHS),
-      runAnalyticsTopPageMatching(period.start, period.end, ANALYTICS_NEWS_PATHS)
+      ])
     ]);
     if (requestToken !== state.analytics.requestToken) return;
-    const movers = analyticsPageMovers(topPages[0], topPages[1]);
-    state.analytics.data = {
-      current,
-      previous,
-      lastYear,
-      pageCategories,
-      movers,
-      deviceShare,
-      topEvent,
-      topNews,
-      period,
-      iteration
-    };
+    // segments holds the same view for a selection of devices, loaded when the filter asks for it.
+    state.analytics.data = { ...view, pageCategories, deviceShare, period, iteration, segments: {}, segmentLoads: {}, segmentErrors: {} };
     state.analytics.dataKey = key;
     setAnalyticsStatus("ready");
   } catch (error) {
@@ -4006,6 +4029,67 @@ async function loadSprintReviewAnalytics(iteration, { force = false } = {}) {
     setAnalyticsStatus("error", error.status === 403
       ? `No access to GA4 property ${state.gaPropertyId}: ${error.message}`
       : error.message || "Google Analytics data could not be loaded.");
+  }
+}
+
+// Everything on the slide that follows the device filter: the chart and its totals, the risers and
+// fallers and the top pages. segments is null for all devices.
+async function runAnalyticsSegmentView(period, segments) {
+  const filter = analyticsSegmentFilter(segments);
+  const contact = analyticsCategoryFilter("contact");
+  const [current, previous, lastYear, topPages, topEvent, topNews, topCategory, topCampaign, topInfo, topContact] = await Promise.all([
+    runAnalyticsReport(period.start, period.end, filter),
+    runAnalyticsReport(period.previousStart, period.previousEnd, filter),
+    runAnalyticsReport(period.lastYearStart, period.lastYearEnd, filter),
+    Promise.all([
+      runAnalyticsTopPages(period.start, period.end, ANALYTICS_RISER_PAGES, filter),
+      runAnalyticsTopPages(period.previousStart, period.previousEnd, ANALYTICS_RISER_PAGES, filter)
+    ]),
+    ...[ANALYTICS_EVENT_PATHS, ANALYTICS_NEWS_PATHS, ANALYTICS_CATEGORY_PATHS, ANALYTICS_CAMPAIGN_PATHS]
+      .map(paths => runAnalyticsTopPageMatching(period.start, period.end, paths, filter)),
+    // Contact pages are information pages too; they count as Top contact, not as Top info.
+    runAnalyticsTopPageMatching(period.start, period.end, ANALYTICS_INFO_PATHS, filter, contact),
+    runAnalyticsTopPage(period.start, period.end, contact, filter)
+  ]);
+  return { current, previous, lastYear, movers: analyticsPageMovers(topPages[0], topPages[1]), topEvent, topNews, topCategory, topInfo, topContact, topCampaign };
+}
+
+// The key of a device selection, null when every device is selected (the unfiltered view).
+function analyticsSegmentKey(segments) {
+  return segments.length >= ANALYTICS_SEGMENTS.length ? null : segments.join(",");
+}
+
+// The view for a device selection: the loaded data itself for all devices, null while it still loads.
+function analyticsSegmentView(data, key) {
+  return key ? data.segments?.[key] || null : data;
+}
+
+function loadAnalyticsSegment(key) {
+  const data = state.analytics.data;
+  if (!key || !data || data.segments[key]) return Promise.resolve();
+  data.segmentLoads[key] ||= runAnalyticsSegmentView(data.period, key.split(","))
+    .then(view => {
+      data.segments[key] = view;
+      delete data.segmentErrors[key];
+    })
+    .catch(error => {
+      console.error(error);
+      data.segmentErrors[key] = error.message || "Google Analytics data could not be loaded.";
+      throw error;
+    })
+    .finally(() => {
+      delete data.segmentLoads[key];
+      if (state.analytics.data === data) rerenderSprintReviewAnalyticsSlide();
+    });
+  return data.segmentLoads[key];
+}
+
+// For the exported file, which switches between the selections without app code. One selection at a
+// time, because each one is a dozen requests and GA allows only a few at once per property.
+async function loadAllAnalyticsSegments() {
+  for (const keys of analyticsSegmentCombinations()) {
+    const key = analyticsSegmentKey(keys);
+    if (key) await loadAnalyticsSegment(key);
   }
 }
 
@@ -4024,7 +4108,9 @@ function analyticsMetricValue(metric, value) {
   return format.format(value).toLowerCase();
 }
 
-function analyticsMetricsHtml(data) {
+// The shares of the app and mobile browsers say nothing within a device selection, so a filtered view
+// shows only Views and Active users.
+function analyticsMetricsHtml(data, filtered = false) {
   const [current, previous] = data.deviceShare || [];
   const html = {};
   ANALYTICS_METRICS.forEach((metric, index) => {
@@ -4042,10 +4128,11 @@ function analyticsMetricsHtml(data) {
       ${change}
     </button>`;
   });
+  if (filtered) return html.screenPageViews + html.activeUsers;
   // The app is recognised by its webview browser (Safari in-app on iOS, Android Webview).
   return html.screenPageViews
-    + analyticsShareFactHtml("Mobile app", "Share of page loads (app_page_load) in the UvA app", current?.appViews, previous?.appViews)
-    + analyticsShareFactHtml("Mobile browser", "Share of page loads (app_page_load) in a browser on a phone, outside the UvA app", current?.mobileBrowserViews, previous?.mobileBrowserViews)
+    + analyticsShareFactHtml("App", "Share of page loads (app_page_load) in the UvA app", current?.appViews, previous?.appViews)
+    + analyticsShareFactHtml("Mobile", "Share of page loads (app_page_load) in a browser on a phone, outside the UvA app", current?.mobileBrowserViews, previous?.mobileBrowserViews)
     + html.activeUsers
     + analyticsShareFactHtml("App users", "Share of active users who used the UvA app", current?.appUsers, previous?.appUsers);
 }
@@ -4226,7 +4313,16 @@ function analyticsSelectedSegments() {
   return selected.length ? selected : ANALYTICS_SEGMENTS.map(segment => segment.key);
 }
 
-function analyticsCategoriesHtml(data) {
+function analyticsTopListHtml(view) {
+  return `${analyticsTopEventHtml(view.topCategory, { label: "Top cat", emptyText: "No category pages viewed" })}
+    ${analyticsTopEventHtml(view.topInfo, { label: "Top info", emptyText: "No information pages viewed" })}
+    ${analyticsTopEventHtml(view.topContact, { label: "Top contact", emptyText: "No contact pages viewed" })}
+    ${analyticsTopEventHtml(view.topCampaign, { label: "Top camp", emptyText: "No campaign pages viewed" })}
+    ${analyticsTopEventHtml(view.topEvent)}
+    ${analyticsTopEventHtml(view.topNews, { label: "Top news", emptyText: "No news articles viewed" })}`;
+}
+
+function analyticsCategoriesHtml(data, topListsHtml) {
   const selected = analyticsSelectedSegments();
   const pies = state.reviewExport
     ? analyticsSegmentCombinations().map(keys => analyticsPieHtml(data, keys, keys.join(",") !== selected.join(","))).join("")
@@ -4236,10 +4332,11 @@ function analyticsCategoriesHtml(data) {
     return `<button type="button" class="analytics-pie-filter-button" data-analytics-segment="${segment.key}" aria-pressed="${pressed}">${escapeHtml(segment.label)}</button>`;
   }).join("");
   return `<section class="analytics-top-pages" aria-label="Page views per category">
-    ${analyticsTopEventHtml(data.topEvent)}
-    ${analyticsTopEventHtml(data.topNews, { label: "Top news", emptyText: "No news articles viewed" })}
+    ${topListsHtml}
+    <div class="analytics-pie-title-group">
     <div class="analytics-top-pages-label analytics-pie-title" title="Page loads (app_page_load) per page category. Tablets are not included.">Views per category</div>
     ${pies}
+    </div>
     <div class="analytics-pie-filter" role="group" aria-label="Devices in the pie chart">${filter}</div>
   </section>`;
 }
@@ -4265,13 +4362,30 @@ function sprintReviewAnalyticsSlideHtml(iteration) {
     : "";
   let body;
   if (status === "ready" && data) {
+    // The parts that follow the device filter. The exported file carries every selection and switches
+    // between them; the app shows the selected one, or the unfiltered view dimmed while that loads.
+    const selectedKey = analyticsSegmentKey(analyticsSelectedSegments());
+    let views;
+    if (state.reviewExport) {
+      views = analyticsSegmentCombinations().map(keys => analyticsSegmentKey(keys))
+        .map(key => ({ key, view: analyticsSegmentView(data, key), hidden: key !== selectedKey }))
+        .filter(entry => entry.view);
+    } else {
+      const view = analyticsSegmentView(data, selectedKey);
+      if (!view && !data.segmentErrors[selectedKey]) loadAnalyticsSegment(selectedKey).catch(() => {});
+      views = [{ key: selectedKey, view: view || data, hidden: false, pending: !view }];
+    }
+    const part = (entry, className, html, extra = "") => `<div class="${className}${entry.pending ? " is-pending" : ""}" data-segment-view="${entry.key || "all"}"${entry.hidden ? " hidden" : ""}${extra}>${html}</div>`;
+    const error = !state.reviewExport && selectedKey ? data.segmentErrors[selectedKey] : "";
+    const topLists = views.map(entry => part(entry, "analytics-top-list", analyticsTopListHtml(entry.view))).join("")
+      + (error ? `<p class="analytics-message is-error">${escapeHtml(error)}</p>` : "");
     body = `<div class="analytics-card">
       <div class="analytics-top">
-        <div class="analytics-metrics" role="tablist" aria-label="Metric">${analyticsMetricsHtml(data)}</div>
-        ${analyticsMoversHtml(data.movers)}
-        ${analyticsCategoriesHtml(data)}
+        ${views.map(entry => part(entry, "analytics-metrics", analyticsMetricsHtml(entry.view, Boolean(entry.key)), ' role="tablist" aria-label="Metric"')).join("")}
+        ${views.map(entry => part(entry, "analytics-movers-view", analyticsMoversHtml(entry.view.movers))).join("")}
+        ${analyticsCategoriesHtml(data, topLists)}
       </div>
-      <div class="analytics-chart">${state.reviewExport ? analyticsExportChartsHtml(data) : analyticsChartSvg(data)}</div>
+      ${views.map(entry => part(entry, "analytics-chart", state.reviewExport ? analyticsExportChartsHtml(entry.view) : analyticsChartSvg(entry.view))).join("")}
       <div class="analytics-footer">
         <div class="analytics-legend" aria-hidden="true">
           <span><i class="analytics-legend-current"></i>${escapeHtml(sprintReviewTitle(iteration))}</span>
@@ -4989,7 +5103,7 @@ function sprintReviewExportRuntime() {
     const metric = event.target.closest("[data-analytics-metric]");
     if (metric) {
       slide.querySelectorAll("[data-analytics-metric]").forEach(button => {
-        const selected = button === metric;
+        const selected = button.dataset.analyticsMetric === metric.dataset.analyticsMetric;
         button.classList.toggle("is-selected", selected);
         button.setAttribute("aria-selected", String(selected));
       });
@@ -5006,6 +5120,8 @@ function sprintReviewExportRuntime() {
       segment.setAttribute("aria-pressed", String(turnedOn));
       const key = buttons.filter(button => button.getAttribute("aria-pressed") === "true").map(button => button.dataset.analyticsSegment).join(",");
       slide.querySelectorAll("[data-pie-key]").forEach(pie => { pie.hidden = pie.dataset.pieKey !== key; });
+      const view = buttons.every(button => button.getAttribute("aria-pressed") === "true") ? "all" : key;
+      slide.querySelectorAll("[data-segment-view]").forEach(part => { part.hidden = part.dataset.segmentView !== view; });
       return;
     }
     const roadmapStep = event.target.closest("[data-roadmap-step]:not(:disabled)");
@@ -5067,6 +5183,8 @@ async function exportSprintReview() {
     });
     // The Roadmap slide carries the previous, current and next quarter, so wait until all three are loaded.
     if (slides.some(slide => slide.roadmap)) await state.reviewRoadmap.promise;
+    // The device filter on the Analytics slide switches between selections that are all loaded beforehand.
+    if (slides.some(slide => slide.analytics) && state.analytics.status === "ready" && state.analytics.data) await loadAllAnalyticsSegments();
     const skipped = [];
     const sections = [];
     state.reviewExport = true;

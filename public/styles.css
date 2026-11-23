@@ -2080,7 +2080,7 @@ body.is-sprint-review main:not(.work-item-main) { padding: 0; }
 .analytics-top-pages td, .analytics-top-pages tbody th { padding-top: .26em; padding-bottom: .26em; }
 .analytics-top-event { margin-top: .6em; padding: .4em .7em; }
 .analytics-top-event + .analytics-top-event { margin-top: .3em; }
-.analytics-top-pages > .analytics-top-event:first-child { margin-top: 0; }
+.analytics-top-list > .analytics-top-event:first-child { margin-top: 0; }
 /* Views per page category: palette validated for CVD separation on light and dark surfaces. */
 .sprint-review-analytics-slide { --pie-dashboard: #2a78d6; --pie-timetable: #eb6834; --pie-results: #1baf7a; --pie-contact: #eda100; --pie-news: #e87ba4; --pie-events: #008300; --pie-other: #b3b9c4; }
 [data-theme="dark"] .sprint-review-analytics-slide { --pie-dashboard: #3987e5; --pie-timetable: #d95926; --pie-results: #199e70; --pie-contact: #c98500; --pie-news: #d55181; --pie-events: #0ca30c; --pie-other: #5b6573; }
@@ -2266,3 +2266,31 @@ body.is-backlog-dragging .backlog-group.is-drop-target .backlog-empty { border-c
 @media (max-width: 560px), (hover: none) and (pointer: coarse) {
   .backlog-table .backlog-drag-cell { display: none; }
 }
+/* No lines under the metrics and the movers. The slide itself is the grid, so the movers sit at the very
+   top next to the title, Top cat starts level with the metrics and the pie filter ends level with the legend. */
+.analytics-metrics, .analytics-movers { border-bottom: 0; }
+.sprint-review-analytics-slide:has(.analytics-card) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 46%); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "header riser" "metrics pages" "chart pages" "footer pages"; column-gap: clamp(16px, 3cqi, 40px); }
+.sprint-review-analytics-slide:has(.analytics-card) > header { grid-area: header; }
+.sprint-review-analytics-slide .analytics-card { display: contents; }
+.analytics-movers { align-self: start; padding-bottom: 0; }
+/* The metric labels fit on one line, so Top cat starts level with them at the top of the row. */
+.analytics-top-pages { margin-top: 0; }
+.analytics-top-list > .analytics-top-event:first-child { margin-top: 0; }
+/* The filters stay at the bottom; the pie and its labels sit in the middle between the top pages and the filters. */
+.analytics-pie-title-group { margin: auto 0; padding: .9em 0; }
+.analytics-pie-title-group .analytics-pie-title { margin-top: 0; padding-top: 0; }
+.analytics-pie-filter { margin-top: 0; }
+@media (max-width: 700px) {
+  .sprint-review-analytics-slide:has(.analytics-card) { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "header" "metrics" "chart" "footer" "riser" "pages"; }
+  /* On a phone: the chart first, then Biggest riser and faller, then the top pages and the pie chart. */
+  .analytics-movers { margin: 1.5em 0 0; }
+  .analytics-top-pages { margin-top: 1.5em; }
+}
+/* The legend sits a little higher, so its middle lines up with the pie filter buttons next to it. */
+.sprint-review-analytics-slide .analytics-footer { padding-bottom: .25em; }
+/* All top page labels as wide as the widest (Top contact), so the titles start at the same place. */
+.analytics-top-event-label { min-width: 8.2em; }
+/* Parts that follow the device filter: one per selection in the exported file, the others hidden. */
+.analytics-movers-view { display: contents; }
+.sprint-review-analytics-slide [data-segment-view][hidden] { display: none !important; }
+.sprint-review-analytics-slide .is-pending, .analytics-movers-view.is-pending .analytics-movers { opacity: .35; transition: opacity .15s; }
