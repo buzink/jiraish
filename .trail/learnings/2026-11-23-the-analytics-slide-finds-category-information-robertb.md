@@ -3,7 +3,7 @@ title: "The analytics slide finds category, information and campaign pages by th
 author: RobertB
 date: 2026-11-23
 branch: main
-cost: { minutes: 12, tokens: 227413 }
+cost: { minutes: 19, tokens: 259307 }
 id: l-0798f9f8
 scope: repo
 status: active
@@ -11,6 +11,7 @@ src: agent
 touches:
   - public/app.js
   - public/styles.css
+  - public/index.html
 ---
 
 ## Decided
@@ -20,6 +21,7 @@ The user renamed the visible labels "Mobile app" to "App" and "Mobile browser" t
 The user wanted the Desktop/App/Mobile filter below the pie chart to filter all data on the slide: the chart with Views and Active users, Biggest riser and faller with their trends, and the top pages. A filtered view leaves out the share facts (App, Mobile, App users), because within a device selection they say nothing (App would read 100% with only App selected). The user named App users and Mobile; App was left out too for the same reason.
 The user wanted a Top contact row built from the same Contact group as the pie chart. That group is a list of page titles (desks, offices, committees, advisers), not a path. Contact pages live under /informatie/ and /information/ too, so Top info leaves them out, because otherwise Study adviser was both Top info and Top contact.
 The group was extended after a search in GA (page titles with desk, office, balie, commissie, committee, board, afdeling, department, loket, adviser, reception). Added: Receptie, International Office, Office of International Student Mobility, Bureau Internationale Studentenmobiliteit, Programme Committee, Opleidingscommissie, Board of Studies, the diversity office pages, and the Psychology study adviser pages.
+The user hit "Exhausted concurrent requests quota" from GA. GA allows 10 requests at once per property, for all clients together, and the analytics slide asks for more than 20 at once (and 14 per device selection). analyticsRunReport now runs at most 4 at a time, retries a 429 about concurrent requests up to 5 times with a growing pause, sends an identical request that is already running only once, and keeps reports whose end date is more than two days ago in the browser's Cache API (jiraish-ga-reports-v1), because GA no longer changes those days.
 
 ## Tried and ruled out
 GA4 property 379071837 has no custom dimension for page type (only click_url, component, label, page_language, page_location, study_selected, subcomponent, study_programme), so the page type cannot come from GA.
@@ -46,3 +48,6 @@ In the code: analyticsSegmentFilter, runAnalyticsSegmentView, loadAnalyticsSegme
 Like the pie chart, a page on a news or event path never counts as contact, whatever its title. "Top contact" is the widest label, so the shared label width is 8.2em; a wider new label needs a larger width.
 
 In the code: ANALYTICS_PAGE_CATEGORIES (contact), analyticsCategoryFilter, runAnalyticsTopPage and runAnalyticsSegmentView in public/app.js; .analytics-top-event-label in public/styles.css.
+A finished sprint loads entirely from the cache the second time (0 requests to GA, checked). The current sprint's own period is never cached, so it always gets fresh numbers. The cache key is the property id plus the request body, so a change to a report request simply misses the cache. To clear it, delete that cache in the browser or bump the version in its name.
+
+In the code: analyticsRunReport and the ANALYTICS_MAX_CONCURRENT / ANALYTICS_CACHE_NAME helpers just above it in public/app.js.

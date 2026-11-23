@@ -3790,19 +3790,111 @@ function analyticsPeriod(iteration) {
   };
 }
 
-async function analyticsRunReport(request) {
-  const response = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(state.gaPropertyId)}:runReport`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${state.analytics.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(request)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(data.error?.message || `Google Analytics returned ${response.status}.`);
+// GA allows 10 requests at once per property, for every client together, and the slide asks for
+// more than 20 at a time. So requests wait in a queue, a "too many at once" answer is retried after
+// a pause, and reports that end before yesterday are kept: GA no longer changes them.
+const ANALYTICS_MAX_CONCURRENT = 4;
+const ANALYTICS_RETRIES = 5;
+const ANALYTICS_CACHE_NAME = "jiraish-ga-reports-v1";
+const analyticsQueue = [];
+const analyticsInFlight = new Map();
+let analyticsRunning = 0;
+
+function analyticsAcquireSlot() {
+  if (analyticsRunning < ANALYTICS_MAX_CONCURRENT) {
+    analyticsRunning++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => analyticsQueue.push(resolve));
+}
+
+function analyticsReleaseSlot() {
+  const next = analyticsQueue.shift();
+  if (next) next();
+  else analyticsRunning--;
+}
+
+// Only reports of finished days are cached; GA can still process the last two days.
+function analyticsReportCacheable(request) {
+  const settled = analyticsAddDays(analyticsToday(), -2);
+  return (request.dateRanges || []).every(range => range.endDate && range.endDate < settled);
+}
+
+async function analyticsCacheKey(body) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${state.gaPropertyId}|${body}`));
+  const hex = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  return new Request(`${location.origin}/__ga-report-cache/${hex}`);
+}
+
+async function analyticsCacheRead(body) {
+  try {
+    const cache = await caches.open(ANALYTICS_CACHE_NAME);
+    const hit = await cache.match(await analyticsCacheKey(body));
+    return hit ? await hit.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function analyticsCacheWrite(body, data) {
+  try {
+    const cache = await caches.open(ANALYTICS_CACHE_NAME);
+    await cache.put(await analyticsCacheKey(body), new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } }));
+  } catch {}
+}
+
+function analyticsConcurrencyError(status, message) {
+  return status === 429 && /concurrent/i.test(message || "");
+}
+
+async function analyticsFetchReport(body) {
+  for (let attempt = 0; ; attempt++) {
+    await analyticsAcquireSlot();
+    let response;
+    let data;
+    try {
+      response = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(state.gaPropertyId)}:runReport`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${state.analytics.token}`, "Content-Type": "application/json" },
+        body
+      });
+      data = await response.json().catch(() => ({}));
+    } finally {
+      analyticsReleaseSlot();
+    }
+    if (response.ok) return data;
+    const message = data.error?.message || `Google Analytics returned ${response.status}.`;
+    if (analyticsConcurrencyError(response.status, message) && attempt < ANALYTICS_RETRIES) {
+      await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt + Math.random() * 300));
+      continue;
+    }
+    const error = new Error(message);
     error.status = response.status;
     throw error;
   }
-  return data;
+}
+
+async function analyticsRunReport(request) {
+  const body = JSON.stringify(request);
+  const key = `${state.gaPropertyId}|${body}`;
+  // The same report asked twice at once (the slide and a filter, say) goes to GA once.
+  if (analyticsInFlight.has(key)) return analyticsInFlight.get(key);
+  const promise = (async () => {
+    const cacheable = analyticsReportCacheable(request);
+    if (cacheable) {
+      const cached = await analyticsCacheRead(body);
+      if (cached) return cached;
+    }
+    const data = await analyticsFetchReport(body);
+    if (cacheable) analyticsCacheWrite(body, data);
+    return data;
+  })();
+  analyticsInFlight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    analyticsInFlight.delete(key);
+  }
 }
 
 // The most viewed page titles in a period, most views (app_page_load) first.
