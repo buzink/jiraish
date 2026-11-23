@@ -1172,6 +1172,11 @@ a.work-item-release-environment:hover, a.work-item-release-environment:focus-vis
 .latest-commits-repository-heading a { color: var(--navy); font-size: 12px; font-weight: 800; text-decoration: none; }
 .latest-commits-repository-heading a:hover { text-decoration: underline; }
 .latest-commits-repository-heading small { color: var(--muted); font-size: 10px; }
+.latest-commits-branches { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 10px; }
+.latest-commits-branch { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
+.latest-commits-branch code { font: inherit; overflow-wrap: anywhere; }
+.latest-commits-branch.is-other code { padding: 0 5px; border-radius: 3px; background: #fff4e5; color: #8a4b00; font-weight: 700; }
+[data-theme="dark"] .latest-commits-branch.is-other code { background: #4a3210; color: #ffcf8a; }
 .latest-commits-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
 .latest-commits-table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .latest-commits-table th { padding: 7px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .06em; text-align: left; text-transform: uppercase; white-space: nowrap; }

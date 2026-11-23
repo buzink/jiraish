@@ -11011,7 +11011,7 @@ async function loadLatestCommitEnvironments(entry) {
     snapshot.commit && await configuredRepositoryForBuild(snapshot.build, configuredRepositories) === entry.repository ? snapshot : null);
   const [owner, name] = entry.repository.split("/");
   return mapWithConcurrency(matches.filter(Boolean), 4, async snapshot => {
-    const result = { label: latestCommitEnvironmentLabel(snapshot.environmentName), environmentName: snapshot.environmentName, commit: snapshot.commit, missing: new Set(), complete: true };
+    const result = { label: latestCommitEnvironmentLabel(snapshot.environmentName), environmentName: snapshot.environmentName, commit: snapshot.commit, branch: String(snapshot.build?.sourceBranch || ""), buildNumber: snapshot.build?.buildNumber || "", missing: new Set(), complete: true };
     if (snapshot.commit.toLocaleLowerCase("en") === head.toLocaleLowerCase("en")) return result;
     try {
       const comparison = await github(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(snapshot.commit)}...${encodeURIComponent(head)}`);
@@ -11374,6 +11374,33 @@ async function copyLatestCommitId(commit) {
   }, 2500);
 }
 
+const LATEST_COMMIT_MAIN_BRANCHES = ["main", "master"];
+
+// One line per repository with the branch each environment runs: grey for main, coloured for any
+// other branch (a feature branch or PR build), because then commits on main can be missing there.
+function createLatestCommitEnvironmentBranches(entry) {
+  if (!Array.isArray(entry.environments) || !entry.environments.length) return null;
+  const rank = label => { const index = LATEST_COMMIT_ENVIRONMENT_ORDER.indexOf(label); return index < 0 ? -1 : index; };
+  const environments = [...entry.environments].sort((a, b) => rank(b.label) - rank(a.label) || a.environmentName.localeCompare(b.environmentName, "en"));
+  const list = document.createElement("div");
+  list.className = "latest-commits-branches";
+  environments.forEach(environment => {
+    const branch = environment.branch.replace(/^refs\/heads\//i, "") || "unknown branch";
+    const item = document.createElement("span");
+    item.className = "latest-commits-branch";
+    item.classList.toggle("is-other", !LATEST_COMMIT_MAIN_BRANCHES.includes(branch.toLocaleLowerCase("en")));
+    item.title = `${environment.environmentName}: ${branch}${environment.buildNumber ? ` · build #${environment.buildNumber}` : ""} · ${environment.commit.slice(0, 8)}`;
+    const label = document.createElement("span");
+    label.className = "latest-commits-branch-env";
+    label.textContent = `${environment.label}:`;
+    const name = document.createElement("code");
+    name.textContent = branch;
+    item.append(label, name);
+    list.append(item);
+  });
+  return list;
+}
+
 function createLatestCommitsRepository(entry) {
   const section = document.createElement("section");
   section.className = "latest-commits-repository";
@@ -11395,6 +11422,8 @@ function createLatestCommitsRepository(entry) {
   }).join(" — ") : "";
   heading.append(title, summary);
   section.append(heading);
+  const branches = createLatestCommitEnvironmentBranches(entry);
+  if (branches) section.append(branches);
   if (entry.loading) {
     summary.textContent = "Loading commits…";
     const skeleton = document.createElement("div");
