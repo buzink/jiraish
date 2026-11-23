@@ -165,6 +165,7 @@ const state = {
   roadmapEpicUpdating: false,
   roadmapForecastContext: null,
   roadmapForecastUpdating: false,
+  roadmapDrag: null,
   roadmapSprintsCreating: false,
   wikis: [],
   wikiId: localStorage.getItem(STORAGE.wiki) || "",
@@ -2300,7 +2301,7 @@ function syncRoadmapEpic(result) {
   return normalized;
 }
 
-function createRoadmapFeatureCard(entry, iteration, lane) {
+function createRoadmapFeatureCard(entry, iteration, lane, epic = null) {
   const committed = entry.stories.length > 0;
   const card = document.createElement("article");
   card.className = `roadmap-feature-card ${committed ? "is-committed" : "is-forecasted"}`;
@@ -2330,8 +2331,148 @@ function createRoadmapFeatureCard(entry, iteration, lane) {
     remove.setAttribute("aria-label", `Remove ${entry.feature.title} from ${iteration.name} ${lane}`);
     remove.addEventListener("click", () => removeRoadmapForecast(entry.feature, iteration, lane));
     card.append(remove);
+    if (epic && roadmapDragEnabled() && !state.roadmapForecastUpdating) {
+      card.draggable = true;
+      card.classList.add("is-draggable");
+      card.title = "Drag to another sprint or lane · hold Alt, Ctrl or Cmd to copy";
+      card.addEventListener("dragstart", event => startRoadmapDrag(event, card, epic, entry.feature, iteration, lane));
+      card.addEventListener("dragend", endRoadmapDrag);
+    }
   }
   return card;
+}
+
+// Forecast toggle on: a forecasted (not committed) Feature card can be dragged to another sprint and/or lane of
+// the same Epic row. The drop swaps the forecast:<sprint>:<lane> tag in one PATCH; with Alt/Option, Ctrl or Cmd
+// held at the drop it adds the new tag and keeps the old one (copy).
+function roadmapDragEnabled() {
+  return !backlogDragQuery.matches;
+}
+
+// The Epic column lists the Epic's Features, one line each. Clicking opens the Feature. With the Forecast toggle on,
+// dragging one onto a Frontend/Backend lane of the same row adds that forecast; the list stays as it is.
+function createRoadmapEpicFeatureList(epic) {
+  const list = document.createElement("ul");
+  list.className = "roadmap-epic-features";
+  const features = [...(state.roadmapData?.featuresByEpic.get(Number(epic.id)) || [])]
+    .sort((left, right) => left.title.localeCompare(right.title, "en", { numeric: true, sensitivity: "base" }));
+  const draggable = state.roadmapForecastMode && roadmapDragEnabled() && !state.roadmapForecastUpdating;
+  list.append(...features.map(feature => {
+    const item = document.createElement("li");
+    const button = createRoadmapWorkItemButton(feature, "roadmap-epic-feature");
+    button.title = draggable ? `${feature.title} · drag onto a sprint lane to forecast` : feature.title;
+    const icon = document.createElement("span");
+    icon.className = "roadmap-feature-icon";
+    icon.textContent = "F";
+    icon.setAttribute("aria-hidden", "true");
+    const title = document.createElement("span");
+    title.className = "roadmap-epic-feature-title";
+    title.textContent = feature.title;
+    button.append(icon, title);
+    if (draggable) {
+      button.draggable = true;
+      button.addEventListener("dragstart", event => startRoadmapDrag(event, button, epic, feature, null, null));
+      button.addEventListener("dragend", endRoadmapDrag);
+    }
+    item.append(button);
+    return item;
+  }));
+  return list;
+}
+
+function startRoadmapDrag(event, card, epic, feature, iteration, lane) {
+  state.roadmapDrag = { feature, iteration, lane, epicId: Number(epic.id) };
+  event.dataTransfer.effectAllowed = "copyMove";
+  event.dataTransfer.setData("text/plain", workItemKey(feature.id));
+  requestAnimationFrame(() => card.classList.add("is-dragging"));
+}
+
+function endRoadmapDrag() {
+  state.roadmapDrag = null;
+  document.querySelectorAll(".roadmap-feature-card.is-dragging, .roadmap-epic-feature.is-dragging").forEach(card => card.classList.remove("is-dragging"));
+  document.querySelectorAll(".roadmap-lane.is-drop-target, .roadmap-lane.is-drop-blocked")
+    .forEach(lane => lane.classList.remove("is-drop-target", "is-drop-blocked", "is-drop-copy"));
+}
+
+function roadmapDragCopies(event) {
+  return Boolean(event.altKey || event.ctrlKey || event.metaKey);
+}
+
+function roadmapDropAllowed(epic, iteration, lane, copy = false) {
+  const drag = state.roadmapDrag;
+  if (!drag || lane === "unassigned" || Number(epic.id) !== drag.epicId) return false;
+  if (drag.iteration?.id === iteration.id && drag.lane === lane) return false;
+  // From the Epic column there is no forecast to remove, so it always adds one (like a copy).
+  if (!drag.iteration) copy = true;
+  const entry = state.roadmapData?.cells.get(roadmapCellKey(epic.id, iteration.id, lane))?.get(drag.feature.id);
+  if (entry?.stories.length) return false;
+  // A copy onto a cell that already has this forecast would change nothing.
+  return !(copy && entry);
+}
+
+function bindRoadmapLaneDrop(section, epic, iteration, lane) {
+  section.addEventListener("dragover", event => {
+    if (!state.roadmapDrag) return;
+    const fromList = !state.roadmapDrag.iteration;
+    const copy = fromList || roadmapDragCopies(event);
+    const allowed = roadmapDropAllowed(epic, iteration, lane, copy);
+    section.classList.toggle("is-drop-target", allowed);
+    section.classList.toggle("is-drop-copy", allowed && copy && !fromList);
+    section.classList.toggle("is-drop-blocked", !allowed && !(state.roadmapDrag.iteration?.id === iteration.id && state.roadmapDrag.lane === lane));
+    if (!allowed) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = copy ? "copy" : "move";
+  });
+  section.addEventListener("dragleave", event => {
+    if (section.contains(event.relatedTarget)) return;
+    section.classList.remove("is-drop-target", "is-drop-blocked", "is-drop-copy");
+  });
+  section.addEventListener("drop", event => {
+    const drag = state.roadmapDrag;
+    const copy = !drag?.iteration || roadmapDragCopies(event);
+    if (!drag || !roadmapDropAllowed(epic, iteration, lane, copy)) return;
+    event.preventDefault();
+    endRoadmapDrag();
+    moveRoadmapForecast(drag.feature, drag.iteration, drag.lane, iteration, lane, copy);
+  });
+}
+
+async function moveRoadmapForecast(feature, fromIteration, fromLane, toIteration, toLane, copy = false) {
+  if (state.roadmapForecastUpdating) return;
+  state.roadmapForecastUpdating = true;
+  state.roadmapMessage = `${copy ? "Copying" : "Moving"} ${feature.title}…`;
+  renderRoadmap();
+  try {
+    const source = await azure(`/_apis/wit/workitems/${feature.id}?api-version=7.1`);
+    const current = normalizeWorkItem(source);
+    const fromTag = fromIteration ? roadmapForecastTag(fromIteration, fromLane) : "";
+    const toTag = roadmapForecastTag(toIteration, toLane);
+    const nextTags = copy ? [...current.tags] : current.tags.filter(tag => String(tag).toLocaleLowerCase("en") !== fromTag);
+    if (!nextTags.some(tag => String(tag).toLocaleLowerCase("en") === toTag)) nextTags.push(toTag);
+    const updated = await azure(`/_apis/wit/workitems/${feature.id}?api-version=7.1`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify([{
+        op: current.tags.length ? "replace" : "add",
+        path: "/fields/System.Tags",
+        value: nextTags.join("; ")
+      }])
+    });
+    syncRoadmapFeature(updated);
+    state.roadmapMessage = `${feature.title} ${!fromIteration ? "forecasted in" : copy ? "copied to" : "moved to"} ${toIteration.name} · ${roadmapCanonicalLaneTag(toLane)}.`;
+    state.roadmapData = null;
+    state.roadmapCacheKey = "";
+    state.roadmapForecastUpdating = false;
+    await loadRoadmap();
+  } catch (error) {
+    console.error(error);
+    state.roadmapForecastUpdating = false;
+    state.roadmapMessage = "";
+    state.roadmapError = error.auth
+      ? `The forecast could not be ${copy ? "copied" : "moved"}. The PAT requires ‘Work Items: Read & write’.`
+      : error.message || `The forecast could not be ${copy ? "copied" : "moved"}.`;
+    renderRoadmap();
+  }
 }
 
 // Forecast toggle off: one cell spanning all sprints of the Epic row. Each Feature shows once per run of
@@ -2437,13 +2578,14 @@ function createRoadmapLane(epic, iteration, lane, label) {
   heading.append(name, actions);
   const cards = document.createElement("div");
   cards.className = "roadmap-lane-cards";
-  if (entries.length) cards.append(...entries.map(entry => createRoadmapFeatureCard(entry, iteration, lane)));
+  if (entries.length) cards.append(...entries.map(entry => createRoadmapFeatureCard(entry, iteration, lane, epic)));
   else {
     const empty = document.createElement("span");
     empty.className = "roadmap-lane-empty";
     cards.append(empty);
   }
   section.append(heading, cards);
+  if (lane !== "unassigned") bindRoadmapLaneDrop(section, epic, iteration, lane);
   return section;
 }
 
@@ -2883,6 +3025,7 @@ function renderRoadmap() {
       forecasted.textContent = `${forecastCount} Forecasted`;
       button.append(icon, title, key, committed, forecasted);
       label.append(button);
+      label.append(createRoadmapEpicFeatureList(epic));
       const automatic = data.epicFeatureCounts.has(epic.id);
       if (!automatic && roadmapEpicHasPeriodTag(epic)) {
         const remove = document.createElement("button");
