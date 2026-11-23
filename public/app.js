@@ -91,7 +91,7 @@ const state = {
   gaClientId: localStorage.getItem(STORAGE.gaClientId) || "",
   gaPropertyId: localStorage.getItem(STORAGE.gaPropertyId) || "",
   analyticsExtraSource: localStorage.getItem(STORAGE.analyticsExtraSource) || "",
-  analytics: { token: "", tokenExpires: 0, data: null, dataKey: "", status: "", message: "", metric: "screenPageViews", pageOffset: 0, requestToken: 0 },
+  analytics: { token: "", tokenExpires: 0, data: null, dataKey: "", status: "", message: "", metric: "screenPageViews", pieSegments: ["desktop", "app", "mobileBrowser"], requestToken: 0 },
   githubOwners: readJson(STORAGE.githubOwners, []),
   githubAllOwners: localStorage.getItem(STORAGE.githubAllOwners) !== "false",
   githubRepos: readJson(STORAGE.githubRepos, []),
@@ -3439,16 +3439,44 @@ async function showMainView(view) {
 }
 
 const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
+// Page views are counted with the app_page_load event, which the site sends on every page load and
+// navigation. page_view (screenPageViews) missed every first load until 23 November 2026, because
+// GTM sent no page_view on load, and it would break every comparison with earlier periods.
+const ANALYTICS_PAGE_LOAD_FILTER = { filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT", value: "app_page_load" } } };
+// name is the id of the metric on the slide; gaMetric and filter make the GA request.
 const ANALYTICS_METRICS = [
-  { name: "screenPageViews", label: "Views" },
-  { name: "activeUsers", label: "Active users" }
+  { name: "screenPageViews", label: "Views", gaMetric: "eventCount", filter: ANALYTICS_PAGE_LOAD_FILTER },
+  { name: "activeUsers", label: "Active users", gaMetric: "activeUsers" }
 ];
-const ANALYTICS_TOP_PAGES = 10;
-// The top pages table pages through ranks 1–10 up to 41–50.
-const ANALYTICS_TOP_PAGES_MAX = 50;
-// Enough page titles to find risers and fallers outside the top 10.
+// Page categories for the pie chart, matched on the page title (titles) or the URL path (paths,
+// the start of the path) without regard to case. A trailing * in a title matches the start of the
+// title. Pages in no category count as Other.
+const ANALYTICS_PAGE_CATEGORIES = [
+  { key: "dashboard", label: "Dashboard", titles: ["student.uva.nl"] },
+  { key: "timetable", label: "Timetable", titles: ["Rooster", "Timetable", "Personal timetable", "Persoonlijk rooster", "Academische kalender*", "Academic calendar*"] },
+  { key: "results", label: "Study results", titles: ["Study result*", "Studieresultaten"] },
+  { key: "contact", label: "Contact", titles: [
+    "Contact", "Central Student Service Desk", "Onderwijsbalie", "Education Desk", "Examencommissie", "Examinations Board", "Exam board",
+    "Study adviser", "Studieadviseur", "Student counsellors", "Studentendecanen", "UvA psychologists", "Studentenpsychologen",
+    "Confidential advisers", "Vertrouwenspersonen", "Ombudsperson", "Service Desk ICT Services", "Servicedesk ICT Services",
+    "UvA service points", "UvA servicepunten", "Student Services", "Studenten Services",
+    "Contact person in case of emergency", "Contactpersoon in geval van nood", "Reception desk"
+  ] },
+  // The overview pages and every single article or event.
+  { key: "news", label: "News", paths: ["/artikelen", "/en/articles"] },
+  { key: "events", label: "Events", paths: ["/events", "/en/events"] }
+];
+const ANALYTICS_OTHER_CATEGORY = { key: "other", label: "Other" };
+// The device segments of the pie chart filter, in display order.
+const ANALYTICS_SEGMENTS = [
+  { key: "desktop", label: "Desktop" },
+  { key: "app", label: "Mobile app" },
+  { key: "mobileBrowser", label: "Mobile browser" }
+];
+// Enough page titles to find risers and fallers outside the top pages.
 const ANALYTICS_RISER_PAGES = 1000;
 const analyticsCompact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const analyticsCompactWhole = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 0 });
 const analyticsFull = new Intl.NumberFormat("en-GB");
 let googleIdentityPromise = null;
 let analyticsTokenClient = null;
@@ -3629,19 +3657,69 @@ async function analyticsRunReport(request) {
   return data;
 }
 
-// The most viewed page titles in a period, most views first.
-async function runAnalyticsTopPages(startDate, endDate, limit = ANALYTICS_TOP_PAGES) {
+// The most viewed page titles in a period, most views (app_page_load) first.
+async function runAnalyticsTopPages(startDate, endDate, limit = ANALYTICS_RISER_PAGES) {
   const data = await analyticsRunReport({
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "pageTitle" }],
-    metrics: [{ name: "screenPageViews" }],
-    orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+    metrics: [{ name: "eventCount" }],
+    dimensionFilter: ANALYTICS_PAGE_LOAD_FILTER,
+    orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
     limit
   });
   return (data.rows || []).map(row => ({
     title: row.dimensionValues?.[0]?.value || "(not set)",
     views: Number(row.metricValues?.[0]?.value) || 0
   }));
+}
+
+function analyticsTitlePattern(pattern) {
+  return pattern.endsWith("*")
+    ? { matchType: "BEGINS_WITH", value: pattern.slice(0, -1), caseSensitive: false }
+    : { matchType: "EXACT", value: pattern, caseSensitive: false };
+}
+
+function analyticsTitleMatches(pattern, title) {
+  const wanted = pattern.replace(/\*$/, "").toLocaleLowerCase("en");
+  const actual = String(title).toLocaleLowerCase("en");
+  return pattern.endsWith("*") ? actual.startsWith(wanted) : actual === wanted;
+}
+
+// The device segment of a GA row: the app (by its webview browser), a mobile browser or desktop.
+// Tablets are in no segment.
+function analyticsSegment(device, browser) {
+  if (ANALYTICS_APP_BROWSERS.includes(browser)) return "app";
+  const category = String(device).toLocaleLowerCase("en");
+  return category === "mobile" ? "mobileBrowser" : category === "desktop" ? "desktop" : "";
+}
+
+// Page loads (app_page_load) per page category and device segment. Other is filled in later from
+// the segment totals, so the long tail of titles is never fetched.
+async function runAnalyticsPageCategories(startDate, endDate) {
+  const data = await analyticsRunReport({
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: "pageTitle" }, { name: "pagePath" }, { name: "deviceCategory" }, { name: "browser" }],
+    metrics: [{ name: "eventCount" }],
+    dimensionFilter: { andGroup: { expressions: [
+      ANALYTICS_PAGE_LOAD_FILTER,
+      { orGroup: { expressions: [
+        ...ANALYTICS_PAGE_CATEGORIES.flatMap(category => category.titles || []).map(pattern => ({ filter: { fieldName: "pageTitle", stringFilter: analyticsTitlePattern(pattern) } })),
+        ...ANALYTICS_PAGE_CATEGORIES.flatMap(category => category.paths || []).map(path => ({ filter: { fieldName: "pagePath", stringFilter: { matchType: "BEGINS_WITH", value: path, caseSensitive: false } } }))
+      ] } }
+    ] } },
+    limit: 50000
+  });
+  const counts = Object.fromEntries(ANALYTICS_SEGMENTS.map(segment => [segment.key, Object.fromEntries(ANALYTICS_PAGE_CATEGORIES.map(category => [category.key, 0]))]));
+  for (const row of data.rows || []) {
+    const [title, path, device, browser] = row.dimensionValues.map(value => value.value || "");
+    const segment = analyticsSegment(device, browser);
+    const lowerPath = path.toLocaleLowerCase("en");
+    // The path wins: an event or article page counts as Events or News whatever its title.
+    const category = ANALYTICS_PAGE_CATEGORIES.find(candidate => (candidate.paths || []).some(prefix => lowerPath.startsWith(prefix)))
+      || ANALYTICS_PAGE_CATEGORIES.find(candidate => (candidate.titles || []).some(pattern => analyticsTitleMatches(pattern, title)));
+    if (segment && category) counts[segment][category.key] += Number(row.metricValues?.[0]?.value) || 0;
+  }
+  return counts;
 }
 
 // URL fragments that mark a page as an event or a news article.
@@ -3654,9 +3732,9 @@ async function runAnalyticsTopPageMatching(startDate, endDate, pathFragments) {
   const data = await analyticsRunReport({
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "pagePath" }, { name: "pageTitle" }],
-    metrics: [{ name: "screenPageViews" }],
-    dimensionFilter: filters.length === 1 ? filters[0] : { orGroup: { expressions: filters } },
-    orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+    metrics: [{ name: "eventCount" }],
+    dimensionFilter: { andGroup: { expressions: [ANALYTICS_PAGE_LOAD_FILTER, filters.length === 1 ? filters[0] : { orGroup: { expressions: filters } }] } },
+    orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
     limit: 1
   });
   const row = data.rows?.[0];
@@ -3668,42 +3746,61 @@ async function runAnalyticsTopPageMatching(startDate, endDate, pathFragments) {
   };
 }
 
-// Share of page views on mobile devices, as a fraction from 0 to 1 (null without views).
-async function runAnalyticsMobileShare(startDate, endDate) {
-  const data = await analyticsRunReport({
-    dateRanges: [{ startDate, endDate }],
-    dimensions: [{ name: "deviceCategory" }],
-    metrics: [{ name: "screenPageViews" }]
-  });
+// The UvA app shows the site in a webview, which GA reports as these browsers.
+const ANALYTICS_APP_BROWSERS = ["Safari (in-app)", "Android Webview"];
+
+// Shares from 0 to 1 (null without data): page views in a mobile browser, page views in the UvA app,
+// and active users who used the app. Views are counted with app_page_load: page_view missed every
+// first load until 23 November 2026, and app sessions nearly always start with one, so screenPageViews
+// would overstate the app. The app on an iPad reports as a desktop browser and is not counted as app.
+async function runAnalyticsDeviceShare(startDate, endDate) {
+  const appFilter = { filter: { fieldName: "browser", inListFilter: { values: ANALYTICS_APP_BROWSERS } } };
+  const [views, allUsers, appUsers] = await Promise.all([
+    analyticsRunReport({
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: "deviceCategory" }, { name: "browser" }],
+      metrics: [{ name: "eventCount" }],
+      dimensionFilter: ANALYTICS_PAGE_LOAD_FILTER,
+      limit: 1000
+    }),
+    analyticsRunReport({ dateRanges: [{ startDate, endDate }], metrics: [{ name: "activeUsers" }] }),
+    analyticsRunReport({ dateRanges: [{ startDate, endDate }], metrics: [{ name: "activeUsers" }], dimensionFilter: appFilter })
+  ]);
   let total = 0;
-  let mobile = 0;
-  for (const row of data.rows || []) {
-    const views = Number(row.metricValues?.[0]?.value) || 0;
-    total += views;
-    if (String(row.dimensionValues?.[0]?.value || "").toLocaleLowerCase("en") === "mobile") mobile += views;
+  const segmentViews = Object.fromEntries(ANALYTICS_SEGMENTS.map(segment => [segment.key, 0]));
+  for (const row of views.rows || []) {
+    const count = Number(row.metricValues?.[0]?.value) || 0;
+    const segment = analyticsSegment(row.dimensionValues?.[0]?.value || "", row.dimensionValues?.[1]?.value || "");
+    total += count;
+    if (segment) segmentViews[segment] += count;
   }
-  return total ? mobile / total : null;
+  const userTotal = Number(allUsers.rows?.[0]?.metricValues?.[0]?.value) || 0;
+  const userApp = Number(appUsers.rows?.[0]?.metricValues?.[0]?.value) || 0;
+  const share = (part, whole) => whole ? part / whole : null;
+  return { mobileBrowserViews: share(segmentViews.mobileBrowser, total), appViews: share(segmentViews.app, total), appUsers: share(userApp, userTotal), segmentViews };
 }
 
+// One request per metric, because only the views are filtered on the app_page_load event.
 async function runAnalyticsReport(startDate, endDate) {
-  const data = await analyticsRunReport({
+  const reports = await Promise.all(ANALYTICS_METRICS.map(metric => analyticsRunReport({
     dateRanges: [{ startDate, endDate }],
     dimensions: [{ name: "date" }],
-    metrics: ANALYTICS_METRICS.map(metric => ({ name: metric.name })),
+    metrics: [{ name: metric.gaMetric }],
+    ...(metric.filter ? { dimensionFilter: metric.filter } : {}),
     metricAggregations: ["TOTAL"],
     orderBys: [{ dimension: { dimensionName: "date" } }]
-  });
-  const byDay = new Map((data.rows || []).map(row => {
+  })));
+  const byDay = reports.map(data => new Map((data.rows || []).map(row => {
     const raw = row.dimensionValues?.[0]?.value || "";
-    return [`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`, row.metricValues.map(value => Number(value.value) || 0)];
-  }));
+    return [`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`, Number(row.metricValues?.[0]?.value) || 0];
+  })));
   const days = analyticsDayCount(startDate, endDate);
   const series = Array.from({ length: days }, (_, index) => {
     const date = analyticsAddDays(startDate, index);
-    return { date, values: byDay.get(date) || ANALYTICS_METRICS.map(() => 0) };
+    return { date, values: byDay.map(values => values.get(date) || 0) };
   });
   // Totals come from GA itself: users are unique per period, so they cannot be summed per day.
-  const totals = data.totals?.[0]?.metricValues?.map(value => Number(value.value) || 0) || ANALYTICS_METRICS.map(() => 0);
+  const totals = reports.map(data => Number(data.totals?.[0]?.metricValues?.[0]?.value) || 0);
   return { series, totals };
 }
 
@@ -3724,32 +3821,31 @@ async function loadSprintReviewAnalytics(iteration, { force = false } = {}) {
   const requestToken = ++state.analytics.requestToken;
   setAnalyticsStatus("loading", "Loading Google Analytics data…");
   try {
-    const [current, previous, lastYear, topPages, mobileShare, topEvent, topNews] = await Promise.all([
+    const [current, previous, lastYear, topPages, pageCategories, deviceShare, topEvent, topNews] = await Promise.all([
       runAnalyticsReport(period.start, period.end),
       runAnalyticsReport(period.previousStart, period.previousEnd),
       runAnalyticsReport(period.lastYearStart, period.lastYearEnd),
       Promise.all([
         runAnalyticsTopPages(period.start, period.end, ANALYTICS_RISER_PAGES),
-        runAnalyticsTopPages(period.previousStart, period.previousEnd, ANALYTICS_RISER_PAGES),
-        runAnalyticsTopPages(period.lastYearStart, period.lastYearEnd, ANALYTICS_TOP_PAGES_MAX)
+        runAnalyticsTopPages(period.previousStart, period.previousEnd, ANALYTICS_RISER_PAGES)
       ]),
+      runAnalyticsPageCategories(period.start, period.end),
       Promise.all([
-        runAnalyticsMobileShare(period.start, period.end),
-        runAnalyticsMobileShare(period.previousStart, period.previousEnd)
+        runAnalyticsDeviceShare(period.start, period.end),
+        runAnalyticsDeviceShare(period.previousStart, period.previousEnd)
       ]),
       runAnalyticsTopPageMatching(period.start, period.end, ANALYTICS_EVENT_PATHS),
       runAnalyticsTopPageMatching(period.start, period.end, ANALYTICS_NEWS_PATHS)
     ]);
     if (requestToken !== state.analytics.requestToken) return;
     const movers = analyticsPageMovers(topPages[0], topPages[1]);
-    state.analytics.pageOffset = 0;
     state.analytics.data = {
       current,
       previous,
       lastYear,
-      topPages: topPages.map(pages => pages.slice(0, ANALYTICS_TOP_PAGES_MAX)),
+      pageCategories,
       movers,
-      mobileShare,
+      deviceShare,
       topEvent,
       topNews,
       period,
@@ -3778,8 +3874,17 @@ function analyticsNiceMax(value) {
   return nice * 4;
 }
 
+// Order: Views, the view shares (app, browser), Active users, the app user share.
+// Views are shown without a decimal below a million (830k); other values keep one decimal.
+function analyticsMetricValue(metric, value) {
+  const format = metric.name === "screenPageViews" && value < 1e6 ? analyticsCompactWhole : analyticsCompact;
+  return format.format(value).toLowerCase();
+}
+
 function analyticsMetricsHtml(data) {
-  return ANALYTICS_METRICS.map((metric, index) => {
+  const [current, previous] = data.deviceShare || [];
+  const html = {};
+  ANALYTICS_METRICS.forEach((metric, index) => {
     const current = data.current.totals[index];
     const previous = data.previous.totals[index];
     const selected = metric.name === state.analytics.metric;
@@ -3788,24 +3893,30 @@ function analyticsMetricsHtml(data) {
       const percent = (current - previous) / previous * 100;
       change = `<span class="analytics-metric-change ${percent >= 0 ? "is-up" : "is-down"}" title="Previous sprint: ${escapeHtml(analyticsFull.format(previous))}">${percent >= 0 ? "↑" : "↓"} ${Math.abs(percent).toFixed(1)}%</span>`;
     }
-    return `<button class="analytics-metric${selected ? " is-selected" : ""}" type="button" role="tab" aria-selected="${selected}" data-analytics-metric="${metric.name}">
+    html[metric.name] = `<button class="analytics-metric${selected ? " is-selected" : ""}" type="button" role="tab" aria-selected="${selected}" data-analytics-metric="${metric.name}">
       <span class="analytics-metric-label">${escapeHtml(metric.label)}</span>
-      <strong class="analytics-metric-value" title="${escapeHtml(analyticsFull.format(current))}">${escapeHtml(analyticsCompact.format(current).toLowerCase())}</strong>
+      <strong class="analytics-metric-value" title="${escapeHtml(analyticsFull.format(current))}">${escapeHtml(analyticsMetricValue(metric, current))}</strong>
       ${change}
     </button>`;
-  }).join("") + analyticsMobileShareHtml(data.mobileShare);
+  });
+  // The app is recognised by its webview browser (Safari in-app on iOS, Android Webview).
+  return html.screenPageViews
+    + analyticsShareFactHtml("Mobile app", "Share of page loads (app_page_load) in the UvA app", current?.appViews, previous?.appViews)
+    + analyticsShareFactHtml("Mobile browser", "Share of page loads (app_page_load) in a browser on a phone, outside the UvA app", current?.mobileBrowserViews, previous?.mobileBrowserViews)
+    + html.activeUsers
+    + analyticsShareFactHtml("App users", "Share of active users who used the UvA app", current?.appUsers, previous?.appUsers);
 }
 
 // Not a chart metric, so a plain fact instead of a button. The change is in percentage points.
-function analyticsMobileShareHtml([current, previous]) {
-  const value = current === null ? "–" : `${Math.round(current * 100)}%`;
+function analyticsShareFactHtml(label, description, current, previous) {
+  const value = current === null || current === undefined ? "–" : `${Math.round(current * 100)}%`;
   let change = `<span class="analytics-metric-change">–</span>`;
-  if (current !== null && previous !== null) {
+  if (current !== null && current !== undefined && previous !== null && previous !== undefined) {
     const points = (current - previous) * 100;
     change = `<span class="analytics-metric-change ${points >= 0 ? "is-up" : "is-down"}" title="Previous sprint: ${Math.round(previous * 100)}%">${points >= 0 ? "↑" : "↓"} ${Math.abs(points).toFixed(1)} pp</span>`;
   }
-  return `<div class="analytics-metric analytics-metric-fact" title="Share of views on mobile devices">
-    <span class="analytics-metric-label">Mobile views</span>
+  return `<div class="analytics-metric analytics-metric-fact" title="${escapeHtml(description)}">
+    <span class="analytics-metric-label">${escapeHtml(label)}</span>
     <strong class="analytics-metric-value">${value}</strong>
     ${change}
   </div>`;
@@ -3912,44 +4023,81 @@ function analyticsTopEventHtml(event, { label = "Top event", emptyText = "No eve
   </div>`;
 }
 
-function analyticsTopPagesHtml(data, iteration) {
-  const columns = [
-    { label: sprintReviewTitle(iteration), className: "is-current", pages: data.topPages[0] },
-    { label: "Previous sprint", className: "is-previous", pages: data.topPages[1] },
-    { label: "Last year", className: "is-last-year", pages: data.topPages[2] }
-  ];
-  const available = Math.max(...columns.map(column => column.pages.length), 1);
-  const lastOffset = Math.floor((Math.min(available, ANALYTICS_TOP_PAGES_MAX) - 1) / ANALYTICS_TOP_PAGES) * ANALYTICS_TOP_PAGES;
-  const offset = state.reviewExport ? 0 : Math.min(state.analytics.pageOffset || 0, lastOffset);
-  // The exported file carries every page of ranks; its script shows one page at a time.
-  const indexes = state.reviewExport
-    ? Array.from({ length: lastOffset + ANALYTICS_TOP_PAGES }, (_, index) => index)
-    : Array.from({ length: ANALYTICS_TOP_PAGES }, (_, row) => offset + row);
-  const rows = indexes.map(index => {
-    const pageNumber = Math.floor(index / ANALYTICS_TOP_PAGES);
-    return `<tr${state.reviewExport ? ` data-page="${pageNumber}"${pageNumber ? " hidden" : ""}` : ""}>
-    <th scope="row">${index + 1}</th>
-    ${columns.map(column => {
-      const page = column.pages[index];
-      return page
-        ? `<td data-tooltip="${escapeHtml(page.title)}" aria-label="${escapeHtml(`${page.title}, ${analyticsFull.format(page.views)} views`)}"><span class="analytics-page-views">${escapeHtml(analyticsCompact.format(page.views).toLowerCase())}</span><span class="analytics-page-title">${escapeHtml(page.title)}</span></td>`
-        : `<td class="is-empty">–</td>`;
-    }).join("")}
-  </tr>`;
+// Views per page category for a set of device segments, largest category first and Other last.
+function analyticsCategorySlices(data, segmentKeys) {
+  const counts = data.pageCategories || {};
+  const totals = data.deviceShare?.[0]?.segmentViews || {};
+  const slices = ANALYTICS_PAGE_CATEGORIES.map(category => ({
+    ...category,
+    views: segmentKeys.reduce((sum, segment) => sum + (counts[segment]?.[category.key] || 0), 0)
+  }));
+  const total = segmentKeys.reduce((sum, segment) => sum + (totals[segment] || 0), 0);
+  const categorised = slices.reduce((sum, slice) => sum + slice.views, 0);
+  slices.push({ ...ANALYTICS_OTHER_CATEGORY, views: Math.max(0, total - categorised) });
+  const whole = Math.max(total, categorised);
+  return slices.map(slice => ({ ...slice, share: whole ? slice.views / whole : 0 }));
+}
+
+function analyticsPieSvg(slices) {
+  const cx = 100;
+  const cy = 100;
+  const r = 96;
+  const shown = slices.filter(slice => slice.views > 0);
+  const label = slice => `${slice.label}: ${Math.round(slice.share * 100)}% · ${analyticsFull.format(slice.views)} views`;
+  if (!shown.length) return `<svg class="analytics-pie-svg" viewBox="0 0 200 200" role="img" aria-label="No page views"><circle class="analytics-pie-empty" cx="${cx}" cy="${cy}" r="${r}"></circle></svg>`;
+  let angle = -Math.PI / 2;
+  const point = value => `${(cx + r * Math.cos(value)).toFixed(2)},${(cy + r * Math.sin(value)).toFixed(2)}`;
+  const paths = shown.map(slice => {
+    const title = `<title>${escapeHtml(label(slice))}</title>`;
+    if (shown.length === 1) return `<circle class="analytics-pie-slice is-${slice.key}" cx="${cx}" cy="${cy}" r="${r}">${title}</circle>`;
+    const start = angle;
+    angle += slice.share * Math.PI * 2;
+    const large = angle - start > Math.PI ? 1 : 0;
+    return `<path class="analytics-pie-slice is-${slice.key}" d="M${cx},${cy}L${point(start)}A${r},${r} 0 ${large} 1 ${point(angle)}Z">${title}</path>`;
   }).join("");
-  const rangeLabel = `${offset + 1}–${offset + ANALYTICS_TOP_PAGES}`;
-  return `<section class="analytics-top-pages" aria-label="Most viewed pages, ranks ${rangeLabel}" data-page-size="${ANALYTICS_TOP_PAGES}" data-page-count="${lastOffset / ANALYTICS_TOP_PAGES + 1}">
-    <div class="analytics-top-pages-pager">
-      <button type="button" data-analytics-pages="-1" aria-label="Previous ${ANALYTICS_TOP_PAGES} pages" title="Previous ${ANALYTICS_TOP_PAGES}"${offset === 0 ? " disabled" : ""}>‹</button>
-      <span>${rangeLabel}</span>
-      <button type="button" data-analytics-pages="1" aria-label="Next ${ANALYTICS_TOP_PAGES} pages" title="Next ${ANALYTICS_TOP_PAGES}"${offset >= lastOffset ? " disabled" : ""}>›</button>
-    </div>
-    <table>
-      <thead><tr><th scope="col"><span class="sr-only">Rank</span></th>${columns.map(column => `<th scope="col" class="${column.className}">${escapeHtml(column.label)}</th>`).join("")}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+  return `<svg class="analytics-pie-svg" viewBox="0 0 200 200" role="img" aria-label="${escapeHtml(shown.map(label).join("; "))}">${paths}</svg>`;
+}
+
+function analyticsPieHtml(data, segmentKeys, hidden) {
+  const slices = analyticsCategorySlices(data, segmentKeys);
+  const legend = slices.map(slice => `<li>
+      <i class="analytics-pie-swatch is-${slice.key}" aria-hidden="true"></i>
+      <span class="analytics-pie-label">${escapeHtml(slice.label)}</span>
+      <strong class="analytics-pie-share">${Math.round(slice.share * 100)}%</strong>
+      <span class="analytics-pie-views" title="${escapeHtml(analyticsFull.format(slice.views))} views">${escapeHtml(analyticsCompact.format(slice.views).toLowerCase())}</span>
+    </li>`).join("");
+  return `<div class="analytics-pie" data-pie-key="${segmentKeys.join(",")}"${hidden ? " hidden" : ""}>
+    ${analyticsPieSvg(slices)}
+    <ul class="analytics-pie-legend">${legend}</ul>
+  </div>`;
+}
+
+// Every non-empty combination of segments, so the exported file can switch without app code.
+function analyticsSegmentCombinations() {
+  const keys = ANALYTICS_SEGMENTS.map(segment => segment.key);
+  return Array.from({ length: 2 ** keys.length - 1 }, (_, index) => keys.filter((_, bit) => (index + 1) & (1 << bit)));
+}
+
+function analyticsSelectedSegments() {
+  const selected = ANALYTICS_SEGMENTS.map(segment => segment.key).filter(key => (state.analytics.pieSegments || []).includes(key));
+  return selected.length ? selected : ANALYTICS_SEGMENTS.map(segment => segment.key);
+}
+
+function analyticsCategoriesHtml(data) {
+  const selected = analyticsSelectedSegments();
+  const pies = state.reviewExport
+    ? analyticsSegmentCombinations().map(keys => analyticsPieHtml(data, keys, keys.join(",") !== selected.join(","))).join("")
+    : analyticsPieHtml(data, selected, false);
+  const filter = ANALYTICS_SEGMENTS.map(segment => {
+    const pressed = selected.includes(segment.key);
+    return `<button type="button" class="analytics-pie-filter-button" data-analytics-segment="${segment.key}" aria-pressed="${pressed}">${escapeHtml(segment.label)}</button>`;
+  }).join("");
+  return `<section class="analytics-top-pages" aria-label="Page views per category">
     ${analyticsTopEventHtml(data.topEvent)}
     ${analyticsTopEventHtml(data.topNews, { label: "Top news", emptyText: "No news articles viewed" })}
+    <div class="analytics-top-pages-label analytics-pie-title" title="Page loads (app_page_load) per page category. Tablets are not included.">Views per category</div>
+    ${pies}
+    <div class="analytics-pie-filter" role="group" aria-label="Devices in the pie chart">${filter}</div>
   </section>`;
 }
 
@@ -3978,7 +4126,7 @@ function sprintReviewAnalyticsSlideHtml(iteration) {
       <div class="analytics-top">
         <div class="analytics-metrics" role="tablist" aria-label="Metric">${analyticsMetricsHtml(data)}</div>
         ${analyticsMoversHtml(data.movers)}
-        ${analyticsTopPagesHtml(data, iteration)}
+        ${analyticsCategoriesHtml(data)}
       </div>
       <div class="analytics-chart">${state.reviewExport ? analyticsExportChartsHtml(data) : analyticsChartSvg(data)}</div>
       <div class="analytics-footer">
@@ -4679,17 +4827,6 @@ function sprintReviewExportRuntime() {
     }
   }
 
-  function pageTopPages(section, step) {
-    const size = Number(section.dataset.pageSize) || 10;
-    const count = Number(section.dataset.pageCount) || 1;
-    const page = Math.max(0, Math.min(count - 1, (Number(section.dataset.page) || 0) + step));
-    section.dataset.page = String(page);
-    section.querySelectorAll("tr[data-page]").forEach(row => { row.hidden = Number(row.dataset.page) !== page; });
-    section.querySelector(".analytics-top-pages-pager span").textContent = `${page * size + 1}–${page * size + size}`;
-    section.querySelector('[data-analytics-pages="-1"]').disabled = page === 0;
-    section.querySelector('[data-analytics-pages="1"]').disabled = page === count - 1;
-  }
-
   function toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen?.();
     else document.querySelector(".sprint-review-view").requestFullscreen?.();
@@ -4718,6 +4855,16 @@ function sprintReviewExportRuntime() {
       });
       return;
     }
+    const segment = event.target.closest("[data-analytics-segment]");
+    if (segment) {
+      const buttons = [...slide.querySelectorAll("[data-analytics-segment]")];
+      const turnedOn = segment.getAttribute("aria-pressed") !== "true";
+      if (!turnedOn && buttons.filter(button => button.getAttribute("aria-pressed") === "true").length === 1) return;
+      segment.setAttribute("aria-pressed", String(turnedOn));
+      const key = buttons.filter(button => button.getAttribute("aria-pressed") === "true").map(button => button.dataset.analyticsSegment).join(",");
+      slide.querySelectorAll("[data-pie-key]").forEach(pie => { pie.hidden = pie.dataset.pieKey !== key; });
+      return;
+    }
     const roadmapStep = event.target.closest("[data-roadmap-step]:not(:disabled)");
     if (roadmapStep) {
       const panel = roadmapStep.closest("[data-roadmap-offset]");
@@ -4728,8 +4875,6 @@ function sprintReviewExportRuntime() {
       }
       return;
     }
-    const pager = event.target.closest("[data-analytics-pages]:not(:disabled)");
-    if (pager) return pageTopPages(pager.closest(".analytics-top-pages"), Number(pager.dataset.analyticsPages));
     const row = event.target.closest("tr.sprint-review-item-row");
     if (row && !event.target.closest("a")) row.querySelector("a")?.click();
   });
@@ -17250,9 +17395,12 @@ els.sprintReviewStage.addEventListener("click", event => {
     state.analytics.metric = metric;
     return rerenderSprintReviewAnalyticsSlide();
   }
-  const pageStep = event.target.closest("[data-analytics-pages]:not(:disabled)")?.dataset.analyticsPages;
-  if (pageStep) {
-    state.analytics.pageOffset = Math.max(0, (state.analytics.pageOffset || 0) + Number(pageStep) * ANALYTICS_TOP_PAGES);
+  const segment = event.target.closest("[data-analytics-segment]")?.dataset.analyticsSegment;
+  if (segment) {
+    const selected = analyticsSelectedSegments();
+    const next = selected.includes(segment) ? selected.filter(key => key !== segment) : [...selected, segment];
+    // At least one device stays selected.
+    if (next.length) state.analytics.pieSegments = next;
     return rerenderSprintReviewAnalyticsSlide();
   }
   const feature = event.target.closest("[data-review-feature]");
