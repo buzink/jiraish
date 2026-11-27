@@ -7919,9 +7919,16 @@ function cloneFieldOperation(fields, field, operations, transform = value => val
   if (value !== undefined && value !== null && value !== "") operations.push({ op: "add", path: `/fields/${field}`, value });
 }
 
+// The state a split's duplicate gets: Closed, or the type's first Completed state (Done in Scrum).
+function closedStateName(states) {
+  const closed = states.find(option => String(option.name).toLocaleLowerCase("en") === "closed");
+  const completed = states.find(option => option.category === "Completed");
+  return (closed || completed)?.name || "Closed";
+}
+
 // Splits an in-progress work item when it moves to another sprint. The original moves with the
 // remaining points, so its comments and pull request links carry on in the new sprint. A duplicate
-// with the done points and the same state stays in the current sprint, only for bookkeeping.
+// with the done points stays closed in the current sprint, only for bookkeeping.
 async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
   const source = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
   const fields = source.fields || {};
@@ -7971,9 +7978,8 @@ async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
       attributes: { comment: "The remaining work continues in the next sprint" }
     }
   });
-  const stateOperation = fields["System.State"]
-    ? { op: "add", path: "/fields/System.State", value: fields["System.State"] }
-    : null;
+  const closedState = closedStateName(await workItemTypeStates(normalized.type).catch(() => []));
+  const stateOperation = { op: "add", path: "/fields/System.State", value: closedState };
 
   const originalOperations = [
     { op: "test", path: "/rev", value: source.rev },
@@ -7996,12 +8002,21 @@ async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
   let created;
   try {
     try {
-      created = await createDuplicate(stateOperation ? [...operations, stateOperation] : operations);
+      created = await createDuplicate([...operations, stateOperation]);
     } catch (stateError) {
-      // Some processes do not let a new work item start in every state; then it starts in the first one.
-      if (!stateOperation || stateError.auth) throw stateError;
-      console.warn("The duplicate could not be created in the original's state; creating it in the first state.", stateError);
+      // Some processes do not let a new work item start closed; then it is created first and closed after.
+      if (stateError.auth) throw stateError;
+      console.warn(`The duplicate could not be created as ${closedState}; creating it first and closing it after.`, stateError);
       created = await createDuplicate(operations);
+      try {
+        created = await azure(`/_apis/wit/workitems/${created.id}?api-version=7.1`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json-patch+json" },
+          body: JSON.stringify([stateOperation])
+        });
+      } catch (closeError) {
+        console.error(`The duplicate ${workItemKey(created.id)} could not be set to ${closedState}.`, closeError);
+      }
     }
   } catch (createError) {
     const rollback = [

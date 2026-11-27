@@ -17,7 +17,7 @@
         document.querySelector('meta[name="theme-color"]').content = useDarkTheme ? "#0c1524" : "#0747a6";
       } catch { document.documentElement.dataset.theme = "light"; }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20261123-analytics-queue-1" />
+    <link rel="stylesheet" href="styles.css?v=20261127-split-closed-1" />
   </head>
   <body>
     <a class="skip-link" href="#board">Skip to the sprint board</a>
@@ -853,7 +853,7 @@
           </div>
           <button class="close-button" type="button" data-close-remaining-points aria-label="Close">×</button>
         </div>
-        <p class="remaining-points-explanation">This work item is already in progress. It moves to the new sprint with the remaining story points, and a duplicate with the done part stays in the current sprint. How many story points are still needed?</p>
+        <p class="remaining-points-explanation">This work item is already in progress. It moves to the new sprint with the remaining story points, and a closed duplicate with the done part stays in the current sprint. How many story points are still needed?</p>
         <fieldset class="remaining-points-fieldset">
           <legend>Remaining story points</legend>
           <div id="remainingPointsChoices" class="issue-points-quick remaining-points-choices" role="radiogroup" aria-label="Remaining story points"></div>
@@ -1314,6 +1314,6 @@
 
     <div id="boardDragLiveRegion" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-    <script src="app.js?v=20261123-analytics-queue-1" defer></script>
+    <script src="app.js?v=20261127-split-closed-1" defer></script>
   </body>
 </html>
