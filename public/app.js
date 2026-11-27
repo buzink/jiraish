@@ -7846,13 +7846,16 @@ function workItemNeedsSprintSplit(item) {
   return Number.isFinite(points) && points > 0 && state.mapping[item.state] !== "todo";
 }
 
+// The duplicate keeps the done part in the current sprint and the original carries on in the
+// next sprint: "Title" becomes "Title - 1" (duplicate) and "Title - 2" (original); an original
+// that was split before ("Title - 2") gives "Title - 2" (duplicate) and "Title - 3" (original).
 function numberedSplitTitles(title) {
   const value = String(title || "Untitled").trim();
   const match = value.match(/^(.*) - (\d+)$/);
   if (match) {
-    return { original: value, copy: `${match[1]} - ${Number(match[2]) + 1}` };
+    return { duplicate: value, original: `${match[1]} - ${Number(match[2]) + 1}` };
   }
-  return { original: `${value} - 1`, copy: `${value} - 2` };
+  return { duplicate: `${value} - 1`, original: `${value} - 2` };
 }
 
 function closeRemainingPointsDialog(value = null) {
@@ -7916,6 +7919,9 @@ function cloneFieldOperation(fields, field, operations, transform = value => val
   if (value !== undefined && value !== null && value !== "") operations.push({ op: "add", path: `/fields/${field}`, value });
 }
 
+// Splits an in-progress work item when it moves to another sprint. The original moves with the
+// remaining points, so its comments and pull request links carry on in the new sprint. A duplicate
+// with the done points and the same state stays in the current sprint, only for bookkeeping.
 async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
   const source = await azure(`/_apis/wit/workitems/${item.id}?$expand=relations&api-version=7.1`);
   const fields = source.fields || {};
@@ -7930,12 +7936,13 @@ async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
   }
 
   const titles = numberedSplitTitles(normalized.title);
+  const originalUrl = source.url || `${activeAzureContext().base}/_apis/wit/workItems/${Number(item.id)}`;
   const operations = [
-    { op: "add", path: "/fields/System.Title", value: titles.copy },
-    { op: "add", path: "/fields/System.IterationPath", value: iterationPath },
-    { op: "add", path: `/fields/${pointsField}`, value: remainingPoints }
+    { op: "add", path: "/fields/System.Title", value: titles.duplicate },
+    { op: "add", path: `/fields/${pointsField}`, value: totalPoints - remainingPoints }
   ];
   [
+    "System.IterationPath",
     "System.AreaPath",
     "System.AssignedTo",
     "System.Tags",
@@ -7959,15 +7966,19 @@ async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
     op: "add",
     path: "/relations/-",
     value: {
-      rel: "System.LinkTypes.Dependency-Reverse",
-      url: source.url || `${activeAzureContext().base}/_apis/wit/workItems/${Number(item.id)}`,
-      attributes: { comment: "Continues the remaining work in the next sprint" }
+      rel: "System.LinkTypes.Dependency-Forward",
+      url: originalUrl,
+      attributes: { comment: "The remaining work continues in the next sprint" }
     }
   });
+  const stateOperation = fields["System.State"]
+    ? { op: "add", path: "/fields/System.State", value: fields["System.State"] }
+    : null;
 
   const originalOperations = [
     { op: "test", path: "/rev", value: source.rev },
-    { op: "add", path: `/fields/${pointsField}`, value: totalPoints - remainingPoints }
+    { op: "add", path: "/fields/System.IterationPath", value: iterationPath },
+    { op: "add", path: `/fields/${pointsField}`, value: remainingPoints }
   ];
   if (titles.original !== normalized.title) {
     originalOperations.push({ op: "add", path: "/fields/System.Title", value: titles.original });
@@ -7977,16 +7988,25 @@ async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
     headers: { "Content-Type": "application/json-patch+json" },
     body: JSON.stringify(originalOperations)
   });
+  const createDuplicate = body => azure(`/_apis/wit/workitems/$${encodeURIComponent(normalized.type)}?api-version=7.1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json-patch+json" },
+    body: JSON.stringify(body)
+  });
   let created;
   try {
-    created = await azure(`/_apis/wit/workitems/$${encodeURIComponent(normalized.type)}?api-version=7.1`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json-patch+json" },
-      body: JSON.stringify(operations)
-    });
+    try {
+      created = await createDuplicate(stateOperation ? [...operations, stateOperation] : operations);
+    } catch (stateError) {
+      // Some processes do not let a new work item start in every state; then it starts in the first one.
+      if (!stateOperation || stateError.auth) throw stateError;
+      console.warn("The duplicate could not be created in the original's state; creating it in the first state.", stateError);
+      created = await createDuplicate(operations);
+    }
   } catch (createError) {
     const rollback = [
       { op: "test", path: "/rev", value: updated.rev },
+      { op: "add", path: "/fields/System.IterationPath", value: fields["System.IterationPath"] },
       { op: "add", path: `/fields/${pointsField}`, value: totalPoints }
     ];
     if (titles.original !== normalized.title) {
@@ -7999,18 +8019,18 @@ async function splitWorkItemIntoSprint(item, iterationPath, remainingPoints) {
         body: JSON.stringify(rollback)
       });
     } catch (rollbackError) {
-      console.error("The original work item could not be restored after the copy failed.", rollbackError);
+      console.error("The original work item could not be restored after the duplicate failed.", rollbackError);
       state.detailsCache.delete(Number(item.id));
-      throw new Error(`${createError.message || "The copy could not be created."} The original could not be restored automatically; reload it before trying again.`);
+      throw new Error(`${createError.message || "The duplicate could not be created."} The original could not be restored automatically; reload it before trying again.`);
     }
     throw createError;
   }
   updated.relations = [
     ...(source.relations || []),
     {
-      rel: "System.LinkTypes.Dependency-Forward",
+      rel: "System.LinkTypes.Dependency-Reverse",
       url: created.url || `${activeAzureContext().base}/_apis/wit/workItems/${Number(created.id)}`,
-      attributes: { comment: "Continues the remaining work in the next sprint" }
+      attributes: { comment: "The remaining work continues in the next sprint" }
     }
   ];
   return { updated, created };
@@ -14137,7 +14157,7 @@ async function updateWorkItemField(item, field, value, label) {
     }
     if (isSelectedWorkItem(item.id)) {
       els.workItemLoadStatus.textContent = splitCopy
-        ? `${workItemKey(splitCopy.id)} created with ${formatStoryPoints(remainingPoints)} remaining story points.`
+        ? `Moved with ${formatStoryPoints(remainingPoints)} remaining story points. ${workItemKey(splitCopy.id)} keeps the done part in the current sprint.`
         : `${label} saved.`;
       renderHistory([], true);
       renderCombinedActivity();
