@@ -4664,15 +4664,17 @@ function renderSprintReviewMessage(message) {
 // <base>/sprint-<number>.json. The extra slide only appears when that file exists.
 const sprintReviewExtraCache = new Map();
 
-function sprintReviewExtraUrl(iteration) {
+// suffix "" is the ServiceNow sprint JSON; "-low-scores" is the analysis of low live chat scores
+// (counts per reason, made by the livechat-low-scores skill) with a link to the full report.
+function sprintReviewExtraUrl(iteration, suffix = "") {
   const base = state.analyticsExtraSource.trim();
   const number = sprintRouteValue(iteration);
   if (!base || !/^\d+$/.test(number)) return "";
-  return `${base.endsWith("/") ? base : `${base}/`}sprint-${number}.json`;
+  return `${base.endsWith("/") ? base : `${base}/`}sprint-${number}${suffix}.json`;
 }
 
-function loadSprintReviewExtraData(iteration) {
-  const url = sprintReviewExtraUrl(iteration);
+function loadSprintReviewExtraData(iteration, suffix = "") {
+  const url = sprintReviewExtraUrl(iteration, suffix);
   if (!url) return Promise.resolve(null);
   if (!sprintReviewExtraCache.has(url)) {
     const request = fetch(url, { cache: "no-cache" })
@@ -4730,13 +4732,14 @@ function sprintReviewExtraTile(label, value, { details = [], trend = "" } = {}) 
 // With splitGroup, "Group - Name" shows Name with the group in small text below it.
 // Trends compare each entry's count with the same name in the previous sprint's top list;
 // they are neutral because more contacts for a service is neither good nor bad.
-function sprintReviewExtraRanking(title, ranking, { splitGroup = false, previous = null } = {}) {
+function sprintReviewExtraRanking(title, ranking, { splitGroup = false, previous = null, note = "", className = "" } = {}) {
   const items = Array.isArray(ranking?.top) ? ranking.top : [];
   const previousCounts = Array.isArray(previous?.top) ? new Map(previous.top.map(item => [item.name, item.count])) : null;
   if (!items.length) return "";
   const max = Math.max(...items.map(item => Number(item.percentage) || 0), 1);
-  return `<section class="extra-panel">
+  return `<section class="extra-panel${className ? ` ${className}` : ""}">
     <h3>${escapeHtml(title)}</h3>
+    ${note ? `<p class="extra-panel-note">${escapeHtml(note)}</p>` : ""}
     <ol class="extra-ranking">
       ${items.map(item => {
         const [group, ...rest] = splitGroup ? String(item.name || "").split(" - ") : [String(item.name || "")];
@@ -4784,7 +4787,32 @@ function sprintReviewExtraCsat(csat, previousCsat = null) {
   </section>`;
 }
 
-function sprintReviewExtraSlideHtml(data, iteration, previousData = null) {
+// Why students gave a low score (😖 🙁 😐): chats per main reason, as bars like the rankings.
+// Trends compare with the previous sprint's analysis; they are neutral like the other rankings.
+function sprintReviewExtraReasons(lowScores, previousLowScores = null) {
+  if (!lowScores) return "";
+  const total = Number(lowScores.count) || 0;
+  const scores = Array.isArray(lowScores.scores) ? lowScores.scores : [];
+  const top = (data) => (Array.isArray(data?.categories) ? data.categories : [])
+    .filter(item => Number(item.count) > 0)
+    .map(item => ({
+      name: item.labelEn || item.label,
+      count: Number(item.count),
+      percentage: total ? Math.round(Number(item.count) / total * 1000) / 10 : 0
+    }));
+  const items = top(lowScores);
+  const subtitle = `${sprintReviewExtraNumber(total)} chats · ${scores.map(item => `${item.emoji} ${item.count}`).join(" ")}`;
+  if (!items.length) {
+    return `<section class="extra-panel extra-reasons"><h3>Why scores were low</h3><p class="extra-panel-note">No low scores in this sprint.</p></section>`;
+  }
+  return sprintReviewExtraRanking("Why scores were low", { top: items }, {
+    previous: previousLowScores ? { top: top(previousLowScores) } : null,
+    note: subtitle,
+    className: "extra-reasons"
+  });
+}
+
+function sprintReviewExtraSlideHtml(data, iteration, previousData = null, lowScores = null, previousLowScores = null) {
   const chat = data.liveChat || {};
   const csat = data.csat || null;
   const previousChat = previousData?.liveChat || {};
@@ -4823,15 +4851,19 @@ function sprintReviewExtraSlideHtml(data, iteration, previousData = null) {
   }
   const links = [
     data.source?.liveChatUrl ? `<a href="${escapeHtml(data.source.liveChatUrl)}" target="_blank" rel="noopener noreferrer">Live chat dashboard ↗</a>` : "",
-    data.source?.csatUrl ? `<a href="${escapeHtml(data.source.csatUrl)}" target="_blank" rel="noopener noreferrer">CSAT dashboard ↗</a>` : ""
+    data.source?.csatUrl ? `<a href="${escapeHtml(data.source.csatUrl)}" target="_blank" rel="noopener noreferrer">CSAT dashboard ↗</a>` : "",
+    lowScores?.reportUrl ? `<a href="${escapeHtml(lowScores.reportUrl)}" target="_blank" rel="noopener noreferrer">Full report on low scores ↗</a>` : ""
   ].filter(Boolean).join("");
   return `<section class="sprint-review-slide sprint-review-extra-slide">
     <header><div><h2>Live chat</h2><p>${escapeHtml([range, source, previousData ? "trends against the previous sprint" : ""].filter(Boolean).join(" · "))}</p></div></header>
     <div class="extra-tiles">${tiles.join("")}</div>
-    <div class="extra-panels">
-      ${sprintReviewExtraRanking("Top business services", chat.businessServices, { splitGroup: true, previous: previousData ? previousChat.businessServices || {} : null })}
-      ${sprintReviewExtraRanking("Top assignment groups", chat.assignmentGroups, { previous: previousData ? previousChat.assignmentGroups || {} : null })}
+    <div class="extra-panels${lowScores ? " has-reasons" : ""}">
+      <div class="extra-panel-stack">
+        ${sprintReviewExtraRanking("Top business services", chat.businessServices, { splitGroup: true, previous: previousData ? previousChat.businessServices || {} : null })}
+        ${sprintReviewExtraRanking("Top assignment groups", chat.assignmentGroups, { previous: previousData ? previousChat.assignmentGroups || {} : null })}
+      </div>
       ${sprintReviewExtraCsat(csat, previousData ? previousCsat : null)}
+      ${sprintReviewExtraReasons(lowScores, previousLowScores)}
     </div>
     ${links ? `<footer class="extra-footer">${links}</footer>` : ""}
   </section>`;
@@ -5078,13 +5110,19 @@ async function loadSprintReview() {
   const ordered = chronologicalIterations();
   const nextIteration = ordered[ordered.findIndex(value => value.id === iteration.id) + 1] || null;
   try {
-    const [stories, nextStories, extraData] = await Promise.all([
+    const [stories, nextStories, extraData, lowScores] = await Promise.all([
       fetchIterationStories(team, iteration),
       nextIteration ? fetchIterationStories(team, nextIteration) : Promise.resolve([]),
-      loadSprintReviewExtraData(iteration)
+      loadSprintReviewExtraData(iteration),
+      loadSprintReviewExtraData(iteration, "-low-scores")
     ]);
     const previousIteration = ordered[ordered.findIndex(value => value.id === iteration.id) - 1] || null;
-    const previousExtraData = extraData && previousIteration ? await loadSprintReviewExtraData(previousIteration) : null;
+    const [previousExtraData, previousLowScores] = extraData && previousIteration
+      ? await Promise.all([
+        loadSprintReviewExtraData(previousIteration),
+        lowScores ? loadSprintReviewExtraData(previousIteration, "-low-scores") : null
+      ])
+      : [null, null];
     if (requestToken !== state.reviewRequestToken || state.currentView !== "review") return;
     const title = sprintReviewTitle(iteration);
     const dates = sprintReviewDateRange(iteration);
@@ -5104,7 +5142,7 @@ async function loadSprintReview() {
         <p class="sprint-review-recorded"><span aria-hidden="true">●</span> Meeting will be recorded</p>
       </section>`,
       ...(analyticsConfigured() ? [analyticsSlide] : []),
-      ...(extraData ? [() => sprintReviewExtraSlideHtml(extraData, iteration, previousExtraData)] : []),
+      ...(extraData ? [() => sprintReviewExtraSlideHtml(extraData, iteration, previousExtraData, lowScores, previousLowScores)] : []),
       roadmapSlide,
       sprintReviewTableSlide(title, `${sprintItems.length} ${sprintItems.length === 1 ? "story or bug" : "stories and bugs"} in this sprint`, sprintItems, "No stories or bugs in this sprint.", { showDemo: true, showFeatures: true }),
       sprintReviewTableSlide("Demo", title, demoItems, "No stories or bugs in this sprint are tagged “demo”.", { showPerson: true }),

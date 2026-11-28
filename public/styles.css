@@ -2163,6 +2163,20 @@ body.is-sprint-review main:not(.work-item-main) { padding: 0; }
 .extra-ranking li { grid-template-columns: minmax(0, 1fr) auto auto; }
 .extra-ranking-trend { font-size: .85em; text-align: right; }
 .extra-ranking-trend:empty { display: none; }
+/* Live chat slide with the low score reasons: services above assignment groups on the left,
+   CSAT in the middle, reasons on the right. */
+.extra-panels.has-reasons { grid-template-columns: 1fr .8fr 1fr; font-size: clamp(8px, 1.15cqi, 15px); }
+.extra-panels.has-reasons .extra-ranking { gap: .55em; }
+.extra-panel-stack { display: grid; align-content: start; gap: 1em; min-width: 0; min-height: 0; }
+.extra-panel-stack .extra-panel h3 { margin-bottom: .5em; }
+.extra-panels .extra-panel-stack .extra-ranking { gap: .3em; }
+.extra-panel-stack .extra-ranking li { row-gap: .15em; }
+.extra-panel-stack .extra-ranking-name small { display: inline; margin-left: .5em; }
+.extra-panel-stack .extra-ranking-bar { height: .35em; }
+.extra-panel-note { margin: -.4em 0 .8em; color: var(--muted); font-size: .85em; }
+@media (max-width: 700px) {
+  .extra-panels.has-reasons { grid-template-columns: 1fr; }
+}
 .extra-ranking li .extra-ranking-trend { align-self: end; }
 .extra-csat-distribution li { grid-template-columns: 1.6em minmax(0, 1fr) 2.6em 4.6em; }
 .extra-csat-distribution li .extra-ranking-trend { text-align: left; }
